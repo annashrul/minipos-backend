@@ -8,6 +8,22 @@ import type {
   UpsertSettingsBulkDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+
+type SettingCategory = "pos" | "receipt" | "kitchen" | null;
+
+function detectSettingCategory(
+  group: string | null | undefined,
+  key: string | null | undefined,
+): SettingCategory {
+  const haystack = `${group ?? ""}::${key ?? ""}`.toLowerCase();
+  if (haystack.includes("kitchen")) return "kitchen";
+  if (haystack.includes("receipt") || haystack.includes("struk")) {
+    return "receipt";
+  }
+  if (haystack.includes("pos")) return "pos";
+  return null;
+}
 
 const SETTING_SELECT = {
   id: true,
@@ -23,7 +39,35 @@ type RawSetting = Prisma.SettingGetPayload<{ select: typeof SETTING_SELECT }>;
 
 @Injectable()
 export class SettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
+
+  private emitConfigEvent(
+    category: SettingCategory,
+    payload: Record<string, unknown>,
+    branchId?: string | null,
+  ) {
+    const branch = branchId ?? undefined;
+    if (category === "pos") {
+      this.realtime.emit(EVENTS.CONFIG_POS_UPDATED, payload, branch);
+      return;
+    }
+    if (category === "receipt") {
+      this.realtime.emit(EVENTS.CONFIG_RECEIPT_UPDATED, payload, branch);
+      return;
+    }
+    if (category === "kitchen") {
+      this.realtime.emit(EVENTS.CONFIG_KITCHEN_UPDATED, payload, branch);
+      return;
+    }
+    // Tidak bisa pastikan kategorinya — emit ke semua channel config
+    // supaya client subscriber tetap menerima refresh signal.
+    this.realtime.emit(EVENTS.CONFIG_POS_UPDATED, payload, branch);
+    this.realtime.emit(EVENTS.CONFIG_RECEIPT_UPDATED, payload, branch);
+    this.realtime.emit(EVENTS.CONFIG_KITCHEN_UPDATED, payload, branch);
+  }
 
   async list(
     companyId: string,
@@ -62,6 +106,11 @@ export class SettingsService {
   ): Promise<SettingResponse> {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
     const result = await this.upsertOne(dto);
+    this.emitConfigEvent(
+      detectSettingCategory(result.group, result.key),
+      { key: result.key, group: result.group },
+      result.branchId,
+    );
     return toSettingResponse(result);
   }
 
@@ -90,6 +139,28 @@ export class SettingsService {
     for (const s of dto.settings) {
       results.push(await this.upsertOne(s));
     }
+
+    // Aggregate categories yang tersentuh agar emit cukup sekali per channel
+    const seenCategories = new Set<SettingCategory>();
+    let unknownInAggregate = false;
+    for (const r of results) {
+      const cat = detectSettingCategory(r.group, r.key);
+      if (cat === null) unknownInAggregate = true;
+      else seenCategories.add(cat);
+    }
+    const emitBranchIds = Array.from(
+      new Set(results.map((r) => r.branchId ?? null)),
+    );
+    for (const branchId of emitBranchIds) {
+      if (unknownInAggregate) {
+        this.emitConfigEvent(null, { bulk: true }, branchId);
+      } else {
+        for (const cat of seenCategories) {
+          this.emitConfigEvent(cat, { bulk: true }, branchId);
+        }
+      }
+    }
+
     return { settings: results.map(toSettingResponse) };
   }
 
@@ -104,7 +175,15 @@ export class SettingsService {
       select: { id: true },
     });
     if (!existing) throw new NotFoundException("Setting not found");
-    await this.prisma.setting.delete({ where: { id: existing.id } });
+    const deleted = await this.prisma.setting.delete({
+      where: { id: existing.id },
+      select: SETTING_SELECT,
+    });
+    this.emitConfigEvent(
+      detectSettingCategory(deleted.group, deleted.key),
+      { key: deleted.key, group: deleted.group, deleted: true },
+      deleted.branchId,
+    );
     return { success: true };
   }
 

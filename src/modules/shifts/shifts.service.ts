@@ -16,6 +16,7 @@ import type {
   ShiftResponse,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const SHIFT_SELECT = {
   id: true,
@@ -58,7 +59,10 @@ type RawShiftDetail = Prisma.CashierShiftGetPayload<{
 
 @Injectable()
 export class ShiftsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -168,6 +172,11 @@ export class ShiftsService {
       },
       select: SHIFT_SELECT,
     });
+    this.realtime.emit(
+      EVENTS.SHIFT_OPENED,
+      { shiftId: created.id, userId: created.userId },
+      created.branchId ?? undefined,
+    );
     return toShiftResponse(created);
   }
 
@@ -246,6 +255,11 @@ export class ShiftsService {
       },
       select: SHIFT_SELECT,
     });
+    this.realtime.emit(
+      EVENTS.SHIFT_CLOSED,
+      { shiftId: updated.id, userId: updated.userId },
+      updated.branchId ?? undefined,
+    );
     return toShiftResponse(updated);
   }
 

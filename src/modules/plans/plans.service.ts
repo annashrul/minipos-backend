@@ -18,12 +18,16 @@ import type {
   UpdatePlanAccessDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
 const PLAN_TIERS: PlanTierDto[] = ["FREE", "PRO", "ENTERPRISE"];
 
 @Injectable()
 export class PlansService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async listMenuAccess(
     query: ListPlanAccessQueryDto,
@@ -67,6 +71,7 @@ export class PlansService {
       where: { plan: dto.plan },
       orderBy: { menuKey: "asc" },
     });
+    this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: dto.plan });
     return { items: rows.map(toMenuAccessResponse) };
   }
 
@@ -85,6 +90,7 @@ export class PlansService {
       where: { id },
       data: { allowed: dto.allowed },
     });
+    this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: updated.plan });
     return toMenuAccessResponse(updated);
   }
 
@@ -151,6 +157,7 @@ export class PlansService {
       where: { plan: dto.plan },
       orderBy: [{ menuKey: "asc" }, { actionKey: "asc" }],
     });
+    this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: dto.plan });
     return { items: rows.map(toActionAccessResponse) };
   }
 
@@ -169,6 +176,7 @@ export class PlansService {
       where: { id },
       data: { allowed: dto.allowed },
     });
+    this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: updated.plan });
     return toActionAccessResponse(updated);
   }
 

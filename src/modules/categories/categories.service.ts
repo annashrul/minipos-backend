@@ -13,6 +13,7 @@ import type {
   UpdateCategoryDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const CATEGORY_SELECT = {
   id: true,
@@ -29,7 +30,10 @@ type RawCategory = Prisma.CategoryGetPayload<{ select: typeof CATEGORY_SELECT }>
 
 @Injectable()
 export class CategoriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -96,6 +100,7 @@ export class CategoriesService {
         },
         select: CATEGORY_SELECT,
       });
+      this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: created.id });
       return toCategoryResponse(created);
     } catch (err) {
       throwIfDuplicateName(err, "Nama kategori sudah digunakan");
@@ -136,6 +141,7 @@ export class CategoriesService {
         data,
         select: CATEGORY_SELECT,
       });
+      this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: updated.id });
       return toCategoryResponse(updated);
     } catch (err) {
       throwIfDuplicateName(err, "Nama kategori sudah digunakan");
@@ -158,6 +164,7 @@ export class CategoriesService {
       throw new BadRequestException("Kategori masih memiliki sub-kategori");
     }
     await this.prisma.category.delete({ where: { id } });
+    this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: id });
     return { success: true };
   }
 

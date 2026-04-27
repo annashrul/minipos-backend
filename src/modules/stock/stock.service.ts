@@ -14,6 +14,7 @@ import type {
   StockMovementResponse,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const MOVEMENT_SELECT = {
   id: true,
@@ -51,7 +52,10 @@ type RawBranchStock = Prisma.BranchStockGetPayload<{
 
 @Injectable()
 export class StockService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async listMovements(
     companyId: string,
@@ -210,6 +214,12 @@ export class StockService {
         select: MOVEMENT_SELECT,
       });
     });
+
+    this.realtime.emit(
+      EVENTS.STOCK_UPDATED,
+      { productId: dto.productId },
+      branchId ?? undefined,
+    );
 
     return toMovementResponse(movement);
   }

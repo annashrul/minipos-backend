@@ -14,6 +14,7 @@ import type {
   VerifyEmailOtpResponse,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
 /**
  * Company self-registration.
@@ -27,7 +28,10 @@ import { PrismaService } from "../prisma/prisma.service";
  */
 @Injectable()
 export class RegisterService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async registerCompany(
     dto: RegisterCompanyDto,
@@ -55,6 +59,7 @@ export class RegisterService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+    let createdCompanyId: string | null = null;
     await this.prisma.$transaction(async (tx) => {
       const company = await tx.company.create({
         data: {
@@ -151,7 +156,16 @@ export class RegisterService {
           sortOrder: i + 1,
         })),
       });
+
+      createdCompanyId = company.id;
     });
+
+    if (createdCompanyId) {
+      this.realtime.emit(EVENTS.COMPANY_REGISTERED, {
+        companyId: createdCompanyId,
+        slug,
+      });
+    }
 
     return { status: "created" };
   }

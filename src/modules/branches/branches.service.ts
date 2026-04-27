@@ -13,6 +13,7 @@ import type {
   UpdateBranchDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const BRANCH_SELECT = {
   id: true,
@@ -32,7 +33,10 @@ type RawBranch = Prisma.BranchGetPayload<{ select: typeof BRANCH_SELECT }>;
 
 @Injectable()
 export class BranchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -93,6 +97,7 @@ export class BranchesService {
         },
         select: BRANCH_SELECT,
       });
+      this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: created.id });
       return toBranchResponse(created);
     } catch (err) {
       throwOnDupBranch(err);
@@ -126,6 +131,7 @@ export class BranchesService {
         data,
         select: BRANCH_SELECT,
       });
+      this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: updated.id });
       return toBranchResponse(updated);
     } catch (err) {
       throwOnDupBranch(err);
@@ -153,6 +159,7 @@ export class BranchesService {
       );
     }
     await this.prisma.branch.delete({ where: { id } });
+    this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: id });
     return { success: true };
   }
 }

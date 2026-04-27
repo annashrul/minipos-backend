@@ -17,6 +17,7 @@ import type {
   UpdateRoleDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
 const ROLE_SELECT = {
   id: true,
@@ -34,7 +35,10 @@ type RawRole = Prisma.AppRoleGetPayload<{ select: typeof ROLE_SELECT }>;
 
 @Injectable()
 export class RolesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -171,6 +175,7 @@ export class RolesService {
         return created;
       });
 
+      this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: role.key });
       return this.findById(_companyId, role.id);
     } catch (err) {
       throwOnDup(err);
@@ -245,6 +250,9 @@ export class RolesService {
         }
       });
 
+      if (dto.menuPermissions || dto.actionPermissions) {
+        this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: existing.key });
+      }
       return this.findById(companyId, id);
     } catch (err) {
       throwOnDup(err);
@@ -279,6 +287,7 @@ export class RolesService {
       await tx.appRole.delete({ where: { id } });
     });
 
+    this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: existing.key });
     return { success: true };
   }
 
@@ -296,6 +305,7 @@ export class RolesService {
         allowed: dto.allowed,
       },
     });
+    this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: dto.role });
     return { success: true };
   }
 
@@ -316,6 +326,7 @@ export class RolesService {
         allowed: dto.allowed,
       },
     });
+    this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: dto.role });
     return { success: true };
   }
 

@@ -13,6 +13,7 @@ import type {
   UpdateBundleDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const BUNDLE_SELECT = {
   id: true,
@@ -56,7 +57,10 @@ type RawBundle = Prisma.ProductBundleGetPayload<{
 
 @Injectable()
 export class BundlesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -167,6 +171,7 @@ export class BundlesService {
         },
         select: BUNDLE_SELECT,
       });
+      this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: created.id });
       return toBundleResponse(created);
     } catch (err) {
       throwOnDup(err);
@@ -230,6 +235,7 @@ export class BundlesService {
           select: BUNDLE_SELECT,
         });
       });
+      this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: updated.id });
       return toBundleResponse(updated);
     } catch (err) {
       throwOnDup(err);
@@ -244,6 +250,7 @@ export class BundlesService {
     });
     if (!existing) throw new NotFoundException("Bundle not found");
     await this.prisma.productBundle.delete({ where: { id } });
+    this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: id });
     return { success: true };
   }
 
