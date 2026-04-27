@@ -936,12 +936,15 @@ export class AnalyticsService {
             promo.maxDiscount,
           );
           if (disc <= 0) continue;
+          // Map promo ke BUY product (yang ADA di cart), bukan GET product
+          // (yang mungkin belum ada di cart). Frontend butuh cart-line ID
+          // untuk render badge promo per-line.
           appliedPromos.push({
             promoId: promo.id,
             promoName: promo.name,
             type: promo.type,
             discountAmount: disc,
-            appliedTo: targetProductId,
+            appliedTo: buyItem.productId,
           });
           totalDiscount += disc;
         }
