@@ -1,5 +1,8 @@
-# Cloud Build pipeline: Build → Push → Deploy ke Cloud Run.
-# Optimized untuk fast incremental builds via Docker layer cache + BuildKit.
+# Cloud Build pipeline — optimized untuk sub-60s incremental builds.
+# Strategi:
+# 1. docker buildx with registry cache (no full image pull)
+# 2. build + push dalam 1 step
+# 3. min-instances=1 → revision swap tanpa cold start
 
 substitutions:
   _REGION: "asia-southeast2"
@@ -9,44 +12,30 @@ substitutions:
   _CORS_ORIGINS: "http://localhost:3000,https://*.vercel.app"
 
 steps:
-  # ── 1) Pull image lama untuk dijadikan cache layer (boleh gagal kalau first build)
-  - id: pull-cache
+  # ── Build + Push dengan registry cache (single step, parallel push)
+  - id: build-push
     name: "gcr.io/cloud-builders/docker"
     entrypoint: bash
     args:
       - -c
       - |
-        docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest" || \
-        echo "no cache yet (first build) — will build from scratch"
+        set -e
+        IMAGE="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api"
 
-  # ── 2) Build dengan BuildKit + cache-from
-  - id: build
-    name: "gcr.io/cloud-builders/docker"
-    env:
-      - DOCKER_BUILDKIT=1
-      # Inline-cache writes cache metadata into the image itself.
-      - BUILDKIT_INLINE_CACHE=1
-    args:
-      - "build"
-      - "--build-arg"
-      - "BUILDKIT_INLINE_CACHE=1"
-      - "--cache-from"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest"
-      - "-t"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:${SHORT_SHA}"
-      - "-t"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest"
-      - "."
+        # Setup buildx (BuildKit) builder once.
+        docker buildx create --name fast --driver docker-container --use --bootstrap
 
-  # ── 3) Push (paralel hanya layer yang berubah)
-  - id: push
-    name: "gcr.io/cloud-builders/docker"
-    args:
-      - "push"
-      - "--all-tags"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api"
+        # Build dengan cache pulled on-demand dari registry,
+        # sekaligus push final image + cache layer.
+        docker buildx build \
+          --cache-from type=registry,ref=$$IMAGE:buildcache \
+          --cache-to type=registry,ref=$$IMAGE:buildcache,mode=max \
+          --tag $$IMAGE:${SHORT_SHA} \
+          --tag $$IMAGE:latest \
+          --push \
+          .
 
-  # ── 4) Deploy ke Cloud Run
+  # ── Deploy ke Cloud Run (min-instances=1 supaya zero cold-start swap)
   - id: deploy
     name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     entrypoint: "gcloud"
@@ -61,20 +50,19 @@ steps:
       - "--port=8080"
       - "--memory=512Mi"
       - "--cpu=1"
-      - "--min-instances=0"
+      - "--min-instances=1"
       - "--max-instances=10"
       - "--concurrency=80"
       - "--timeout=60"
       - "--execution-environment=gen2"
+      - "--cpu-boost"
       - "--service-account=${_RUNTIME_SA}"
       - "--set-env-vars=^@^NODE_ENV=production@JWT_EXPIRES_IN=7d@CORS_ORIGINS=${_CORS_ORIGINS}"
       - "--set-secrets=DATABASE_URL=database-url:latest,DIRECT_URL=direct-url:latest,JWT_SECRET=jwt-secret:latest,CLOUDINARY_URL=cloudinary-url:latest,RESEND_API_KEY=resend-api-key:latest,PUSHER_APP_ID=pusher-app-id:latest,PUSHER_KEY=pusher-key:latest,PUSHER_SECRET=pusher-secret:latest,PUSHER_CLUSTER=pusher-cluster:latest"
 
 options:
-  # E2_HIGHCPU_8 → 8 vCPU, ~1.5x faster than default (paid tier needed)
   machineType: E2_HIGHCPU_8
   logging: CLOUD_LOGGING_ONLY
-  # Skip dynamic substitution check — minor speedup
   dynamicSubstitutions: false
 
 timeout: 1200s
