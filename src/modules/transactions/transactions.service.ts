@@ -386,17 +386,17 @@ export class TransactionsService {
         { maxWait: 10000, timeout: 15000 },
       );
 
-      const branchId = dto.branchId ?? undefined;
+      const emitBranch = dto.branchId ?? undefined;
       this.realtime.emit(
         EVENTS.TRANSACTION_CREATED,
         {
           transactionId: created.id,
           invoiceNumber: created.invoiceNumber,
         },
-        branchId,
+        emitBranch,
       );
-      this.realtime.emit(EVENTS.STOCK_UPDATED, {}, branchId);
-      this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, branchId);
+      this.realtime.emit(EVENTS.STOCK_UPDATED, {}, emitBranch);
+      this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, emitBranch);
 
       return {
         id: created.id,
