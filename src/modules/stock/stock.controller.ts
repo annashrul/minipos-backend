@@ -51,7 +51,7 @@ export class StockController {
   }
 
   @Post("adjust")
-  @RequireAccess("stock", "adjust")
+  @RequireAccess("stock", "update")
   async adjust(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
