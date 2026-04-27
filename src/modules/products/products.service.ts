@@ -1,4 +1,5 @@
 ﻿import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -117,14 +118,60 @@ export class ProductsService {
     return toProductResponse(product);
   }
 
+  private async syncProductModifierGroups(
+    companyId: string,
+    productId: string,
+    modifierGroupIds: string[],
+  ): Promise<void> {
+    if (modifierGroupIds.length > 0) {
+      const owned = await this.prisma.modifierGroup.findMany({
+        where: { id: { in: modifierGroupIds }, companyId },
+        select: { id: true },
+      });
+      if (owned.length !== modifierGroupIds.length) {
+        throw new BadRequestException(
+          "One or more modifier groups invalid",
+        );
+      }
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productModifierGroup.deleteMany({ where: { productId } });
+      if (modifierGroupIds.length > 0) {
+        await tx.productModifierGroup.createMany({
+          data: modifierGroupIds.map((modifierGroupId, idx) => ({
+            productId,
+            modifierGroupId,
+            sortOrder: idx,
+          })),
+        });
+      }
+    });
+  }
+
+  private async generateProductCode(companyId: string): Promise<string> {
+    // Try a few times to avoid collisions (P2002 from unique [companyId, code]).
+    for (let i = 0; i < 5; i++) {
+      const candidate = `PRD-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().slice(-3)}`;
+      const exists = await this.prisma.product.findFirst({
+        where: { companyId, code: candidate },
+        select: { id: true },
+      });
+      if (!exists) return candidate;
+    }
+    return `PRD-${Date.now().toString(36).toUpperCase()}`;
+  }
+
   async create(
     companyId: string,
     dto: CreateProductDto,
   ): Promise<ProductResponse> {
     try {
+      const code = dto.code?.trim()
+        ? dto.code.trim()
+        : await this.generateProductCode(companyId);
       const created = await this.prisma.product.create({
         data: {
-          code: dto.code,
+          code,
           name: dto.name,
           categoryId: dto.categoryId,
           brandId: dto.brandId ?? null,
@@ -142,6 +189,13 @@ export class ProductsService {
         },
         select: PRODUCT_SELECT,
       });
+      if (dto.modifierGroupIds !== undefined) {
+        await this.syncProductModifierGroups(
+          companyId,
+          created.id,
+          dto.modifierGroupIds,
+        );
+      }
       return toProductResponse(created);
     } catch (err) {
       if (
@@ -197,6 +251,13 @@ export class ProductsService {
         data,
         select: PRODUCT_SELECT,
       });
+      if (dto.modifierGroupIds !== undefined) {
+        await this.syncProductModifierGroups(
+          companyId,
+          id,
+          dto.modifierGroupIds,
+        );
+      }
       return toProductResponse(updated);
     } catch (err) {
       if (

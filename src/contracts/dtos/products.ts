@@ -27,7 +27,8 @@ export const ListProductsQuerySchema = z.object({
 export type ListProductsQueryDto = z.infer<typeof ListProductsQuerySchema>;
 
 export const CreateProductSchema = z.object({
-  code: z.string().min(1),
+  // Empty string → backend will auto-generate (PRD-XXXXX).
+  code: z.string().optional().default(""),
   name: z.string().min(1),
   categoryId: z.string().min(1),
   brandId: z.string().nullable().optional(),
@@ -41,6 +42,8 @@ export const CreateProductSchema = z.object({
   isActive: z.boolean().optional().default(true),
   description: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
+  // Optional: replace product↔modifier-group attachments in the same request.
+  modifierGroupIds: z.array(z.string().min(1)).optional(),
 });
 export type CreateProductDto = z.infer<typeof CreateProductSchema>;
 
