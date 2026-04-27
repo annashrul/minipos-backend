@@ -1,5 +1,5 @@
 # Cloud Build pipeline: Build → Push → Deploy ke Cloud Run.
-# Ter-trigger otomatis setiap push ke branch main (via GitHub App connection).
+# Optimized untuk fast incremental builds via Docker layer cache + BuildKit.
 
 substitutions:
   _REGION: "asia-southeast2"
@@ -9,18 +9,36 @@ substitutions:
   _CORS_ORIGINS: "http://localhost:3000,https://*.vercel.app"
 
 steps:
-  # 1) Build Docker image — tag = short commit SHA + "latest"
+  # ── 1) Pull image lama untuk dijadikan cache layer (boleh gagal kalau first build)
+  - id: pull-cache
+    name: "gcr.io/cloud-builders/docker"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest" || \
+        echo "no cache yet (first build) — will build from scratch"
+
+  # ── 2) Build dengan BuildKit + cache-from
   - id: build
     name: "gcr.io/cloud-builders/docker"
+    env:
+      - DOCKER_BUILDKIT=1
+      # Inline-cache writes cache metadata into the image itself.
+      - BUILDKIT_INLINE_CACHE=1
     args:
       - "build"
+      - "--build-arg"
+      - "BUILDKIT_INLINE_CACHE=1"
+      - "--cache-from"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest"
       - "-t"
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:${SHORT_SHA}"
       - "-t"
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api:latest"
       - "."
 
-  # 2) Push image ke Artifact Registry
+  # ── 3) Push (paralel hanya layer yang berubah)
   - id: push
     name: "gcr.io/cloud-builders/docker"
     args:
@@ -28,7 +46,7 @@ steps:
       - "--all-tags"
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api"
 
-  # 3) Deploy ke Cloud Run
+  # ── 4) Deploy ke Cloud Run
   - id: deploy
     name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
     entrypoint: "gcloud"
@@ -49,13 +67,14 @@ steps:
       - "--timeout=60"
       - "--execution-environment=gen2"
       - "--service-account=${_RUNTIME_SA}"
-      # Use ^@^ delimiter so commas inside CORS_ORIGINS value (multi-domain whitelist)
-      # are not interpreted as env-var separator.
       - "--set-env-vars=^@^NODE_ENV=production@JWT_EXPIRES_IN=7d@CORS_ORIGINS=${_CORS_ORIGINS}"
       - "--set-secrets=DATABASE_URL=database-url:latest,DIRECT_URL=direct-url:latest,JWT_SECRET=jwt-secret:latest,CLOUDINARY_URL=cloudinary-url:latest,RESEND_API_KEY=resend-api-key:latest,PUSHER_APP_ID=pusher-app-id:latest,PUSHER_KEY=pusher-key:latest,PUSHER_SECRET=pusher-secret:latest,PUSHER_CLUSTER=pusher-cluster:latest"
 
 options:
+  # E2_HIGHCPU_8 → 8 vCPU, ~1.5x faster than default (paid tier needed)
   machineType: E2_HIGHCPU_8
   logging: CLOUD_LOGGING_ONLY
+  # Skip dynamic substitution check — minor speedup
+  dynamicSubstitutions: false
 
-timeout: 1800s
+timeout: 1200s
