@@ -49,7 +49,9 @@ steps:
       - "--timeout=60"
       - "--execution-environment=gen2"
       - "--service-account=${_RUNTIME_SA}"
-      - "--set-env-vars=NODE_ENV=production,JWT_EXPIRES_IN=7d,CORS_ORIGINS=${_CORS_ORIGINS}"
+      # Use ^@^ delimiter so commas inside CORS_ORIGINS value (multi-domain whitelist)
+      # are not interpreted as env-var separator.
+      - "--set-env-vars=^@^NODE_ENV=production@JWT_EXPIRES_IN=7d@CORS_ORIGINS=${_CORS_ORIGINS}"
       - "--set-secrets=DATABASE_URL=database-url:latest,DIRECT_URL=direct-url:latest,JWT_SECRET=jwt-secret:latest,CLOUDINARY_URL=cloudinary-url:latest,RESEND_API_KEY=resend-api-key:latest,PUSHER_APP_ID=pusher-app-id:latest,PUSHER_KEY=pusher-key:latest,PUSHER_SECRET=pusher-secret:latest,PUSHER_CLUSTER=pusher-cluster:latest"
 
 options:
