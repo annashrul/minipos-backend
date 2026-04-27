@@ -4,6 +4,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { AuditInterceptor } from "./common/interceptors/audit.interceptor";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { RedisModule } from "./modules/redis/redis.module";
+import { RealtimeModule } from "./modules/realtime/realtime.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { JwtAuthGuard } from "./modules/auth/jwt-auth.guard";
 import { HealthModule } from "./modules/health/health.module";
@@ -77,6 +78,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     }),
     PrismaModule,
     RedisModule,
+    RealtimeModule,
     AuthModule,
     HealthModule,
     MeModule,

@@ -44,9 +44,14 @@ const QUEUE_SELECT = {
 
 type RawQueue = Prisma.OrderQueueGetPayload<{ select: typeof QUEUE_SELECT }>;
 
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+
 @Injectable()
 export class OrderQueuesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async list(
     companyId: string,
@@ -128,7 +133,13 @@ export class OrderQueuesService {
       },
       select: QUEUE_SELECT,
     });
-    return toQueueResponse(created);
+    const resp = toQueueResponse(created);
+    this.realtime.emit(
+      EVENTS.ORDER_QUEUE_CREATED,
+      { queueId: resp.id, queueNumber: resp.queueNumber },
+      created.branchId ?? undefined,
+    );
+    return resp;
   }
 
   async createFromTransaction(
@@ -170,7 +181,13 @@ export class OrderQueuesService {
       },
       select: QUEUE_SELECT,
     });
-    return toQueueResponse(created);
+    const resp = toQueueResponse(created);
+    this.realtime.emit(
+      EVENTS.ORDER_QUEUE_CREATED,
+      { queueId: resp.id, queueNumber: resp.queueNumber, fromTransaction: true },
+      created.branchId ?? undefined,
+    );
+    return resp;
   }
 
   async updateStatus(
@@ -192,7 +209,13 @@ export class OrderQueuesService {
       },
       select: QUEUE_SELECT,
     });
-    return toQueueResponse(updated);
+    const resp = toQueueResponse(updated);
+    this.realtime.emit(
+      status === "CANCELLED" ? EVENTS.ORDER_QUEUE_CANCELLED : EVENTS.ORDER_QUEUE_UPDATED,
+      { queueId: resp.id, queueNumber: resp.queueNumber, status },
+      updated.branchId ?? undefined,
+    );
+    return resp;
   }
 
   async updateItemStatus(

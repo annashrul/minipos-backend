@@ -68,12 +68,15 @@ type RawTxDetail = Prisma.TransactionGetPayload<{
   select: typeof TX_DETAIL_SELECT;
 }>;
 
+import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+
 @Injectable()
 export class TransactionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly debts: DebtsService,
     private readonly points: PointsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async list(
@@ -383,6 +386,18 @@ export class TransactionsService {
         { maxWait: 10000, timeout: 15000 },
       );
 
+      const branchId = dto.branchId ?? undefined;
+      this.realtime.emit(
+        EVENTS.TRANSACTION_CREATED,
+        {
+          transactionId: created.id,
+          invoiceNumber: created.invoiceNumber,
+        },
+        branchId,
+      );
+      this.realtime.emit(EVENTS.STOCK_UPDATED, {}, branchId);
+      this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, branchId);
+
       return {
         id: created.id,
         invoiceNumber: created.invoiceNumber,
@@ -538,6 +553,17 @@ export class TransactionsService {
           details: `${noun} ${transaction.invoiceNumber}: ${reason}`,
         },
       });
+
+      this.realtime.emit(
+        target === "VOIDED" ? EVENTS.TRANSACTION_VOIDED : EVENTS.TRANSACTION_REFUNDED,
+        {
+          transactionId: updated.id,
+          invoiceNumber: updated.invoiceNumber,
+        },
+        updated.branchId ?? undefined,
+      );
+      this.realtime.emit(EVENTS.STOCK_UPDATED, {}, updated.branchId ?? undefined);
+      this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, updated.branchId ?? undefined);
 
       return {
         id: updated.id,
