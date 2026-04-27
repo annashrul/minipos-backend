@@ -42,7 +42,9 @@ async function bootstrap() {
       // Allow same-origin / non-browser requests (no Origin header)
       if (!origin) return callback(null, true);
       const ok = allowMatchers.some((fn) => fn(origin));
-      callback(ok ? null : new Error(`CORS: origin not allowed: ${origin}`), ok);
+      // Pass `false` instead of throwing — clean 403/no-CORS response,
+      // not 500 internal error.
+      callback(null, ok);
     },
     credentials: true,
   });

@@ -6,7 +6,7 @@ substitutions:
   _SERVICE: "pos-api"
   _REPO: "pos-api"
   _RUNTIME_SA: "pos-api-sa@pos-offline-116b6.iam.gserviceaccount.com"
-  _CORS_ORIGINS: "http://localhost:3000"
+  _CORS_ORIGINS: "http://localhost:3000,https://*.vercel.app"
 
 steps:
   # 1) Build Docker image — tag = short commit SHA + "latest"
