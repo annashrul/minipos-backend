@@ -12,17 +12,38 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Allow comma-separated list in CORS_ORIGINS (mis. https://pos.example.com,https://staging.example.com)
+  // CORS: comma-separated whitelist via CORS_ORIGINS. Items boleh:
+  //   - exact origin   → "https://pos.example.com"
+  //   - wildcard host  → "https://*.vercel.app"  (* = subdomain)
+  //   - regex literal  → "/^https:\\/\\/.*\\.example\\.com$/"
   const corsRaw =
     process.env.CORS_ORIGINS ??
     process.env.WEB_ORIGIN ??
     "http://localhost:3000";
-  const corsList = corsRaw
+  const allowItems = corsRaw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const allowMatchers: Array<(o: string) => boolean> = allowItems.map((entry) => {
+    if (entry.startsWith("/") && entry.endsWith("/") && entry.length > 2) {
+      const re = new RegExp(entry.slice(1, -1));
+      return (o: string) => re.test(o);
+    }
+    if (entry.includes("*")) {
+      // Convert wildcard to regex (escape regex chars except *)
+      const escaped = entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+      const re = new RegExp(`^${escaped}$`);
+      return (o: string) => re.test(o);
+    }
+    return (o: string) => o === entry;
+  });
   app.enableCors({
-    origin: corsList.length === 1 ? corsList[0] : corsList,
+    origin: (origin, callback) => {
+      // Allow same-origin / non-browser requests (no Origin header)
+      if (!origin) return callback(null, true);
+      const ok = allowMatchers.some((fn) => fn(origin));
+      callback(ok ? null : new Error(`CORS: origin not allowed: ${origin}`), ok);
+    },
     credentials: true,
   });
 
