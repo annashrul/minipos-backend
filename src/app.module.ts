@@ -1,0 +1,155 @@
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { AuditInterceptor } from "./common/interceptors/audit.interceptor";
+import { PrismaModule } from "./modules/prisma/prisma.module";
+import { RedisModule } from "./modules/redis/redis.module";
+import { AuthModule } from "./modules/auth/auth.module";
+import { JwtAuthGuard } from "./modules/auth/jwt-auth.guard";
+import { HealthModule } from "./modules/health/health.module";
+import { AccountingModule } from "./modules/accounting/accounting.module";
+import { AiAssistantModule } from "./modules/ai-assistant/ai-assistant.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { AccountingPeriodsModule } from "./modules/accounting-periods/accounting-periods.module";
+import { AccountingReportsModule } from "./modules/accounting-reports/accounting-reports.module";
+import { ApprovalsModule } from "./modules/approvals/approvals.module";
+import { AuditLogsModule } from "./modules/audit-logs/audit-logs.module";
+import { BankReconciliationModule } from "./modules/bank-reconciliation/bank-reconciliation.module";
+import { BranchesModule } from "./modules/branches/branches.module";
+import { BrandsModule } from "./modules/brands/brands.module";
+import { BundlesModule } from "./modules/bundles/bundles.module";
+import { CashierModule } from "./modules/cashier/cashier.module";
+import { CategoriesModule } from "./modules/categories/categories.module";
+import { ClosingReportsModule } from "./modules/closing-reports/closing-reports.module";
+import { CustomersModule } from "./modules/customers/customers.module";
+import { DashboardModule } from "./modules/dashboard/dashboard.module";
+import { DebtsModule } from "./modules/debts/debts.module";
+import { EmployeeSchedulesModule } from "./modules/employee-schedules/employee-schedules.module";
+import { ExpensesModule } from "./modules/expenses/expenses.module";
+import { GiftCardsModule } from "./modules/gift-cards/gift-cards.module";
+import { GoodsReceiptsModule } from "./modules/goods-receipts/goods-receipts.module";
+import { InstallmentsModule } from "./modules/installments/installments.module";
+import { InventoryForecastModule } from "./modules/inventory-forecast/inventory-forecast.module";
+import { MeModule } from "./modules/me/me.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { OrderQueuesModule } from "./modules/order-queues/order-queues.module";
+import { PlansModule } from "./modules/plans/plans.module";
+import { PlatformDashboardModule } from "./modules/platform-dashboard/platform-dashboard.module";
+import { PlatformNotificationsModule } from "./modules/platform-notifications/platform-notifications.module";
+import { PlatformSubscriptionsModule } from "./modules/platform-subscriptions/platform-subscriptions.module";
+import { PointsModule } from "./modules/points/points.module";
+import { PosActivityModule } from "./modules/pos-activity/pos-activity.module";
+import { PriceSchedulesModule } from "./modules/price-schedules/price-schedules.module";
+import { ProductExtensionsModule } from "./modules/product-extensions/product-extensions.module";
+import { ProductsModule } from "./modules/products/products.module";
+import { ProfitDashboardModule } from "./modules/profit-dashboard/profit-dashboard.module";
+import { PromotionsModule } from "./modules/promotions/promotions.module";
+import { PurchasesModule } from "./modules/purchases/purchases.module";
+import { RecurringJournalsModule } from "./modules/recurring-journals/recurring-journals.module";
+import { RegisterModule } from "./modules/register/register.module";
+import { AutoJournalModule } from "./modules/auto-journal/auto-journal.module";
+import { ReportsModule } from "./modules/reports/reports.module";
+import { ReturnsModule } from "./modules/returns/returns.module";
+import { RolesModule } from "./modules/roles/roles.module";
+import { SalesTargetsModule } from "./modules/sales-targets/sales-targets.module";
+import { SettingsModule } from "./modules/settings/settings.module";
+import { StoreCreditsModule } from "./modules/store-credits/store-credits.module";
+import { SubscriptionsModule } from "./modules/subscriptions/subscriptions.module";
+import { TaxConfigsModule } from "./modules/tax-configs/tax-configs.module";
+import { VouchersModule } from "./modules/vouchers/vouchers.module";
+import { ShiftsModule } from "./modules/shifts/shifts.module";
+import { StockModule } from "./modules/stock/stock.module";
+import { StockOpnameModule } from "./modules/stock-opname/stock-opname.module";
+import { StockTransfersModule } from "./modules/stock-transfers/stock-transfers.module";
+import { SuppliersModule } from "./modules/suppliers/suppliers.module";
+import { TablesModule } from "./modules/tables/tables.module";
+import { TransactionsModule } from "./modules/transactions/transactions.module";
+import { ModifiersModule } from "./modules/modifiers/modifiers.module";
+import { UploadsModule } from "./modules/uploads/uploads.module";
+import { UsersModule } from "./modules/users/users.module";
+import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: [".env"],
+    }),
+    PrismaModule,
+    RedisModule,
+    AuthModule,
+    HealthModule,
+    MeModule,
+    AccountingModule,
+    AiAssistantModule,
+    AnalyticsModule,
+    AccountingPeriodsModule,
+    AccountingReportsModule,
+    ApprovalsModule,
+    AuditLogsModule,
+    BankReconciliationModule,
+    BranchesModule,
+    BrandsModule,
+    BundlesModule,
+    CashierModule,
+    CategoriesModule,
+    ClosingReportsModule,
+    CustomersModule,
+    DashboardModule,
+    DebtsModule,
+    EmployeeSchedulesModule,
+    ExpensesModule,
+    GiftCardsModule,
+    GoodsReceiptsModule,
+    InstallmentsModule,
+    InventoryForecastModule,
+    NotificationsModule,
+    OrderQueuesModule,
+    PlansModule,
+    PlatformDashboardModule,
+    PlatformNotificationsModule,
+    PlatformSubscriptionsModule,
+    PointsModule,
+    PosActivityModule,
+    PriceSchedulesModule,
+    ProductExtensionsModule,
+    ProductsModule,
+    ProfitDashboardModule,
+    PromotionsModule,
+    PurchasesModule,
+    RecurringJournalsModule,
+    RegisterModule,
+    AutoJournalModule,
+    ReportsModule,
+    ReturnsModule,
+    RolesModule,
+    SalesTargetsModule,
+    SettingsModule,
+    ShiftsModule,
+    StockModule,
+    StockOpnameModule,
+    StockTransfersModule,
+    StoreCreditsModule,
+    SubscriptionsModule,
+    SuppliersModule,
+    TablesModule,
+    TaxConfigsModule,
+    ModifiersModule,
+    TransactionsModule,
+    UploadsModule,
+    UsersModule,
+    VouchersModule,
+    WhatsappReceiptModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    },
+  ],
+})
+export class AppModule {}

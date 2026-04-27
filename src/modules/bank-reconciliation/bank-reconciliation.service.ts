@@ -1,0 +1,486 @@
+﻿import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import type {
+  BankReconciliationDetailResponse,
+  BankReconciliationItemInputDto,
+  BankReconciliationItemResponse,
+  BankReconciliationListResponse,
+  BankReconciliationResponse,
+  CreateBankReconciliationDto,
+  ListBankReconciliationsQueryDto,
+  SetReconciliationItemsDto,
+  ToggleItemMatchDto,
+  UpdateBankReconciliationDto,
+} from "@/contracts";
+import { PrismaService } from "../prisma/prisma.service";
+
+const RECON_SELECT = {
+  id: true,
+  accountId: true,
+  account: { select: { id: true, code: true, name: true } },
+  statementDate: true,
+  statementBalance: true,
+  bookBalance: true,
+  status: true,
+  companyId: true,
+  completedBy: true,
+  completedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  _count: { select: { items: true } },
+} satisfies Prisma.BankReconciliationSelect;
+
+const RECON_DETAIL_SELECT = {
+  ...RECON_SELECT,
+  items: {
+    select: {
+      id: true,
+      reconciliationId: true,
+      source: true,
+      referenceNumber: true,
+      description: true,
+      date: true,
+      amount: true,
+      matchedItemId: true,
+      matchStatus: true,
+      journalEntryId: true,
+      createdAt: true,
+    },
+    orderBy: { date: "asc" },
+  },
+} satisfies Prisma.BankReconciliationSelect;
+
+type RawRecon = Prisma.BankReconciliationGetPayload<{
+  select: typeof RECON_SELECT;
+}>;
+type RawReconDetail = Prisma.BankReconciliationGetPayload<{
+  select: typeof RECON_DETAIL_SELECT;
+}>;
+type RawReconItem = RawReconDetail["items"][number];
+
+const STATUS_IN_PROGRESS = "IN_PROGRESS";
+const STATUS_COMPLETED = "COMPLETED";
+
+@Injectable()
+export class BankReconciliationService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async list(
+    companyId: string,
+    query: ListBankReconciliationsQueryDto,
+  ): Promise<BankReconciliationListResponse> {
+    const where: Prisma.BankReconciliationWhereInput = { companyId };
+    if (query.accountId) where.accountId = query.accountId;
+    if (query.status) where.status = query.status;
+    if (query.from || query.to) {
+      where.statementDate = {};
+      if (query.from) where.statementDate.gte = new Date(query.from);
+      if (query.to) where.statementDate.lte = new Date(query.to);
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.bankReconciliation.findMany({
+        where,
+        select: RECON_SELECT,
+        orderBy: [{ statementDate: "desc" }, { createdAt: "desc" }],
+        skip: (query.page - 1) * query.perPage,
+        take: query.perPage,
+      }),
+      this.prisma.bankReconciliation.count({ where }),
+    ]);
+
+    return {
+      reconciliations: rows.map(toReconResponse),
+      total,
+      totalPages: Math.ceil(total / query.perPage),
+    };
+  }
+
+  async findById(
+    companyId: string,
+    id: string,
+  ): Promise<BankReconciliationDetailResponse> {
+    const recon = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: RECON_DETAIL_SELECT,
+    });
+    if (!recon) throw new NotFoundException("Bank reconciliation not found");
+    return toReconDetailResponse(recon);
+  }
+
+  async create(
+    companyId: string,
+    dto: CreateBankReconciliationDto,
+  ): Promise<BankReconciliationDetailResponse> {
+    await this.assertAccount(companyId, dto.accountId);
+    const statementDate = new Date(dto.statementDate);
+    const bookBalance = await this.computeBookBalance(
+      dto.accountId,
+      statementDate,
+    );
+
+    const created = await this.prisma.bankReconciliation.create({
+      data: {
+        accountId: dto.accountId,
+        statementDate,
+        statementBalance: dto.statementBalance,
+        bookBalance,
+        status: STATUS_IN_PROGRESS,
+        companyId,
+      },
+      select: RECON_DETAIL_SELECT,
+    });
+
+    return toReconDetailResponse(created);
+  }
+
+  async update(
+    companyId: string,
+    id: string,
+    dto: UpdateBankReconciliationDto,
+  ): Promise<BankReconciliationDetailResponse> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: { id: true, status: true, accountId: true },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_IN_PROGRESS) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
+      );
+    }
+
+    const data: Prisma.BankReconciliationUpdateInput = {};
+    let bookBalance: number | undefined;
+
+    if (dto.statementDate !== undefined) {
+      const statementDate = new Date(dto.statementDate);
+      data.statementDate = statementDate;
+      bookBalance = await this.computeBookBalance(
+        existing.accountId,
+        statementDate,
+      );
+      data.bookBalance = bookBalance;
+    }
+    if (dto.statementBalance !== undefined) {
+      data.statementBalance = dto.statementBalance;
+    }
+
+    await this.prisma.bankReconciliation.update({ where: { id }, data });
+    return this.findById(companyId, id);
+  }
+
+  async setItems(
+    companyId: string,
+    id: string,
+    dto: SetReconciliationItemsDto,
+  ): Promise<BankReconciliationDetailResponse> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: { id: true, status: true, accountId: true },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_IN_PROGRESS) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
+      );
+    }
+
+    if (dto.items.length > 0) {
+      await this.assertJournalEntriesValid(
+        companyId,
+        existing.accountId,
+        dto.items,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.bankReconciliationItem.deleteMany({
+        where: { reconciliationId: id },
+      });
+      if (dto.items.length > 0) {
+        await tx.bankReconciliationItem.createMany({
+          data: dto.items.map((item) => ({
+            reconciliationId: id,
+            source: item.source,
+            referenceNumber: item.referenceNumber ?? null,
+            description: item.description,
+            date: new Date(item.date),
+            amount: item.amount,
+            matchedItemId: item.matchedItemId ?? null,
+            matchStatus: item.matchStatus ?? "UNMATCHED",
+            journalEntryId: item.journalEntryId ?? null,
+          })),
+        });
+      }
+    });
+
+    return this.findById(companyId, id);
+  }
+
+  async toggleItemMatch(
+    companyId: string,
+    id: string,
+    itemId: string,
+    dto: ToggleItemMatchDto,
+  ): Promise<BankReconciliationDetailResponse> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_IN_PROGRESS) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
+      );
+    }
+
+    const item = await this.prisma.bankReconciliationItem.findFirst({
+      where: { id: itemId, reconciliationId: id },
+      select: { id: true },
+    });
+    if (!item) throw new NotFoundException("Item not found");
+
+    await this.prisma.bankReconciliationItem.update({
+      where: { id: itemId },
+      data: {
+        matchStatus: dto.matchStatus,
+        matchedItemId:
+          dto.matchedItemId === undefined ? undefined : dto.matchedItemId,
+      },
+    });
+
+    return this.findById(companyId, id);
+  }
+
+  async reconcile(
+    companyId: string,
+    userId: string,
+    id: string,
+  ): Promise<BankReconciliationDetailResponse> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: {
+        id: true,
+        status: true,
+        statementBalance: true,
+        bookBalance: true,
+        items: { select: { matchStatus: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_IN_PROGRESS) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa direkonsiliasi",
+      );
+    }
+
+    const allMatched =
+      existing.items.length > 0 &&
+      existing.items.every((it) => it.matchStatus !== "UNMATCHED");
+    const balanced =
+      Math.abs(existing.statementBalance - existing.bookBalance) <= 0.01;
+
+    if (!allMatched && !balanced) {
+      throw new BadRequestException(
+        "Selisih saldo belum nol dan masih ada item yang belum di-match",
+      );
+    }
+
+    await this.prisma.bankReconciliation.update({
+      where: { id },
+      data: {
+        status: STATUS_COMPLETED,
+        completedBy: userId,
+        completedAt: new Date(),
+      },
+    });
+
+    return this.findById(companyId, id);
+  }
+
+  async reopen(
+    companyId: string,
+    id: string,
+  ): Promise<BankReconciliationDetailResponse> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_COMPLETED) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus COMPLETED yang bisa dibuka kembali",
+      );
+    }
+
+    await this.prisma.bankReconciliation.update({
+      where: { id },
+      data: {
+        status: STATUS_IN_PROGRESS,
+        completedBy: null,
+        completedAt: null,
+      },
+    });
+
+    return this.findById(companyId, id);
+  }
+
+  async delete(
+    companyId: string,
+    id: string,
+  ): Promise<{ success: true }> {
+    const existing = await this.prisma.bankReconciliation.findFirst({
+      where: { id, companyId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (existing.status !== STATUS_IN_PROGRESS) {
+      throw new BadRequestException(
+        "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa dihapus",
+      );
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.bankReconciliationItem.deleteMany({
+        where: { reconciliationId: id },
+      });
+      await tx.bankReconciliation.delete({ where: { id } });
+    });
+    return { success: true };
+  }
+
+  // ===== helpers =====
+
+  private async assertAccount(companyId: string, accountId: string) {
+    const account = await this.prisma.account.findFirst({
+      where: {
+        id: accountId,
+        isActive: true,
+        category: { companyId },
+      },
+      select: { id: true },
+    });
+    if (!account) {
+      throw new NotFoundException("Account not found");
+    }
+  }
+
+  private async assertJournalEntriesValid(
+    companyId: string,
+    accountId: string,
+    items: BankReconciliationItemInputDto[],
+  ) {
+    const journalIds = Array.from(
+      new Set(
+        items
+          .map((i) => i.journalEntryId)
+          .filter((v): v is string => typeof v === "string" && v.length > 0),
+      ),
+    );
+    if (journalIds.length === 0) return;
+
+    const entries = await this.prisma.journalEntry.findMany({
+      where: {
+        id: { in: journalIds },
+        lines: { some: { accountId } },
+        OR: [
+          { branch: { companyId } },
+          { period: { companyId } },
+          {
+            AND: [{ branchId: null }, { periodId: null }],
+            lines: { some: { account: { category: { companyId } } } },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+    if (entries.length !== journalIds.length) {
+      throw new BadRequestException(
+        "Salah satu jurnal tidak valid untuk akun ini",
+      );
+    }
+  }
+
+  private async computeBookBalance(
+    accountId: string,
+    asOfDate: Date,
+  ): Promise<number> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        openingBalance: true,
+        category: { select: { normalSide: true } },
+      },
+    });
+    if (!account) return 0;
+
+    const agg = await this.prisma.journalEntryLine.aggregate({
+      where: {
+        accountId,
+        journal: { status: "POSTED", date: { lte: asOfDate } },
+      },
+      _sum: { debit: true, credit: true },
+    });
+    const debitSum = agg._sum.debit ?? 0;
+    const creditSum = agg._sum.credit ?? 0;
+    const normalSide = account.category?.normalSide ?? "DEBIT";
+    const movement =
+      normalSide === "DEBIT" ? debitSum - creditSum : creditSum - debitSum;
+    return round2((account.openingBalance ?? 0) + movement);
+  }
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function toReconResponse(r: RawRecon): BankReconciliationResponse {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    account: r.account
+      ? { id: r.account.id, code: r.account.code, name: r.account.name }
+      : null,
+    statementDate: r.statementDate.toISOString(),
+    statementBalance: r.statementBalance,
+    bookBalance: r.bookBalance,
+    status: r.status,
+    companyId: r.companyId,
+    completedBy: r.completedBy,
+    completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+    itemCount: r._count.items,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+function toReconItemResponse(
+  i: RawReconItem,
+): BankReconciliationItemResponse {
+  return {
+    id: i.id,
+    reconciliationId: i.reconciliationId,
+    source: i.source,
+    referenceNumber: i.referenceNumber,
+    description: i.description,
+    date: i.date.toISOString(),
+    amount: i.amount,
+    matchedItemId: i.matchedItemId,
+    matchStatus: i.matchStatus,
+    journalEntryId: i.journalEntryId,
+    createdAt: i.createdAt.toISOString(),
+  };
+}
+
+function toReconDetailResponse(
+  r: RawReconDetail,
+): BankReconciliationDetailResponse {
+  return {
+    ...toReconResponse(r),
+    items: r.items.map(toReconItemResponse),
+  };
+}

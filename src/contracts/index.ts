@@ -1,0 +1,81 @@
+export * from "./auth";
+export * from "./dtos/users";
+export * from "./dtos/products";
+export * from "./dtos/transactions";
+export * from "./dtos/categories";
+export * from "./dtos/brands";
+export * from "./dtos/suppliers";
+export * from "./dtos/branches";
+export * from "./dtos/customers";
+export * from "./dtos/stock";
+export * from "./dtos/tables";
+export * from "./dtos/order-queues";
+export * from "./dtos/settings";
+export * from "./dtos/promotions";
+export * from "./dtos/shifts";
+export * from "./dtos/bundles";
+export * from "./dtos/modifiers";
+export * from "./dtos/expenses";
+export * from "./dtos/debts";
+export * from "./dtos/returns";
+export * from "./dtos/purchases";
+export * from "./dtos/goods-receipts";
+export * from "./dtos/points";
+export * from "./dtos/roles";
+export * from "./dtos/approvals";
+export * from "./dtos/closing-reports";
+export * from "./dtos/stock-transfers";
+export * from "./dtos/stock-opname";
+export * from "./dtos/product-extensions";
+export * from "./dtos/vouchers";
+export * from "./dtos/gift-cards";
+export * from "./dtos/store-credits";
+export * from "./dtos/audit-logs";
+export * from "./dtos/accounting";
+export * from "./dtos/accounting-periods";
+export * from "./dtos/accounting-reports";
+export * from "./dtos/tax-configs";
+export * from "./dtos/bank-reconciliation";
+export * from "./dtos/recurring-journals";
+export * from "./dtos/reports";
+export * from "./dtos/cashier";
+export * from "./dtos/dashboard";
+export * from "./dtos/employee-schedules";
+export * from "./dtos/plans";
+export * from "./dtos/price-schedules";
+export * from "./dtos/sales-targets";
+export * from "./dtos/subscriptions";
+export * from "./dtos/platform-subscriptions";
+export * from "./dtos/platform-dashboard";
+export * from "./dtos/platform-notifications";
+export * from "./dtos/notifications";
+export * from "./dtos/pos-activity";
+export * from "./dtos/register";
+export * from "./dtos/whatsapp-receipt";
+export * from "./dtos/inventory-forecast";
+export * from "./dtos/installments";
+export * from "./dtos/me";
+export * from "./dtos/ai-assistant";
+export * from "./dtos/profit-dashboard";
+export * from "./dtos/analytics";
+export * from "./dtos/auto-journal";
+
+export type ApiSuccess<T> = { data: T };
+
+export type ApiError = {
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+};
+
+export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+export type PaginatedResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
