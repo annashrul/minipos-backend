@@ -64,6 +64,7 @@ import { StockOpnameModule } from "./modules/stock-opname/stock-opname.module";
 import { StockTransfersModule } from "./modules/stock-transfers/stock-transfers.module";
 import { SuppliersModule } from "./modules/suppliers/suppliers.module";
 import { TablesModule } from "./modules/tables/tables.module";
+import { TableOrdersModule } from "./modules/table-orders/table-orders.module";
 import { TransactionsModule } from "./modules/transactions/transactions.module";
 import { ModifiersModule } from "./modules/modifiers/modifiers.module";
 import { UploadsModule } from "./modules/uploads/uploads.module";
@@ -135,6 +136,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     SubscriptionsModule,
     SuppliersModule,
     TablesModule,
+    TableOrdersModule,
     TaxConfigsModule,
     ModifiersModule,
     TransactionsModule,

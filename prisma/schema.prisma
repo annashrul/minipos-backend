@@ -26,9 +26,9 @@ enum Role {
 model AppRole {
   id          String   @id @default(uuid())
   key         String   @unique // e.g. "SUPER_ADMIN", "CUSTOM_SALES"
-  name        String   // Display name
+  name        String // Display name
   description String?
-  color       String?  // Tailwind color class
+  color       String? // Tailwind color class
   isSystem    Boolean  @default(false) // System roles can't be deleted
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -113,71 +113,72 @@ enum CashMovementType {
 // ===========================
 
 model Company {
-  id            String    @id @default(uuid())
-  name          String
-  slug          String    @unique // URL-friendly identifier
-  address       String?
-  phone         String?
-  email         String?
-  logo          String?
-  plan          String    @default("FREE") // FREE, PRO, ENTERPRISE
-  planExpiresAt DateTime?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  users         User[]
-  branches      Branch[]
-  categories    Category[]
-  brands        Brand[]
-  products      Product[]
-  suppliers     Supplier[]
-  customers     Customer[]
-  promotions    Promotion[]
-  accountCategories AccountCategory[]
+  id                   String                     @id @default(uuid())
+  name                 String
+  slug                 String                     @unique // URL-friendly identifier
+  address              String?
+  phone                String?
+  email                String?
+  logo                 String?
+  plan                 String                     @default("FREE") // FREE, PRO, ENTERPRISE
+  planExpiresAt        DateTime?
+  isActive             Boolean                    @default(true)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  users                User[]
+  branches             Branch[]
+  categories           Category[]
+  brands               Brand[]
+  products             Product[]
+  suppliers            Supplier[]
+  customers            Customer[]
+  promotions           Promotion[]
+  accountCategories    AccountCategory[]
   subscriptionPayments SubscriptionPayment[]
-  taxConfigs        TaxConfig[]
-  recurringTemplates RecurringJournalTemplate[]
-  bankReconciliations BankReconciliation[]
-  modifierGroups    ModifierGroup[]
+  taxConfigs           TaxConfig[]
+  recurringTemplates   RecurringJournalTemplate[]
+  bankReconciliations  BankReconciliation[]
+  modifierGroups       ModifierGroup[]
 
   @@index([slug])
   @@map("companies")
 }
 
 model User {
-  id             String          @id @default(uuid())
-  name           String
-  email          String          @unique
-  password       String
-  role           String          @default("CASHIER")
-  companyId      String?
-  company        Company?        @relation(fields: [companyId], references: [id])
-  branchId       String?
-  branch         Branch?         @relation(fields: [branchId], references: [id])
-  isActive       Boolean         @default(true)
-  emailVerified  Boolean         @default(false)
-  deletedAt      DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  transactions   Transaction[]
-  auditLogs      AuditLog[]
-  activityLogs   ActivityLog[]
-  cashierShifts  CashierShift[]
-  debtsCreated   Debt[]
-  debtPayments   DebtPayment[]
-  approvalRequests  ApprovalRequest[] @relation("ApprovalRequester")
-  approvalDecisions ApprovalRequest[] @relation("ApprovalApprover")
-  storeCreditsIssued StoreCredit[]
-  returnsProcessed  ReturnExchange[]  @relation("ReturnProcessedBy")
-  giftCardsCreated  GiftCard[]        @relation("GiftCardCreatedBy")
-  salesTargets      SalesTarget[]
-  badges            CashierBadge[]
-  schedules         EmployeeSchedule[]
-  favorites         CashierFavorite[]
-  journalsCreated   JournalEntry[]    @relation("JournalCreatedBy")
-  journalsApproved  JournalEntry[]    @relation("JournalApprovedBy")
-  journalChangeLogs JournalChangeLog[]
-  recurringTemplates RecurringJournalTemplate[]
+  id                  String                     @id @default(uuid())
+  name                String
+  email               String                     @unique
+  password            String
+  role                String                     @default("CASHIER")
+  companyId           String?
+  company             Company?                   @relation(fields: [companyId], references: [id])
+  branchId            String?
+  branch              Branch?                    @relation(fields: [branchId], references: [id])
+  isActive            Boolean                    @default(true)
+  emailVerified       Boolean                    @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  transactions        Transaction[]
+  auditLogs           AuditLog[]
+  activityLogs        ActivityLog[]
+  cashierShifts       CashierShift[]
+  debtsCreated        Debt[]
+  debtPayments        DebtPayment[]
+  approvalRequests    ApprovalRequest[]          @relation("ApprovalRequester")
+  approvalDecisions   ApprovalRequest[]          @relation("ApprovalApprover")
+  storeCreditsIssued  StoreCredit[]
+  returnsProcessed    ReturnExchange[]           @relation("ReturnProcessedBy")
+  giftCardsCreated    GiftCard[]                 @relation("GiftCardCreatedBy")
+  salesTargets        SalesTarget[]
+  badges              CashierBadge[]
+  schedules           EmployeeSchedule[]
+  favorites           CashierFavorite[]
+  journalsCreated     JournalEntry[]             @relation("JournalCreatedBy")
+  journalsApproved    JournalEntry[]             @relation("JournalApprovedBy")
+  journalChangeLogs   JournalChangeLog[]
+  recurringTemplates  RecurringJournalTemplate[]
+  tableOrdersApproved TableOrder[]
 
   @@index([email])
   @@index([role])
@@ -187,17 +188,17 @@ model User {
 }
 
 model AppMenu {
-  id            String               @id @default(uuid())
-  key           String               @unique
-  name          String
-  path          String               @unique
-  group         String
-  sortOrder     Int                  @default(0)
-  isActive      Boolean              @default(true)
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  actions       MenuAction[]
-  roleMenus     RoleMenuPermission[]
+  id        String               @id @default(uuid())
+  key       String               @unique
+  name      String
+  path      String               @unique
+  group     String
+  sortOrder Int                  @default(0)
+  isActive  Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  actions   MenuAction[]
+  roleMenus RoleMenuPermission[]
 
   @@index([group])
   @@index([sortOrder])
@@ -206,16 +207,16 @@ model AppMenu {
 }
 
 model MenuAction {
-  id            String                 @id @default(uuid())
-  menuId        String
-  menu          AppMenu                @relation(fields: [menuId], references: [id], onDelete: Cascade)
-  key           String
-  name          String
-  sortOrder     Int                    @default(0)
-  isActive      Boolean                @default(true)
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
-  roleActions   RoleActionPermission[]
+  id          String                 @id @default(uuid())
+  menuId      String
+  menu        AppMenu                @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  key         String
+  name        String
+  sortOrder   Int                    @default(0)
+  isActive    Boolean                @default(true)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  roleActions RoleActionPermission[]
 
   @@unique([menuId, key])
   @@index([menuId])
@@ -225,13 +226,13 @@ model MenuAction {
 }
 
 model RoleMenuPermission {
-  id            String      @id @default(uuid())
-  role          String
-  menuId        String
-  menu          AppMenu     @relation(fields: [menuId], references: [id], onDelete: Cascade)
-  allowed       Boolean     @default(false)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id        String   @id @default(uuid())
+  role      String
+  menuId    String
+  menu      AppMenu  @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  allowed   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([role, menuId])
   @@index([role])
@@ -240,13 +241,13 @@ model RoleMenuPermission {
 }
 
 model RoleActionPermission {
-  id            String       @id @default(uuid())
-  role          String
-  menuActionId  String
-  menuAction    MenuAction   @relation(fields: [menuActionId], references: [id], onDelete: Cascade)
-  allowed       Boolean      @default(false)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id           String     @id @default(uuid())
+  role         String
+  menuActionId String
+  menuAction   MenuAction @relation(fields: [menuActionId], references: [id], onDelete: Cascade)
+  allowed      Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   @@unique([role, menuActionId])
   @@index([role])
@@ -255,47 +256,49 @@ model RoleActionPermission {
 }
 
 model Branch {
-  id              String          @id @default(uuid())
-  name            String
-  code            String?
-  address         String?
-  phone           String?
-  latitude        Float?
-  longitude       Float?
-  companyId       String
-  company         Company         @relation(fields: [companyId], references: [id])
-  isActive        Boolean         @default(true)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  users           User[]
-  stockTransfersFrom StockTransfer[] @relation("TransferFrom")
-  stockTransfersTo   StockTransfer[] @relation("TransferTo")
-  stockOpnames    StockOpname[]
-  productPrices   BranchProductPrice[]
-  branchStocks    BranchStock[]
-  stockMovements  StockMovement[]
-  transactions    Transaction[]
-  purchaseOrders  PurchaseOrder[]
-  cashierShifts   CashierShift[]
-  expenses        Expense[]
-  auditLogs       AuditLog[]
-  settings        Setting[]
-  debts           Debt[]
-  approvalRequests ApprovalRequest[]
-  returnExchanges  ReturnExchange[]
-  giftCards        GiftCard[]
-  salesTargets     SalesTarget[]
-  priceSchedules   PriceSchedule[]
-  employeeSchedules EmployeeSchedule[]
-  orderQueues      OrderQueue[]
-  accounts         Account[]
-  journalEntries   JournalEntry[]
-  restaurantTables RestaurantTable[]
-  productBundles ProductBundle[]
-  promotions     Promotion[]
-  closingReports ClosingReport[]
-  goodsReceipts  GoodsReceipt[]
+  id                 String                     @id @default(uuid())
+  name               String
+  code               String?
+  address            String?
+  phone              String?
+  latitude           Float?
+  longitude          Float?
+  companyId          String
+  company            Company                    @relation(fields: [companyId], references: [id])
+  isActive           Boolean                    @default(true)
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  users              User[]
+  stockTransfersFrom StockTransfer[]            @relation("TransferFrom")
+  stockTransfersTo   StockTransfer[]            @relation("TransferTo")
+  stockOpnames       StockOpname[]
+  productPrices      BranchProductPrice[]
+  branchStocks       BranchStock[]
+  stockMovements     StockMovement[]
+  transactions       Transaction[]
+  purchaseOrders     PurchaseOrder[]
+  cashierShifts      CashierShift[]
+  expenses           Expense[]
+  auditLogs          AuditLog[]
+  settings           Setting[]
+  debts              Debt[]
+  approvalRequests   ApprovalRequest[]
+  returnExchanges    ReturnExchange[]
+  giftCards          GiftCard[]
+  salesTargets       SalesTarget[]
+  priceSchedules     PriceSchedule[]
+  employeeSchedules  EmployeeSchedule[]
+  orderQueues        OrderQueue[]
+  accounts           Account[]
+  journalEntries     JournalEntry[]
+  restaurantTables   RestaurantTable[]
+  productBundles     ProductBundle[]
+  promotions         Promotion[]
+  closingReports     ClosingReport[]
+  goodsReceipts      GoodsReceipt[]
   recurringTemplates RecurringJournalTemplate[]
+  tableSessions      TableSession[]
+  tableOrders        TableOrder[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -342,16 +345,16 @@ model BranchStock {
 // ===========================
 
 model Category {
-  id          String        @id @default(uuid())
+  id          String          @id @default(uuid())
   name        String
   description String?
   parentId    String?
-  parent      Category?     @relation("SubCategories", fields: [parentId], references: [id])
-  children    Category[]    @relation("SubCategories")
+  parent      Category?       @relation("SubCategories", fields: [parentId], references: [id])
+  children    Category[]      @relation("SubCategories")
   companyId   String
-  company     Company       @relation(fields: [companyId], references: [id])
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  company     Company         @relation(fields: [companyId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   products    Product[]
   promotions  Promotion[]
   bundles     ProductBundle[]
@@ -377,47 +380,48 @@ model Brand {
 }
 
 model Product {
-  id               String              @id @default(uuid())
-  code             String
-  name             String
-  categoryId       String
-  category         Category            @relation(fields: [categoryId], references: [id])
-  brandId          String?
-  brand            Brand?              @relation(fields: [brandId], references: [id])
-  supplierId       String?
-  supplier         Supplier?           @relation(fields: [supplierId], references: [id])
-  companyId        String
-  company          Company             @relation(fields: [companyId], references: [id])
-  purchasePrice    Float
-  sellingPrice     Float
-  stock            Int                 @default(0)
-  minStock         Int                 @default(5)
-  barcode          String?
-  unit             String              @default("pcs")
-  isActive         Boolean             @default(true)
-  description      String?
-  imageUrl         String?
-  expiryDate       DateTime?
-  deletedAt        DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  barcodes         ProductBarcode[]
-  priceHistories   ProductPriceHistory[]
-  transactionItems TransactionItem[]
-  stockMovements   StockMovement[]
-  promotions       Promotion[]
+  id                 String                 @id @default(uuid())
+  code               String
+  name               String
+  categoryId         String
+  category           Category               @relation(fields: [categoryId], references: [id])
+  brandId            String?
+  brand              Brand?                 @relation(fields: [brandId], references: [id])
+  supplierId         String?
+  supplier           Supplier?              @relation(fields: [supplierId], references: [id])
+  companyId          String
+  company            Company                @relation(fields: [companyId], references: [id])
+  purchasePrice      Float
+  sellingPrice       Float
+  stock              Int                    @default(0)
+  minStock           Int                    @default(5)
+  barcode            String?
+  unit               String                 @default("pcs")
+  isActive           Boolean                @default(true)
+  description        String?
+  imageUrl           String?
+  expiryDate         DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  barcodes           ProductBarcode[]
+  priceHistories     ProductPriceHistory[]
+  transactionItems   TransactionItem[]
+  stockMovements     StockMovement[]
+  promotions         Promotion[]
   purchaseOrderItems PurchaseOrderItem[]
-  stockOpnameItems StockOpnameItem[]
-  branchPrices     BranchProductPrice[]
-  branchStocks     BranchStock[]
-  units            ProductUnit[]
-  tierPrices       ProductTierPrice[]
-  returnItems      ReturnExchangeItem[]
-  exchangeItems    ReturnExchangeItem[] @relation("ExchangeProduct")
-  priceSchedules   PriceSchedule[]
-  cashierFavorites CashierFavorite[]
-  bundleItems     ProductBundleItem[]
-  modifierGroups  ProductModifierGroup[]
+  stockOpnameItems   StockOpnameItem[]
+  branchPrices       BranchProductPrice[]
+  branchStocks       BranchStock[]
+  units              ProductUnit[]
+  tierPrices         ProductTierPrice[]
+  returnItems        ReturnExchangeItem[]
+  exchangeItems      ReturnExchangeItem[]   @relation("ExchangeProduct")
+  priceSchedules     PriceSchedule[]
+  cashierFavorites   CashierFavorite[]
+  bundleItems        ProductBundleItem[]
+  modifierGroups     ProductModifierGroup[]
+  tableOrderItems    TableOrderItem[]
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -445,16 +449,16 @@ model ProductBarcode {
 }
 
 model ProductPriceHistory {
-  id            String   @id @default(uuid())
-  productId     String
-  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  oldBuyPrice   Float
-  newBuyPrice   Float
-  oldSellPrice  Float
-  newSellPrice  Float
-  changedBy     String?
-  reason        String?
-  createdAt     DateTime @default(now())
+  id           String   @id @default(uuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  oldBuyPrice  Float
+  newBuyPrice  Float
+  oldSellPrice Float
+  newSellPrice Float
+  changedBy    String?
+  reason       String?
+  createdAt    DateTime @default(now())
 
   @@index([productId])
   @@index([createdAt])
@@ -462,18 +466,18 @@ model ProductPriceHistory {
 }
 
 model ProductUnit {
-  id              String   @id @default(uuid())
-  productId       String
-  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name            String   // e.g. "Box", "Bungkus", "Batang"
-  conversionQty   Int      // how many base units in 1 of this unit (Batang=1, Bungkus=16, Box=192)
-  sellingPrice    Float    // selling price for this unit
-  purchasePrice   Float?   // purchase price for this unit (optional)
-  barcode         String?  // optional barcode for this unit
-  isDefault       Boolean  @default(false) // is this the default selling unit?
-  sortOrder       Int      @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name          String // e.g. "Box", "Bungkus", "Batang"
+  conversionQty Int // how many base units in 1 of this unit (Batang=1, Bungkus=16, Box=192)
+  sellingPrice  Float // selling price for this unit
+  purchasePrice Float? // purchase price for this unit (optional)
+  barcode       String? // optional barcode for this unit
+  isDefault     Boolean  @default(false) // is this the default selling unit?
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([productId, name])
   @@index([productId])
@@ -482,13 +486,13 @@ model ProductUnit {
 }
 
 model ProductTierPrice {
-  id         String   @id @default(uuid())
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  minQty     Int
-  price      Float
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  minQty    Int
+  price     Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([productId, minQty])
   @@index([productId])
@@ -501,18 +505,18 @@ model ProductTierPrice {
 // ===========================
 
 model Supplier {
-  id              String            @id @default(uuid())
-  name            String
-  contact         String?
-  address         String?
-  email           String?
-  companyId       String
-  company         Company           @relation(fields: [companyId], references: [id])
-  isActive        Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  products        Product[]
-  purchaseOrders  PurchaseOrder[]
+  id               String            @id @default(uuid())
+  name             String
+  contact          String?
+  address          String?
+  email            String?
+  companyId        String
+  company          Company           @relation(fields: [companyId], references: [id])
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  products         Product[]
+  purchaseOrders   PurchaseOrder[]
   supplierPayments SupplierPayment[]
 
   @@index([companyId])
@@ -520,16 +524,16 @@ model Supplier {
 }
 
 model SupplierPayment {
-  id          String   @id @default(uuid())
-  supplierId  String
-  supplier    Supplier @relation(fields: [supplierId], references: [id])
-  poId        String?
-  amount      Float
-  method      PaymentMethod @default(TRANSFER)
-  reference   String?
-  notes       String?
-  paidAt      DateTime @default(now())
-  createdAt   DateTime @default(now())
+  id         String        @id @default(uuid())
+  supplierId String
+  supplier   Supplier      @relation(fields: [supplierId], references: [id])
+  poId       String?
+  amount     Float
+  method     PaymentMethod @default(TRANSFER)
+  reference  String?
+  notes      String?
+  paidAt     DateTime      @default(now())
+  createdAt  DateTime      @default(now())
 
   @@index([supplierId])
   @@index([paidAt])
@@ -541,25 +545,25 @@ model SupplierPayment {
 // ===========================
 
 model Customer {
-  id              String           @id @default(uuid())
-  name            String
-  phone           String?
-  email           String?
-  address         String?
-  companyId       String
-  company         Company          @relation(fields: [companyId], references: [id])
-  memberLevel     MemberLevel      @default(REGULAR)
-  totalSpending   Float            @default(0)
-  points          Int              @default(0)
-  memberCardCode  String?
-  dateOfBirth     DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  transactions    Transaction[]
-  pointHistories  CustomerPointHistory[]
-  storeCredits    StoreCredit[]
-  returns         ReturnExchange[]
-  giftCards       GiftCard[]
+  id             String                 @id @default(uuid())
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  companyId      String
+  company        Company                @relation(fields: [companyId], references: [id])
+  memberLevel    MemberLevel            @default(REGULAR)
+  totalSpending  Float                  @default(0)
+  points         Int                    @default(0)
+  memberCardCode String?
+  dateOfBirth    DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  transactions   Transaction[]
+  pointHistories CustomerPointHistory[]
+  storeCredits   StoreCredit[]
+  returns        ReturnExchange[]
+  giftCards      GiftCard[]
 
   @@unique([companyId, phone])
   @@unique([companyId, memberCardCode])
@@ -575,8 +579,8 @@ model CustomerPointHistory {
   customerId  String
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   points      Int
-  type        String   // EARN, REDEEM, EXPIRED, ADJUST
-  reference   String?  // invoice number or reason
+  type        String // EARN, REDEEM, EXPIRED, ADJUST
+  reference   String? // invoice number or reason
   description String?
   createdAt   DateTime @default(now())
 
@@ -590,34 +594,35 @@ model CustomerPointHistory {
 // ===========================
 
 model Transaction {
-  id              String            @id @default(uuid())
-  invoiceNumber   String            @unique
-  userId          String
-  user            User              @relation(fields: [userId], references: [id])
-  branchId        String?
-  branch          Branch?           @relation(fields: [branchId], references: [id])
-  customerId      String?
-  customer        Customer?         @relation(fields: [customerId], references: [id])
-  subtotal        Float
-  discountAmount  Float             @default(0)
-  taxAmount       Float             @default(0)
-  grandTotal      Float
-  paymentMethod   PaymentMethod     @default(CASH)
-  paymentAmount   Float
-  changeAmount    Float             @default(0)
-  status          TransactionStatus @default(COMPLETED)
-  voidReason      String?
-  promoApplied    String?
-  notes           String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  items           TransactionItem[]
-  payments        Payment[]
-  refund          Refund?
-  returns         ReturnExchange[]
-  orderQueues     OrderQueue[]
-  tableId         String?
-  table           RestaurantTable? @relation(fields: [tableId], references: [id])
+  id             String            @id @default(uuid())
+  invoiceNumber  String            @unique
+  userId         String
+  user           User              @relation(fields: [userId], references: [id])
+  branchId       String?
+  branch         Branch?           @relation(fields: [branchId], references: [id])
+  customerId     String?
+  customer       Customer?         @relation(fields: [customerId], references: [id])
+  subtotal       Float
+  discountAmount Float             @default(0)
+  taxAmount      Float             @default(0)
+  grandTotal     Float
+  paymentMethod  PaymentMethod     @default(CASH)
+  paymentAmount  Float
+  changeAmount   Float             @default(0)
+  status         TransactionStatus @default(COMPLETED)
+  voidReason     String?
+  promoApplied   String?
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  items          TransactionItem[]
+  payments       Payment[]
+  refund         Refund?
+  returns        ReturnExchange[]
+  orderQueues    OrderQueue[]
+  tableId        String?
+  table          RestaurantTable?  @relation(fields: [tableId], references: [id])
+  tableSession   TableSession?
 
   @@index([invoiceNumber])
   @@index([userId])
@@ -642,8 +647,8 @@ model TransactionItem {
   productName   String
   productCode   String
   quantity      Int
-  unitName      String    @default("PCS")
-  conversionQty Int       @default(1)
+  unitName      String      @default("PCS")
+  conversionQty Int         @default(1)
   baseQty       Int?
   unitPrice     Float
   discount      Float       @default(0)
@@ -652,7 +657,7 @@ model TransactionItem {
   // Selected modifier options snapshot:
   // [{ groupId, groupName, optionId, optionName, priceAdjustment }]
   modifiers     Json?
-  notes         String?     // Kitchen notes per item ("no onion", "extra spicy")
+  notes         String? // Kitchen notes per item ("no onion", "extra spicy")
   createdAt     DateTime    @default(now())
 
   @@index([transactionId])
@@ -669,19 +674,19 @@ model TransactionItem {
 //      "Topping" group → "Cheese +5K / Mozzarella +8K / Telur +3K"
 // ──────────────────────────────────────────────────────────────
 model ModifierGroup {
-  id          String                 @id @default(uuid())
-  companyId   String
-  company     Company                @relation(fields: [companyId], references: [id])
-  name        String                 // Display label
-  required    Boolean                @default(false)
-  minSelect   Int                    @default(0)
-  maxSelect   Int                    @default(1)
-  sortOrder   Int                    @default(0)
-  isActive    Boolean                @default(true)
-  options     ModifierOption[]
-  products    ProductModifierGroup[]
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  id        String                 @id @default(uuid())
+  companyId String
+  company   Company                @relation(fields: [companyId], references: [id])
+  name      String // Display label
+  required  Boolean                @default(false)
+  minSelect Int                    @default(0)
+  maxSelect Int                    @default(1)
+  sortOrder Int                    @default(0)
+  isActive  Boolean                @default(true)
+  options   ModifierOption[]
+  products  ProductModifierGroup[]
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
 
   @@index([companyId])
   @@map("modifier_groups")
@@ -730,16 +735,16 @@ model Payment {
 }
 
 model Refund {
-  id              String      @id @default(uuid())
-  transactionId   String      @unique
-  transaction     Transaction @relation(fields: [transactionId], references: [id])
-  reason          String
-  refundAmount    Float
-  refundMethod    PaymentMethod @default(CASH)
-  refundedBy      String?
-  isPartial       Boolean     @default(false)
-  itemsReturned   String?     // JSON of returned items
-  createdAt       DateTime    @default(now())
+  id            String        @id @default(uuid())
+  transactionId String        @unique
+  transaction   Transaction   @relation(fields: [transactionId], references: [id])
+  reason        String
+  refundAmount  Float
+  refundMethod  PaymentMethod @default(CASH)
+  refundedBy    String?
+  isPartial     Boolean       @default(false)
+  itemsReturned String? // JSON of returned items
+  createdAt     DateTime      @default(now())
 
   @@index([transactionId])
   @@map("refunds")
@@ -775,19 +780,19 @@ model StockMovement {
 }
 
 model StockOpname {
-  id          String            @id @default(uuid())
-  opnameNumber String           @unique
-  branchId    String?
-  branch      Branch?           @relation(fields: [branchId], references: [id])
-  companyId   String?
-  status      StockOpnameStatus @default(DRAFT)
-  notes       String?
-  startedAt   DateTime          @default(now())
-  completedAt DateTime?
-  createdBy   String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  items       StockOpnameItem[]
+  id           String            @id @default(uuid())
+  opnameNumber String            @unique
+  branchId     String?
+  branch       Branch?           @relation(fields: [branchId], references: [id])
+  companyId    String?
+  status       StockOpnameStatus @default(DRAFT)
+  notes        String?
+  startedAt    DateTime          @default(now())
+  completedAt  DateTime?
+  createdBy    String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  items        StockOpnameItem[]
 
   @@index([status])
   @@index([branchId])
@@ -812,23 +817,23 @@ model StockOpnameItem {
 }
 
 model StockTransfer {
-  id              String              @id @default(uuid())
-  transferNumber  String              @unique
-  fromBranchId    String
-  fromBranch      Branch              @relation("TransferFrom", fields: [fromBranchId], references: [id])
-  toBranchId      String
-  toBranch        Branch              @relation("TransferTo", fields: [toBranchId], references: [id])
-  companyId       String?
-  status          StockTransferStatus @default(PENDING)
-  notes           String?
-  requestedBy     String?
-  approvedBy      String?
-  requestedAt     DateTime            @default(now())
-  approvedAt      DateTime?
-  receivedAt      DateTime?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  items           StockTransferItem[]
+  id             String              @id @default(uuid())
+  transferNumber String              @unique
+  fromBranchId   String
+  fromBranch     Branch              @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranchId     String
+  toBranch       Branch              @relation("TransferTo", fields: [toBranchId], references: [id])
+  companyId      String?
+  status         StockTransferStatus @default(PENDING)
+  notes          String?
+  requestedBy    String?
+  approvedBy     String?
+  requestedAt    DateTime            @default(now())
+  approvedAt     DateTime?
+  receivedAt     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  items          StockTransferItem[]
 
   @@index([fromBranchId])
   @@index([toBranchId])
@@ -855,28 +860,28 @@ model StockTransferItem {
 // ===========================
 
 model PurchaseOrder {
-  id            String              @id @default(uuid())
-  orderNumber   String              @unique
-  supplierId    String
-  supplier      Supplier            @relation(fields: [supplierId], references: [id])
-  branchId      String?
-  branch        Branch?             @relation(fields: [branchId], references: [id])
-  companyId     String?
-  status        PurchaseOrderStatus @default(DRAFT)
-  totalAmount   Float               @default(0)
-  receivedAmount Float              @default(0)
-  paidAmount    Float               @default(0)
-  notes         String?
-  closingNotes  String?
-  orderDate     DateTime            @default(now())
-  expectedDate  DateTime?
-  receivedDate  DateTime?
-  closedDate    DateTime?
-  createdBy     String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  items         PurchaseOrderItem[]
-  goodsReceipts GoodsReceipt[]
+  id             String              @id @default(uuid())
+  orderNumber    String              @unique
+  supplierId     String
+  supplier       Supplier            @relation(fields: [supplierId], references: [id])
+  branchId       String?
+  branch         Branch?             @relation(fields: [branchId], references: [id])
+  companyId      String?
+  status         PurchaseOrderStatus @default(DRAFT)
+  totalAmount    Float               @default(0)
+  receivedAmount Float               @default(0)
+  paidAmount     Float               @default(0)
+  notes          String?
+  closingNotes   String?
+  orderDate      DateTime            @default(now())
+  expectedDate   DateTime?
+  receivedDate   DateTime?
+  closedDate     DateTime?
+  createdBy      String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  items          PurchaseOrderItem[]
+  goodsReceipts  GoodsReceipt[]
 
   @@index([supplierId])
   @@index([branchId])
@@ -886,11 +891,11 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id              String        @id @default(uuid())
-  purchaseOrderId String
-  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product       @relation(fields: [productId], references: [id])
+  id                String        @id @default(uuid())
+  purchaseOrderId   String
+  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product       @relation(fields: [productId], references: [id])
   quantity          Int
   receivedQty       Int           @default(0)
   unitPrice         Float
@@ -906,18 +911,18 @@ model PurchaseOrderItem {
 }
 
 model GoodsReceipt {
-  id              String        @id @default(uuid())
-  receiptNumber   String        @unique
+  id              String             @id @default(uuid())
+  receiptNumber   String             @unique
   purchaseOrderId String
-  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  purchaseOrder   PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
   companyId       String?
   branchId        String?
-  branch          Branch?       @relation(fields: [branchId], references: [id])
+  branch          Branch?            @relation(fields: [branchId], references: [id])
   receivedBy      String?
   receivedByName  String?
   notes           String?
-  receivedAt      DateTime      @default(now())
-  createdAt       DateTime      @default(now())
+  receivedAt      DateTime           @default(now())
+  createdAt       DateTime           @default(now())
   items           GoodsReceiptItem[]
 
   @@index([purchaseOrderId])
@@ -927,15 +932,15 @@ model GoodsReceipt {
 }
 
 model GoodsReceiptItem {
-  id              String       @id @default(uuid())
-  goodsReceiptId  String
-  goodsReceipt    GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
-  productId       String
-  productName     String
-  quantityOrdered Int
+  id               String       @id @default(uuid())
+  goodsReceiptId   String
+  goodsReceipt     GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  productId        String
+  productName      String
+  quantityOrdered  Int
   quantityReceived Int
-  notes           String?
-  createdAt       DateTime     @default(now())
+  notes            String?
+  createdAt        DateTime     @default(now())
 
   @@index([goodsReceiptId])
   @@map("goods_receipt_items")
@@ -946,59 +951,59 @@ model GoodsReceiptItem {
 // ===========================
 
 model CashierShift {
-  id             String         @id @default(uuid())
-  userId         String
-  user           User           @relation(fields: [userId], references: [id])
-  branchId       String?
-  branch         Branch?        @relation(fields: [branchId], references: [id])
-  openedAt       DateTime       @default(now())
-  closedAt       DateTime?
-  openingCash    Float
-  closingCash    Float?
-  expectedCash   Float?
-  cashDifference Float?
-  totalSales     Float?
+  id                String         @id @default(uuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id])
+  branchId          String?
+  branch            Branch?        @relation(fields: [branchId], references: [id])
+  openedAt          DateTime       @default(now())
+  closedAt          DateTime?
+  openingCash       Float
+  closingCash       Float?
+  expectedCash      Float?
+  cashDifference    Float?
+  totalSales        Float?
   totalTransactions Int?
-  notes          String?
-  isOpen         Boolean        @default(true)
-  cashMovements  CashMovement[]
+  notes             String?
+  isOpen            Boolean        @default(true)
+  cashMovements     CashMovement[]
+  closingReport     ClosingReport?
 
   @@index([userId])
   @@index([branchId])
   @@index([isOpen])
   @@index([openedAt])
   @@map("cashier_shifts")
-  closingReport  ClosingReport?
 }
 
 model ClosingReport {
-  id                 String       @id @default(uuid())
-  shiftId            String       @unique
-  shift              CashierShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  cashierUserId      String?      // for finding existing report same day
-  branchId           String?
-  branch             Branch?      @relation(fields: [branchId], references: [id])
-  companyId          String?
-  cashierName        String
-  date               DateTime     @db.Date // closing date
-  openingCash        Float
-  closingCash        Float
-  expectedCash       Float
-  cashDifference     Float
-  totalTransactions  Int          @default(0)
-  totalSales         Float        @default(0)
-  totalDiscount      Float        @default(0)
-  totalTax           Float        @default(0)
-  totalCashSales     Float        @default(0)
-  totalNonCashSales  Float        @default(0)
-  cashMovementIn     Float        @default(0)
-  cashMovementOut    Float        @default(0)
-  voidCount          Int          @default(0)
-  refundCount        Int          @default(0)
-  paymentSummary     Json?        // [{method, count, total}]
-  notes              String?
-  allowReopen        Boolean      @default(false) // admin sets true via reclosing to let cashier open new shift
-  createdAt          DateTime     @default(now())
+  id                String       @id @default(uuid())
+  shiftId           String       @unique
+  shift             CashierShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  cashierUserId     String? // for finding existing report same day
+  branchId          String?
+  branch            Branch?      @relation(fields: [branchId], references: [id])
+  companyId         String?
+  cashierName       String
+  date              DateTime     @db.Date // closing date
+  openingCash       Float
+  closingCash       Float
+  expectedCash      Float
+  cashDifference    Float
+  totalTransactions Int          @default(0)
+  totalSales        Float        @default(0)
+  totalDiscount     Float        @default(0)
+  totalTax          Float        @default(0)
+  totalCashSales    Float        @default(0)
+  totalNonCashSales Float        @default(0)
+  cashMovementIn    Float        @default(0)
+  cashMovementOut   Float        @default(0)
+  voidCount         Int          @default(0)
+  refundCount       Int          @default(0)
+  paymentSummary    Json? // [{method, count, total}]
+  notes             String?
+  allowReopen       Boolean      @default(false) // admin sets true via reclosing to let cashier open new shift
+  createdAt         DateTime     @default(now())
 
   @@index([branchId])
   @@index([companyId])
@@ -1009,14 +1014,14 @@ model ClosingReport {
 }
 
 model CashMovement {
-  id          String           @id @default(uuid())
-  shiftId     String
-  shift       CashierShift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  type        CashMovementType
-  amount      Float
-  reason      String
-  reference   String?
-  createdAt   DateTime         @default(now())
+  id        String           @id @default(uuid())
+  shiftId   String
+  shift     CashierShift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  type      CashMovementType
+  amount    Float
+  reason    String
+  reference String?
+  createdAt DateTime         @default(now())
 
   @@index([shiftId])
   @@map("cash_movements")
@@ -1051,34 +1056,34 @@ model Expense {
 // ===========================
 
 model Promotion {
-  id            String    @id @default(uuid())
-  name          String
-  type          PromoType
-  value         Float
-  minPurchase   Float?
-  maxDiscount   Float?
-  scope         String    @default("all") // "all", "product", "category"
-  categoryId    String?
-  category      Category? @relation(fields: [categoryId], references: [id])
-  productId     String?
-  product       Product?  @relation(fields: [productId], references: [id])
-  companyId     String
-  company       Company   @relation(fields: [companyId], references: [id])
-  branchId      String?
-  branch        Branch?   @relation(fields: [branchId], references: [id])
-  buyQty        Int?      // BUY_X_GET_Y: buy this many
-  getQty        Int?      // BUY_X_GET_Y: get this many free
-  getProductId  String?   // BUY_X_GET_Y: free product id (null = same product)
-  voucherCode   String?   @unique
-  usageLimit    Int?
-  usageCount    Int       @default(0)
-  description   String?
-  isActive      Boolean   @default(true)
-  startDate     DateTime
-  endDate       DateTime
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  vouchers      Voucher[]
+  id           String    @id @default(uuid())
+  name         String
+  type         PromoType
+  value        Float
+  minPurchase  Float?
+  maxDiscount  Float?
+  scope        String    @default("all") // "all", "product", "category"
+  categoryId   String?
+  category     Category? @relation(fields: [categoryId], references: [id])
+  productId    String?
+  product      Product?  @relation(fields: [productId], references: [id])
+  companyId    String
+  company      Company   @relation(fields: [companyId], references: [id])
+  branchId     String?
+  branch       Branch?   @relation(fields: [branchId], references: [id])
+  buyQty       Int? // BUY_X_GET_Y: buy this many
+  getQty       Int? // BUY_X_GET_Y: get this many free
+  getProductId String? // BUY_X_GET_Y: free product id (null = same product)
+  voucherCode  String?   @unique
+  usageLimit   Int?
+  usageCount   Int       @default(0)
+  description  String?
+  isActive     Boolean   @default(true)
+  startDate    DateTime
+  endDate      DateTime
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  vouchers     Voucher[]
 
   @@index([companyId])
   @@index([branchId])
@@ -1113,7 +1118,7 @@ model Voucher {
 model Setting {
   id        String   @id @default(uuid())
   key       String
-  value     String   // JSON string
+  value     String // JSON string
   label     String?
   group     String?
   branchId  String?
@@ -1161,7 +1166,7 @@ model ActivityLog {
   user        User     @relation(fields: [userId], references: [id])
   action      String
   description String?
-  metadata    String?  // JSON
+  metadata    String? // JSON
   createdAt   DateTime @default(now())
 
   @@index([userId])
@@ -1177,16 +1182,16 @@ model ActivityLog {
 
 model Debt {
   id              String        @id @default(uuid())
-  type            DebtType      // PAYABLE (hutang - kita berhutang) or RECEIVABLE (piutang - orang lain berhutang ke kita)
-  referenceType   String?       // "TRANSACTION", "PURCHASE", "OTHER"
-  referenceId     String?       // linked transaction or purchase order ID
-  partyType       String        // "CUSTOMER" or "SUPPLIER" or "OTHER"
-  partyId         String?       // customer or supplier ID
-  partyName       String        // name for display
+  type            DebtType // PAYABLE (hutang - kita berhutang) or RECEIVABLE (piutang - orang lain berhutang ke kita)
+  referenceType   String? // "TRANSACTION", "PURCHASE", "OTHER"
+  referenceId     String? // linked transaction or purchase order ID
+  partyType       String // "CUSTOMER" or "SUPPLIER" or "OTHER"
+  partyId         String? // customer or supplier ID
+  partyName       String // name for display
   description     String?
-  totalAmount     Float         // total debt amount
+  totalAmount     Float // total debt amount
   paidAmount      Float         @default(0) // how much has been paid
-  remainingAmount Float         // totalAmount - paidAmount
+  remainingAmount Float // totalAmount - paidAmount
   status          DebtStatus    @default(UNPAID)
   dueDate         DateTime?
   branchId        String?
@@ -1200,9 +1205,9 @@ model Debt {
   installments    Installment[]
 
   // Installment plan config (null = no installment plan)
-  downPayment     Float?        // DP amount
-  installmentCount Int?         // number of installments
-  installmentInterval String?   // "WEEKLY" or "MONTHLY"
+  downPayment         Float? // DP amount
+  installmentCount    Int? // number of installments
+  installmentInterval String? // "WEEKLY" or "MONTHLY"
 
   @@index([type])
   @@index([status])
@@ -1216,33 +1221,33 @@ model Debt {
 }
 
 model DebtPayment {
-  id          String   @id @default(uuid())
-  debtId      String
-  debt        Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
-  amount      Float
-  method      String   @default("CASH") // CASH, TRANSFER, etc
-  notes       String?
-  paidBy      String
-  payer       User     @relation(fields: [paidBy], references: [id])
-  paidAt      DateTime @default(now())
+  id     String   @id @default(uuid())
+  debtId String
+  debt   Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount Float
+  method String   @default("CASH") // CASH, TRANSFER, etc
+  notes  String?
+  paidBy String
+  payer  User     @relation(fields: [paidBy], references: [id])
+  paidAt DateTime @default(now())
 
   @@index([debtId])
   @@map("debt_payments")
 }
 
 model Installment {
-  id              String    @id @default(uuid())
-  debtId          String
-  debt            Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
-  installmentNo   Int       // 1, 2, 3, ...
-  amount          Float     // nominal per cicilan
-  dueDate         DateTime  // jatuh tempo cicilan ini
-  paidAmount      Float     @default(0)
-  paidAt          DateTime? // tanggal lunas
-  status          String    @default("UNPAID") // UNPAID, PARTIAL, PAID, OVERDUE
-  notes           String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  debtId        String
+  debt          Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  installmentNo Int // 1, 2, 3, ...
+  amount        Float // nominal per cicilan
+  dueDate       DateTime // jatuh tempo cicilan ini
+  paidAmount    Float     @default(0)
+  paidAt        DateTime? // tanggal lunas
+  status        String    @default("UNPAID") // UNPAID, PARTIAL, PAID, OVERDUE
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([debtId, installmentNo])
   @@index([debtId])
@@ -1252,7 +1257,7 @@ model Installment {
 }
 
 enum DebtType {
-  PAYABLE    // Hutang (kita berhutang ke supplier/orang lain)
+  PAYABLE // Hutang (kita berhutang ke supplier/orang lain)
   RECEIVABLE // Piutang (customer/orang lain berhutang ke kita)
 }
 
@@ -1268,28 +1273,28 @@ enum DebtStatus {
 // ===========================
 
 model ApprovalRequest {
-    id            String         @id @default(uuid())
-    type          String         // "VOID", "REFUND", "LARGE_DISCOUNT", "PRICE_OVERRIDE"
-    status        String         @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
-    requestedBy   String
-    requester     User           @relation("ApprovalRequester", fields: [requestedBy], references: [id])
-    approvedBy    String?
-    approver      User?          @relation("ApprovalApprover", fields: [approvedBy], references: [id])
-    referenceId   String?        // transaction ID, etc
-    details       String?        // JSON with context data
-    reason        String?
-    rejectionNote String?
-    branchId      String?
-    branch        Branch?        @relation(fields: [branchId], references: [id])
-    createdAt     DateTime       @default(now())
-    updatedAt     DateTime       @updatedAt
+  id            String   @id @default(uuid())
+  type          String // "VOID", "REFUND", "LARGE_DISCOUNT", "PRICE_OVERRIDE"
+  status        String   @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
+  requestedBy   String
+  requester     User     @relation("ApprovalRequester", fields: [requestedBy], references: [id])
+  approvedBy    String?
+  approver      User?    @relation("ApprovalApprover", fields: [approvedBy], references: [id])
+  referenceId   String? // transaction ID, etc
+  details       String? // JSON with context data
+  reason        String?
+  rejectionNote String?
+  branchId      String?
+  branch        Branch?  @relation(fields: [branchId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-    @@index([status])
-    @@index([type])
-    @@index([requestedBy])
-    @@index([branchId])
-    @@index([branchId, status, createdAt])
-    @@map("approval_requests")
+  @@index([status])
+  @@index([type])
+  @@index([requestedBy])
+  @@index([branchId])
+  @@index([branchId, status, createdAt])
+  @@map("approval_requests")
 }
 
 // ===========================
@@ -1297,36 +1302,36 @@ model ApprovalRequest {
 // ===========================
 
 model StoreCredit {
-    id            String             @id @default(uuid())
-    customerId    String
-    customer      Customer           @relation(fields: [customerId], references: [id])
-    code          String             @unique // gift card code
-    balance       Float              @default(0)
-    initialAmount Float
-    isActive      Boolean            @default(true)
-    expiryDate    DateTime?
-    issuedBy      String
-    issuer        User               @relation(fields: [issuedBy], references: [id])
-    createdAt     DateTime           @default(now())
-    updatedAt     DateTime           @updatedAt
-    usages        StoreCreditUsage[]
+  id            String             @id @default(uuid())
+  customerId    String
+  customer      Customer           @relation(fields: [customerId], references: [id])
+  code          String             @unique // gift card code
+  balance       Float              @default(0)
+  initialAmount Float
+  isActive      Boolean            @default(true)
+  expiryDate    DateTime?
+  issuedBy      String
+  issuer        User               @relation(fields: [issuedBy], references: [id])
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  usages        StoreCreditUsage[]
 
-    @@index([customerId])
-    @@index([code])
-    @@map("store_credits")
+  @@index([customerId])
+  @@index([code])
+  @@map("store_credits")
 }
 
 model StoreCreditUsage {
-    id            String      @id @default(uuid())
-    storeCreditId String
-    storeCredit   StoreCredit @relation(fields: [storeCreditId], references: [id])
-    amount        Float
-    transactionId String?
-    notes         String?
-    createdAt     DateTime    @default(now())
+  id            String      @id @default(uuid())
+  storeCreditId String
+  storeCredit   StoreCredit @relation(fields: [storeCreditId], references: [id])
+  amount        Float
+  transactionId String?
+  notes         String?
+  createdAt     DateTime    @default(now())
 
-    @@index([storeCreditId])
-    @@map("store_credit_usages")
+  @@index([storeCreditId])
+  @@map("store_credit_usages")
 }
 
 // ===========================
@@ -1334,52 +1339,52 @@ model StoreCreditUsage {
 // ===========================
 
 model ReturnExchange {
-    id                String              @id @default(uuid())
-    returnNumber      String              @unique
-    transactionId     String
-    transaction       Transaction         @relation(fields: [transactionId], references: [id])
-    customerId        String?
-    customer          Customer?           @relation(fields: [customerId], references: [id])
-    type              String              // RETURN, EXCHANGE
-    status            String              @default("PENDING") // PENDING, APPROVED, COMPLETED, REJECTED
-    reason            String
-    notes             String?
-    totalRefund       Float               @default(0)
-    refundMethod      String?             // CASH, STORE_CREDIT, ORIGINAL_METHOD
-    approvedBy        String?
-    approvedAt        DateTime?
-    branchId          String?
-    branch            Branch?             @relation(fields: [branchId], references: [id])
-    processedBy       String
-    processedByUser   User                @relation("ReturnProcessedBy", fields: [processedBy], references: [id])
-    items             ReturnExchangeItem[]
-    createdAt         DateTime            @default(now())
-    updatedAt         DateTime            @updatedAt
+  id              String               @id @default(uuid())
+  returnNumber    String               @unique
+  transactionId   String
+  transaction     Transaction          @relation(fields: [transactionId], references: [id])
+  customerId      String?
+  customer        Customer?            @relation(fields: [customerId], references: [id])
+  type            String // RETURN, EXCHANGE
+  status          String               @default("PENDING") // PENDING, APPROVED, COMPLETED, REJECTED
+  reason          String
+  notes           String?
+  totalRefund     Float                @default(0)
+  refundMethod    String? // CASH, STORE_CREDIT, ORIGINAL_METHOD
+  approvedBy      String?
+  approvedAt      DateTime?
+  branchId        String?
+  branch          Branch?              @relation(fields: [branchId], references: [id])
+  processedBy     String
+  processedByUser User                 @relation("ReturnProcessedBy", fields: [processedBy], references: [id])
+  items           ReturnExchangeItem[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
-    @@index([transactionId])
-    @@index([returnNumber])
-    @@map("return_exchanges")
+  @@index([transactionId])
+  @@index([returnNumber])
+  @@map("return_exchanges")
 }
 
 model ReturnExchangeItem {
-    id               String          @id @default(uuid())
-    returnExchangeId String
-    returnExchange   ReturnExchange  @relation(fields: [returnExchangeId], references: [id], onDelete: Cascade)
-    productId        String
-    product          Product         @relation(fields: [productId], references: [id])
-    productName      String
-    quantity         Int
-    unitPrice        Float
-    subtotal         Float
-    reason           String?
-    // For exchange: replacement product
-    exchangeProductId   String?
-    exchangeProduct     Product?     @relation("ExchangeProduct", fields: [exchangeProductId], references: [id])
-    exchangeQuantity    Int?
-    restocked        Boolean         @default(false)
+  id                String         @id @default(uuid())
+  returnExchangeId  String
+  returnExchange    ReturnExchange @relation(fields: [returnExchangeId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product        @relation(fields: [productId], references: [id])
+  productName       String
+  quantity          Int
+  unitPrice         Float
+  subtotal          Float
+  reason            String?
+  // For exchange: replacement product
+  exchangeProductId String?
+  exchangeProduct   Product?       @relation("ExchangeProduct", fields: [exchangeProductId], references: [id])
+  exchangeQuantity  Int?
+  restocked         Boolean        @default(false)
 
-    @@index([returnExchangeId])
-    @@map("return_exchange_items")
+  @@index([returnExchangeId])
+  @@map("return_exchange_items")
 }
 
 // ===========================
@@ -1387,43 +1392,43 @@ model ReturnExchangeItem {
 // ===========================
 
 model GiftCard {
-    id              String              @id @default(uuid())
-    code            String              @unique
-    initialBalance  Float
-    currentBalance  Float
-    status          String              @default("ACTIVE") // ACTIVE, USED, EXPIRED, DISABLED
-    purchasedBy     String?             // customer name or walk-in
-    customerId      String?
-    customer        Customer?           @relation(fields: [customerId], references: [id])
-    expiresAt       DateTime?
-    companyId       String?
-    branchId        String?
-    branch          Branch?             @relation(fields: [branchId], references: [id])
-    createdBy       String
-    createdByUser   User                @relation("GiftCardCreatedBy", fields: [createdBy], references: [id])
-    transactions    GiftCardTransaction[]
-    createdAt       DateTime            @default(now())
-    updatedAt       DateTime            @updatedAt
+  id             String                @id @default(uuid())
+  code           String                @unique
+  initialBalance Float
+  currentBalance Float
+  status         String                @default("ACTIVE") // ACTIVE, USED, EXPIRED, DISABLED
+  purchasedBy    String? // customer name or walk-in
+  customerId     String?
+  customer       Customer?             @relation(fields: [customerId], references: [id])
+  expiresAt      DateTime?
+  companyId      String?
+  branchId       String?
+  branch         Branch?               @relation(fields: [branchId], references: [id])
+  createdBy      String
+  createdByUser  User                  @relation("GiftCardCreatedBy", fields: [createdBy], references: [id])
+  transactions   GiftCardTransaction[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
 
-    @@index([code])
-    @@index([companyId])
-    @@index([customerId])
-    @@map("gift_cards")
+  @@index([code])
+  @@index([companyId])
+  @@index([customerId])
+  @@map("gift_cards")
 }
 
 model GiftCardTransaction {
-    id            String    @id @default(uuid())
-    giftCardId    String
-    giftCard      GiftCard  @relation(fields: [giftCardId], references: [id])
-    type          String    // PURCHASE, REDEEM, TOPUP, REFUND
-    amount        Float
-    balanceBefore Float
-    balanceAfter  Float
-    reference     String?   // invoice number or note
-    createdAt     DateTime  @default(now())
+  id            String   @id @default(uuid())
+  giftCardId    String
+  giftCard      GiftCard @relation(fields: [giftCardId], references: [id])
+  type          String // PURCHASE, REDEEM, TOPUP, REFUND
+  amount        Float
+  balanceBefore Float
+  balanceAfter  Float
+  reference     String? // invoice number or note
+  createdAt     DateTime @default(now())
 
-    @@index([giftCardId])
-    @@map("gift_card_transactions")
+  @@index([giftCardId])
+  @@map("gift_card_transactions")
 }
 
 // ===========================
@@ -1431,38 +1436,38 @@ model GiftCardTransaction {
 // ===========================
 
 model SalesTarget {
-    id            String    @id @default(uuid())
-    userId        String?
-    user          User?     @relation(fields: [userId], references: [id])
-    branchId      String?
-    branch        Branch?   @relation(fields: [branchId], references: [id])
-    type          String    // DAILY, WEEKLY, MONTHLY
-    targetRevenue Float?
-    targetTx      Int?      // target transaction count
-    targetItems   Int?      // target items sold
-    period        String    // e.g. "2026-04", "2026-W14", "2026-04-04"
-    isActive      Boolean   @default(true)
-    createdBy     String
-    createdAt     DateTime  @default(now())
-    updatedAt     DateTime  @updatedAt
+  id            String   @id @default(uuid())
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
+  branchId      String?
+  branch        Branch?  @relation(fields: [branchId], references: [id])
+  type          String // DAILY, WEEKLY, MONTHLY
+  targetRevenue Float?
+  targetTx      Int? // target transaction count
+  targetItems   Int? // target items sold
+  period        String // e.g. "2026-04", "2026-W14", "2026-04-04"
+  isActive      Boolean  @default(true)
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-    @@unique([userId, type, period])
-    @@index([period])
-    @@map("sales_targets")
+  @@unique([userId, type, period])
+  @@index([period])
+  @@map("sales_targets")
 }
 
 model CashierBadge {
-    id          String   @id @default(uuid())
-    userId      String
-    user        User     @relation(fields: [userId], references: [id])
-    badge       String   // TOP_SELLER, ZERO_VOID, SPEED_DEMON, STREAK_7, etc.
-    title       String
-    description String?
-    earnedAt    DateTime @default(now())
-    period      String?  // period when earned
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  badge       String // TOP_SELLER, ZERO_VOID, SPEED_DEMON, STREAK_7, etc.
+  title       String
+  description String?
+  earnedAt    DateTime @default(now())
+  period      String? // period when earned
 
-    @@index([userId])
-    @@map("cashier_badges")
+  @@index([userId])
+  @@map("cashier_badges")
 }
 
 // ===========================
@@ -1470,26 +1475,26 @@ model CashierBadge {
 // ===========================
 
 model PriceSchedule {
-    id          String    @id @default(uuid())
-    productId   String
-    product     Product   @relation(fields: [productId], references: [id])
-    branchId    String?
-    branch      Branch?   @relation(fields: [branchId], references: [id])
-    companyId   String?
-    newPrice    Float
-    originalPrice Float
-    startDate   DateTime
-    endDate     DateTime
-    reason      String?
-    isActive    Boolean   @default(true)
-    appliedAt   DateTime?
-    revertedAt  DateTime?
-    createdBy   String
-    createdAt   DateTime  @default(now())
+  id            String    @id @default(uuid())
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+  branchId      String?
+  branch        Branch?   @relation(fields: [branchId], references: [id])
+  companyId     String?
+  newPrice      Float
+  originalPrice Float
+  startDate     DateTime
+  endDate       DateTime
+  reason        String?
+  isActive      Boolean   @default(true)
+  appliedAt     DateTime?
+  revertedAt    DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
 
-    @@index([productId])
-    @@index([startDate, endDate])
-    @@map("price_schedules")
+  @@index([productId])
+  @@index([startDate, endDate])
+  @@map("price_schedules")
 }
 
 // ===========================
@@ -1497,25 +1502,25 @@ model PriceSchedule {
 // ===========================
 
 model EmployeeSchedule {
-    id          String   @id @default(uuid())
-    userId      String
-    user        User     @relation(fields: [userId], references: [id])
-    branchId    String?
-    branch      Branch?  @relation(fields: [branchId], references: [id])
-    date        DateTime @db.Date
-    shiftStart  String   // "08:00"
-    shiftEnd    String   // "16:00"
-    shiftLabel  String?  // "Pagi", "Siang", "Malam"
-    status      String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, ABSENT, LEAVE
-    notes       String?
-    createdBy   String
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  branchId   String?
+  branch     Branch?  @relation(fields: [branchId], references: [id])
+  date       DateTime @db.Date
+  shiftStart String // "08:00"
+  shiftEnd   String // "16:00"
+  shiftLabel String? // "Pagi", "Siang", "Malam"
+  status     String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, ABSENT, LEAVE
+  notes      String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-    @@unique([userId, date])
-    @@index([date])
-    @@index([branchId, date])
-    @@map("employee_schedules")
+  @@unique([userId, date])
+  @@index([date])
+  @@index([branchId, date])
+  @@map("employee_schedules")
 }
 
 // ===========================
@@ -1523,38 +1528,39 @@ model EmployeeSchedule {
 // ===========================
 
 model OrderQueue {
-    id            String           @id @default(uuid())
-    queueNumber   Int
-    transactionId String?
-    transaction   Transaction?     @relation(fields: [transactionId], references: [id])
-    branchId      String?
-    branch        Branch?          @relation(fields: [branchId], references: [id])
-    status        String           @default("NEW") // NEW, PREPARING, READY, SERVED, CANCELLED
-    priority      Int              @default(0)
-    notes         String?
-    tableId       String?
-    table         RestaurantTable? @relation(fields: [tableId], references: [id])
-    items         OrderQueueItem[]
-    createdAt     DateTime         @default(now())
-    updatedAt     DateTime         @updatedAt
-    servedAt      DateTime?
+  id            String           @id @default(uuid())
+  queueNumber   Int
+  transactionId String?
+  transaction   Transaction?     @relation(fields: [transactionId], references: [id])
+  branchId      String?
+  branch        Branch?          @relation(fields: [branchId], references: [id])
+  status        String           @default("NEW") // NEW, PREPARING, READY, SERVED, CANCELLED
+  priority      Int              @default(0)
+  notes         String?
+  tableId       String?
+  table         RestaurantTable? @relation(fields: [tableId], references: [id])
+  items         OrderQueueItem[]
+  tableOrders   TableOrder[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  servedAt      DateTime?
 
-    @@index([branchId, status])
-    @@index([createdAt])
-    @@map("order_queues")
+  @@index([branchId, status])
+  @@index([createdAt])
+  @@map("order_queues")
 }
 
 model OrderQueueItem {
-    id           String     @id @default(uuid())
-    orderQueueId String
-    orderQueue   OrderQueue @relation(fields: [orderQueueId], references: [id], onDelete: Cascade)
-    productName  String
-    quantity     Int
-    notes        String?
-    status       String     @default("PENDING") // PENDING, PREPARING, DONE
+  id           String     @id @default(uuid())
+  orderQueueId String
+  orderQueue   OrderQueue @relation(fields: [orderQueueId], references: [id], onDelete: Cascade)
+  productName  String
+  quantity     Int
+  notes        String?
+  status       String     @default("PENDING") // PENDING, PREPARING, DONE
 
-    @@index([orderQueueId])
-    @@map("order_queue_items")
+  @@index([orderQueueId])
+  @@map("order_queue_items")
 }
 
 // ===========================
@@ -1562,17 +1568,17 @@ model OrderQueueItem {
 // ===========================
 
 model CashierFavorite {
-    id        String   @id @default(uuid())
-    userId    String
-    user      User     @relation(fields: [userId], references: [id])
-    productId String
-    product   Product  @relation(fields: [productId], references: [id])
-    sortOrder Int      @default(0)
-    createdAt DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
 
-    @@unique([userId, productId])
-    @@index([userId])
-    @@map("cashier_favorites")
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("cashier_favorites")
 }
 
 // ===========================
@@ -1580,242 +1586,242 @@ model CashierFavorite {
 // ===========================
 
 model AccountCategory {
-    id          String    @id @default(uuid())
-    name        String    // Aset, Kewajiban, Modal, Pendapatan, Beban
-    type        String    // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
-    normalSide  String    // DEBIT, CREDIT
-    sortOrder   Int       @default(0)
-    companyId   String
-    company     Company   @relation(fields: [companyId], references: [id])
-    accounts    Account[]
-    createdAt   DateTime  @default(now())
+  id         String    @id @default(uuid())
+  name       String // Aset, Kewajiban, Modal, Pendapatan, Beban
+  type       String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  normalSide String // DEBIT, CREDIT
+  sortOrder  Int       @default(0)
+  companyId  String
+  company    Company   @relation(fields: [companyId], references: [id])
+  accounts   Account[]
+  createdAt  DateTime  @default(now())
 
-    @@unique([companyId, type])
-    @@index([companyId])
-    @@map("account_categories")
+  @@unique([companyId, type])
+  @@index([companyId])
+  @@map("account_categories")
 }
 
 model Account {
-    id              String           @id @default(uuid())
-    code            String           // e.g. 1-1001
-    name            String
-    description     String?
-    categoryId      String
-    category        AccountCategory  @relation(fields: [categoryId], references: [id])
-    parentId        String?
-    parent          Account?         @relation("AccountHierarchy", fields: [parentId], references: [id])
-    children        Account[]        @relation("AccountHierarchy")
-    isActive        Boolean          @default(true)
-    isSystem        Boolean          @default(false) // System accounts can't be deleted
-    branchId        String?          // null = global account
-    branch          Branch?          @relation(fields: [branchId], references: [id])
-    openingBalance  Float            @default(0)
-    journalLines    JournalEntryLine[]
-    taxConfigs      TaxConfig[]
-    recurringLines  RecurringJournalLine[]
-    bankReconciliations BankReconciliation[] @relation("BankReconAccount")
-    createdAt       DateTime         @default(now())
-    updatedAt       DateTime         @updatedAt
+  id                  String                 @id @default(uuid())
+  code                String // e.g. 1-1001
+  name                String
+  description         String?
+  categoryId          String
+  category            AccountCategory        @relation(fields: [categoryId], references: [id])
+  parentId            String?
+  parent              Account?               @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children            Account[]              @relation("AccountHierarchy")
+  isActive            Boolean                @default(true)
+  isSystem            Boolean                @default(false) // System accounts can't be deleted
+  branchId            String? // null = global account
+  branch              Branch?                @relation(fields: [branchId], references: [id])
+  openingBalance      Float                  @default(0)
+  journalLines        JournalEntryLine[]
+  taxConfigs          TaxConfig[]
+  recurringLines      RecurringJournalLine[]
+  bankReconciliations BankReconciliation[]   @relation("BankReconAccount")
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 
-    @@index([categoryId])
-    @@index([parentId])
-    @@index([code])
-    @@index([branchId])
-    @@map("accounts")
+  @@index([categoryId])
+  @@index([parentId])
+  @@index([code])
+  @@index([branchId])
+  @@map("accounts")
 }
 
 model JournalEntry {
-    id              String             @id @default(uuid())
-    entryNumber     String             @unique // JV-260404-0001
-    date            DateTime           @db.Date
-    description     String
-    reference       String?            // invoice number, PO number, etc.
-    referenceType   String?            // TRANSACTION, PURCHASE, RETURN, DEBT_PAYMENT, EXPENSE, MANUAL
-    referenceId     String?            // ID of related entity
-    branchId        String?
-    branch          Branch?            @relation(fields: [branchId], references: [id])
-    periodId        String?
-    period          AccountingPeriod?  @relation(fields: [periodId], references: [id])
-    status          String             @default("POSTED") // DRAFT, PENDING_APPROVAL, POSTED, VOIDED
-    totalDebit      Float              @default(0)
-    totalCredit     Float              @default(0)
-    lines           JournalEntryLine[]
-    createdBy       String
-    createdByUser   User               @relation("JournalCreatedBy", fields: [createdBy], references: [id])
-    approvedBy      String?
-    approvedByUser  User?              @relation("JournalApprovedBy", fields: [approvedBy], references: [id])
-    approvedAt      DateTime?
-    rejectionNote   String?
-    updatedBy       String?
-    notes           String?
-    changeLogs      JournalChangeLog[]
-    createdAt       DateTime           @default(now())
-    updatedAt       DateTime           @updatedAt
+  id             String             @id @default(uuid())
+  entryNumber    String             @unique // JV-260404-0001
+  date           DateTime           @db.Date
+  description    String
+  reference      String? // invoice number, PO number, etc.
+  referenceType  String? // TRANSACTION, PURCHASE, RETURN, DEBT_PAYMENT, EXPENSE, MANUAL
+  referenceId    String? // ID of related entity
+  branchId       String?
+  branch         Branch?            @relation(fields: [branchId], references: [id])
+  periodId       String?
+  period         AccountingPeriod?  @relation(fields: [periodId], references: [id])
+  status         String             @default("POSTED") // DRAFT, PENDING_APPROVAL, POSTED, VOIDED
+  totalDebit     Float              @default(0)
+  totalCredit    Float              @default(0)
+  lines          JournalEntryLine[]
+  createdBy      String
+  createdByUser  User               @relation("JournalCreatedBy", fields: [createdBy], references: [id])
+  approvedBy     String?
+  approvedByUser User?              @relation("JournalApprovedBy", fields: [approvedBy], references: [id])
+  approvedAt     DateTime?
+  rejectionNote  String?
+  updatedBy      String?
+  notes          String?
+  changeLogs     JournalChangeLog[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
-    @@index([date])
-    @@index([entryNumber])
-    @@index([referenceType, referenceId])
-    @@index([branchId])
-    @@index([periodId])
-    @@index([status])
-    @@index([status, date])
-    @@index([branchId, status, date, createdAt])
-    @@map("journal_entries")
+  @@index([date])
+  @@index([entryNumber])
+  @@index([referenceType, referenceId])
+  @@index([branchId])
+  @@index([periodId])
+  @@index([status])
+  @@index([status, date])
+  @@index([branchId, status, date, createdAt])
+  @@map("journal_entries")
 }
 
 model JournalEntryLine {
-    id            String       @id @default(uuid())
-    journalId     String
-    journal       JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
-    accountId     String
-    account       Account      @relation(fields: [accountId], references: [id])
-    description   String?
-    debit         Float        @default(0)
-    credit        Float        @default(0)
-    taxType       String?      // PPN_KELUARAN, PPN_MASUKAN, PPH21, PPH23
-    taxAmount     Float?       @default(0)
-    taxBaseAmount Float?       @default(0) // DPP (Dasar Pengenaan Pajak)
-    sortOrder     Int          @default(0)
+  id            String       @id @default(uuid())
+  journalId     String
+  journal       JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       Account      @relation(fields: [accountId], references: [id])
+  description   String?
+  debit         Float        @default(0)
+  credit        Float        @default(0)
+  taxType       String? // PPN_KELUARAN, PPN_MASUKAN, PPH21, PPH23
+  taxAmount     Float?       @default(0)
+  taxBaseAmount Float?       @default(0) // DPP (Dasar Pengenaan Pajak)
+  sortOrder     Int          @default(0)
 
-    @@index([journalId])
-    @@index([accountId])
-    @@index([journalId, sortOrder])
-    @@index([accountId, journalId])
-    @@map("journal_entry_lines")
+  @@index([journalId])
+  @@index([accountId])
+  @@index([journalId, sortOrder])
+  @@index([accountId, journalId])
+  @@map("journal_entry_lines")
 }
 
 model AccountingPeriod {
-    id          String         @id @default(uuid())
-    name        String         // "April 2026"
-    startDate   DateTime       @db.Date
-    endDate     DateTime       @db.Date
-    status      String         @default("OPEN") // OPEN, CLOSED, LOCKED
-    closedBy    String?
-    closedAt    DateTime?
-    companyId   String?
-    journals    JournalEntry[]
-    createdAt   DateTime       @default(now())
-    updatedAt   DateTime       @updatedAt
+  id        String         @id @default(uuid())
+  name      String // "April 2026"
+  startDate DateTime       @db.Date
+  endDate   DateTime       @db.Date
+  status    String         @default("OPEN") // OPEN, CLOSED, LOCKED
+  closedBy  String?
+  closedAt  DateTime?
+  companyId String?
+  journals  JournalEntry[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
 
-    @@unique([startDate, endDate, companyId])
-    @@index([status])
-    @@index([companyId])
-    @@map("accounting_periods")
+  @@unique([startDate, endDate, companyId])
+  @@index([status])
+  @@index([companyId])
+  @@map("accounting_periods")
 }
 
 model TaxConfig {
-    id          String   @id @default(uuid())
-    companyId   String
-    company     Company  @relation(fields: [companyId], references: [id])
-    taxType     String   // PPN, PPH21, PPH23, PPH_FINAL
-    name        String   // "PPN 11%", "PPh 23 - 2%"
-    rate        Float    // 0.11, 0.02
-    accountId   String
-    account     Account  @relation(fields: [accountId], references: [id])
-    isActive    Boolean  @default(true)
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  taxType   String // PPN, PPH21, PPH23, PPH_FINAL
+  name      String // "PPN 11%", "PPh 23 - 2%"
+  rate      Float // 0.11, 0.02
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id])
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-    @@unique([companyId, taxType])
-    @@index([companyId])
-    @@map("tax_configs")
+  @@unique([companyId, taxType])
+  @@index([companyId])
+  @@map("tax_configs")
 }
 
 model JournalChangeLog {
-    id          String       @id @default(uuid())
-    journalId   String
-    journal     JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
-    action      String       // CREATED, UPDATED, SUBMITTED, APPROVED, REJECTED, POSTED, VOIDED
-    userId      String
-    user        User         @relation(fields: [userId], references: [id])
-    changes     String?      // JSON: { field: { old, new } }
-    snapshot    String?      // JSON: full journal state at time of action
-    ipAddress   String?
-    createdAt   DateTime     @default(now())
+  id        String       @id @default(uuid())
+  journalId String
+  journal   JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  action    String // CREATED, UPDATED, SUBMITTED, APPROVED, REJECTED, POSTED, VOIDED
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  changes   String? // JSON: { field: { old, new } }
+  snapshot  String? // JSON: full journal state at time of action
+  ipAddress String?
+  createdAt DateTime     @default(now())
 
-    @@index([journalId])
-    @@index([userId])
-    @@index([createdAt])
-    @@map("journal_change_logs")
+  @@index([journalId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("journal_change_logs")
 }
 
 model RecurringJournalTemplate {
-    id            String   @id @default(uuid())
-    name          String
-    description   String?
-    frequency     String   // MONTHLY, QUARTERLY, YEARLY
-    dayOfMonth    Int?     @default(1)
-    nextRunDate   DateTime @db.Date
-    lastRunDate   DateTime? @db.Date
-    isActive      Boolean  @default(true)
-    branchId      String?
-    branch        Branch?  @relation(fields: [branchId], references: [id])
-    companyId     String
-    company       Company  @relation(fields: [companyId], references: [id])
-    createdBy     String
-    createdByUser User     @relation(fields: [createdBy], references: [id])
-    lines         RecurringJournalLine[]
-    createdAt     DateTime @default(now())
-    updatedAt     DateTime @updatedAt
+  id            String                 @id @default(uuid())
+  name          String
+  description   String?
+  frequency     String // MONTHLY, QUARTERLY, YEARLY
+  dayOfMonth    Int?                   @default(1)
+  nextRunDate   DateTime               @db.Date
+  lastRunDate   DateTime?              @db.Date
+  isActive      Boolean                @default(true)
+  branchId      String?
+  branch        Branch?                @relation(fields: [branchId], references: [id])
+  companyId     String
+  company       Company                @relation(fields: [companyId], references: [id])
+  createdBy     String
+  createdByUser User                   @relation(fields: [createdBy], references: [id])
+  lines         RecurringJournalLine[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 
-    @@index([companyId, isActive])
-    @@index([nextRunDate])
-    @@map("recurring_journal_templates")
+  @@index([companyId, isActive])
+  @@index([nextRunDate])
+  @@map("recurring_journal_templates")
 }
 
 model RecurringJournalLine {
-    id          String                   @id @default(uuid())
-    templateId  String
-    template    RecurringJournalTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-    accountId   String
-    account     Account                  @relation(fields: [accountId], references: [id])
-    description String?
-    debit       Float                    @default(0)
-    credit      Float                    @default(0)
-    sortOrder   Int                      @default(0)
+  id          String                   @id @default(uuid())
+  templateId  String
+  template    RecurringJournalTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     Account                  @relation(fields: [accountId], references: [id])
+  description String?
+  debit       Float                    @default(0)
+  credit      Float                    @default(0)
+  sortOrder   Int                      @default(0)
 
-    @@index([templateId])
-    @@map("recurring_journal_lines")
+  @@index([templateId])
+  @@map("recurring_journal_lines")
 }
 
 model BankReconciliation {
-    id               String   @id @default(uuid())
-    accountId        String
-    account          Account  @relation("BankReconAccount", fields: [accountId], references: [id])
-    statementDate    DateTime @db.Date
-    statementBalance Float
-    bookBalance      Float    @default(0)
-    status           String   @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED
-    companyId        String
-    company          Company  @relation(fields: [companyId], references: [id])
-    completedBy      String?
-    completedAt      DateTime?
-    items            BankReconciliationItem[]
-    createdAt        DateTime @default(now())
-    updatedAt        DateTime @updatedAt
+  id               String                   @id @default(uuid())
+  accountId        String
+  account          Account                  @relation("BankReconAccount", fields: [accountId], references: [id])
+  statementDate    DateTime                 @db.Date
+  statementBalance Float
+  bookBalance      Float                    @default(0)
+  status           String                   @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED
+  companyId        String
+  company          Company                  @relation(fields: [companyId], references: [id])
+  completedBy      String?
+  completedAt      DateTime?
+  items            BankReconciliationItem[]
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
 
-    @@index([companyId])
-    @@index([accountId, statementDate])
-    @@map("bank_reconciliations")
+  @@index([companyId])
+  @@index([accountId, statementDate])
+  @@map("bank_reconciliations")
 }
 
 model BankReconciliationItem {
-    id                String             @id @default(uuid())
-    reconciliationId  String
-    reconciliation    BankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
-    source            String             // BANK_STATEMENT, JOURNAL
-    referenceNumber   String?
-    description       String
-    date              DateTime           @db.Date
-    amount            Float
-    matchedItemId     String?
-    matchStatus       String             @default("UNMATCHED") // UNMATCHED, MATCHED, ADJUSTED
-    journalEntryId    String?
-    createdAt         DateTime           @default(now())
+  id               String             @id @default(uuid())
+  reconciliationId String
+  reconciliation   BankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  source           String // BANK_STATEMENT, JOURNAL
+  referenceNumber  String?
+  description      String
+  date             DateTime           @db.Date
+  amount           Float
+  matchedItemId    String?
+  matchStatus      String             @default("UNMATCHED") // UNMATCHED, MATCHED, ADJUSTED
+  journalEntryId   String?
+  createdAt        DateTime           @default(now())
 
-    @@index([reconciliationId])
-    @@index([matchStatus])
-    @@map("bank_reconciliation_items")
+  @@index([reconciliationId])
+  @@index([matchStatus])
+  @@map("bank_reconciliation_items")
 }
 
 // ===========================
@@ -1823,23 +1829,23 @@ model BankReconciliationItem {
 // ===========================
 
 model ProductBundle {
-  id              String              @id @default(uuid())
-  code            String              @unique
-  name            String
-  description     String?
-  imageUrl        String?
-  sellingPrice    Float               // Bundle price (usually discounted)
-  totalBasePrice  Float               @default(0) // Sum of component prices (for margin calculation)
-  categoryId      String?
-  category        Category?           @relation(fields: [categoryId], references: [id])
-  isActive        Boolean             @default(true)
-  barcode         String?             @unique
-  items           ProductBundleItem[]
-  companyId       String?
-  branchId        String?
-  branch          Branch?             @relation(fields: [branchId], references: [id])
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  id             String              @id @default(uuid())
+  code           String              @unique
+  name           String
+  description    String?
+  imageUrl       String?
+  sellingPrice   Float // Bundle price (usually discounted)
+  totalBasePrice Float               @default(0) // Sum of component prices (for margin calculation)
+  categoryId     String?
+  category       Category?           @relation(fields: [categoryId], references: [id])
+  isActive       Boolean             @default(true)
+  barcode        String?             @unique
+  items          ProductBundleItem[]
+  companyId      String?
+  branchId       String?
+  branch         Branch?             @relation(fields: [branchId], references: [id])
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   @@index([isActive])
   @@index([categoryId])
@@ -1849,13 +1855,13 @@ model ProductBundle {
 }
 
 model ProductBundleItem {
-  id          String        @id @default(uuid())
-  bundleId    String
-  bundle      ProductBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
-  productId   String
-  product     Product       @relation(fields: [productId], references: [id])
-  quantity    Int           @default(1)
-  sortOrder   Int           @default(0)
+  id        String        @id @default(uuid())
+  bundleId  String
+  bundle    ProductBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product       @relation(fields: [productId], references: [id])
+  quantity  Int           @default(1)
+  sortOrder Int           @default(0)
 
   @@index([bundleId])
   @@index([productId])
@@ -1867,26 +1873,131 @@ model ProductBundleItem {
 // ===========================
 
 model RestaurantTable {
-  id          String    @id @default(uuid())
-  number      Int
-  name        String?   // e.g. "Meja VIP 1", "Outdoor 3"
-  capacity    Int       @default(4)
-  status      String    @default("AVAILABLE") // AVAILABLE, OCCUPIED, RESERVED, CLEANING
-  branchId    String?
-  branch      Branch?   @relation(fields: [branchId], references: [id])
-  isActive    Boolean   @default(true)
-  sortOrder   Int       @default(0)
-  section     String?   // e.g. "Indoor", "Outdoor", "VIP"
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  number    Int
+  name      String? // e.g. "Meja VIP 1", "Outdoor 3"
+  capacity  Int      @default(4)
+  status    String   @default("AVAILABLE") // AVAILABLE, OCCUPIED, RESERVED, CLEANING
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  section   String? // e.g. "Indoor", "Outdoor", "VIP"
+  qrToken   String?  @unique // public token for tablet ordering URL
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  transactions Transaction[]
-  orderQueues  OrderQueue[]
+  transactions  Transaction[]
+  orderQueues   OrderQueue[]
+  tableSessions TableSession[]
+  tableOrders   TableOrder[]
 
   @@unique([number, branchId])
   @@index([branchId, status])
   @@index([section])
   @@map("restaurant_tables")
+}
+
+// ===========================
+// SELF-ORDER (Table Tablet Ordering)
+// ===========================
+//
+// One open TableSession per table groups multiple TableOrder submissions
+// into a single bill. Customer can keep ordering while session is OPEN.
+// Session is closed when payment is settled (online or via kasir) OR
+// when kasir manually closes it.
+
+model TableSession {
+  id            String          @id @default(uuid())
+  tableId       String
+  table         RestaurantTable @relation(fields: [tableId], references: [id])
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id])
+  status        String          @default("OPEN") // OPEN, AWAITING_PAYMENT, CLOSED
+  customerName  String?
+  customerPhone String?
+  subtotal      Float           @default(0)
+  paidAmount    Float           @default(0)
+  transactionId String?         @unique
+  transaction   Transaction?    @relation(fields: [transactionId], references: [id])
+  openedAt      DateTime        @default(now())
+  closedAt      DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  orders   TableOrder[]
+  payments TableSessionPayment[]
+
+  @@index([branchId, status])
+  @@index([tableId, status])
+  @@map("table_sessions")
+}
+
+model TableOrder {
+  id             String          @id @default(uuid())
+  sessionId      String
+  session        TableSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  tableId        String
+  table          RestaurantTable @relation(fields: [tableId], references: [id])
+  branchId       String
+  branch         Branch          @relation(fields: [branchId], references: [id])
+  status         String          @default("PENDING_APPROVAL") // PENDING_APPROVAL, APPROVED, REJECTED, SENT_TO_KITCHEN, READY, SERVED, CANCELLED
+  total          Float           @default(0)
+  customerNote   String?
+  rejectReason   String?
+  approvedBy     String?
+  approvedByUser User?           @relation(fields: [approvedBy], references: [id])
+  approvedAt     DateTime?
+  orderQueueId   String? // link to KDS queue once approved
+  orderQueue     OrderQueue?     @relation(fields: [orderQueueId], references: [id])
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  items TableOrderItem[]
+
+  @@index([branchId, status])
+  @@index([sessionId])
+  @@index([tableId, status])
+  @@index([createdAt])
+  @@map("table_orders")
+}
+
+model TableOrderItem {
+  id          String     @id @default(uuid())
+  orderId     String
+  order       TableOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product    @relation(fields: [productId], references: [id])
+  productName String // snapshot at time of order
+  qty         Int
+  unitPrice   Float
+  subtotal    Float
+  note        String?
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("table_order_items")
+}
+
+// Foundation for online payments. Provider implementations come later;
+// service code only writes generic fields here.
+model TableSessionPayment {
+  id         String       @id @default(uuid())
+  sessionId  String
+  session    TableSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  provider   String // QRIS, MIDTRANS, XENDIT, MANUAL
+  channel    String? // e.g. GOPAY, OVO, BANK_TRANSFER
+  amount     Float
+  status     String       @default("PENDING") // PENDING, PAID, FAILED, EXPIRED, REFUNDED
+  externalId String? // gateway transaction reference
+  rawPayload Json? // gateway-specific payload
+  paidAt     DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([sessionId])
+  @@index([provider, externalId])
+  @@map("table_session_payments")
 }
 
 model EmailVerificationToken {
@@ -1902,20 +2013,20 @@ model EmailVerificationToken {
 }
 
 model SubscriptionPayment {
-  id            String   @id @default(uuid())
-  companyId     String
-  company       Company  @relation(fields: [companyId], references: [id])
-  plan          String   // PRO, ENTERPRISE
-  amount        Float
+  id             String    @id @default(uuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  plan           String // PRO, ENTERPRISE
+  amount         Float
   durationMonths Int
-  billingType   String   @default("MONTHLY") // MONTHLY, YEARLY
-  status        String   @default("PAID") // PAID, PENDING, REFUNDED, CANCELLED
-  planStartDate DateTime
-  planEndDate   DateTime
-  notes         String?
-  approvedBy    String?
-  approvedAt    DateTime?
-  createdAt     DateTime @default(now())
+  billingType    String    @default("MONTHLY") // MONTHLY, YEARLY
+  status         String    @default("PAID") // PAID, PENDING, REFUNDED, CANCELLED
+  planStartDate  DateTime
+  planEndDate    DateTime
+  notes          String?
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([companyId])
   @@index([status])
@@ -1923,10 +2034,10 @@ model SubscriptionPayment {
 }
 
 model PlanMenuAccess {
-  id        String  @id @default(uuid())
-  plan      String  // FREE, PRO, ENTERPRISE
-  menuKey   String  // references AppMenu.key
-  allowed   Boolean @default(false)
+  id      String  @id @default(uuid())
+  plan    String // FREE, PRO, ENTERPRISE
+  menuKey String // references AppMenu.key
+  allowed Boolean @default(false)
 
   @@unique([plan, menuKey])
   @@index([plan])
@@ -1935,7 +2046,7 @@ model PlanMenuAccess {
 
 model PlanActionAccess {
   id        String  @id @default(uuid())
-  plan      String  // FREE, PRO, ENTERPRISE
+  plan      String // FREE, PRO, ENTERPRISE
   menuKey   String
   actionKey String
   allowed   Boolean @default(false)

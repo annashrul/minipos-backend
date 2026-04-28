@@ -235,6 +235,14 @@ const MENU_SEED = [
     actions: ["view", "create", "update", "delete"],
   },
   {
+    key: "table-orders",
+    name: "Order Meja",
+    path: "/table-orders",
+    group: "Utama",
+    sortOrder: 8,
+    actions: ["view", "approve", "reject", "update", "pay", "close_session"],
+  },
+  {
     key: "accounting",
     name: "Dashboard Akuntansi",
     path: "/accounting",

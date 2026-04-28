@@ -10,6 +10,7 @@ export * from "./dtos/customers";
 export * from "./dtos/stock";
 export * from "./dtos/tables";
 export * from "./dtos/order-queues";
+export * from "./dtos/table-orders";
 export * from "./dtos/settings";
 export * from "./dtos/promotions";
 export * from "./dtos/shifts";

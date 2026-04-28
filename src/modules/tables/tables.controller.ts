@@ -93,4 +93,14 @@ export class TablesController {
     const data = await this.tables.delete(companyId, id);
     return { data };
   }
+
+  @Post(":id/qr-token")
+  @RequireAccess("tables", "update")
+  async generateQrToken(
+    @CurrentCompany() companyId: string,
+    @Param("id") id: string,
+  ) {
+    const data = await this.tables.generateQrToken(companyId, id);
+    return { data };
+  }
 }

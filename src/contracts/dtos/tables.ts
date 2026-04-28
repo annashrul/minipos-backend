@@ -52,6 +52,7 @@ export type TableResponse = {
   section: string | null;
   sortOrder: number;
   isActive: boolean;
+  qrToken: string | null;
   createdAt: string;
   updatedAt: string;
 };

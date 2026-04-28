@@ -215,6 +215,39 @@ export class OrderQueuesService {
       { queueId: resp.id, queueNumber: resp.queueNumber, status },
       updated.branchId ?? undefined,
     );
+
+    // ── Cascade status ke TableOrder yang ter-link (kalau ada),
+    // supaya tablet customer ikut refresh realtime.
+    const tableOrderStatus = mapQueueStatusToTableOrder(status);
+    if (tableOrderStatus) {
+      const linkedOrders = await this.prisma.tableOrder.findMany({
+        where: { orderQueueId: id },
+        select: { id: true, sessionId: true, tableId: true, branchId: true },
+      });
+      if (linkedOrders.length > 0) {
+        await this.prisma.tableOrder.updateMany({
+          where: { orderQueueId: id },
+          data: { status: tableOrderStatus },
+        });
+        for (const o of linkedOrders) {
+          // Use specific event for READY (matches tablet listener) and STATUS for the rest.
+          const event =
+            tableOrderStatus === "READY"
+              ? EVENTS.TABLE_ORDER_READY
+              : EVENTS.TABLE_ORDER_STATUS;
+          this.realtime.emit(
+            event,
+            {
+              orderId: o.id,
+              sessionId: o.sessionId,
+              tableId: o.tableId,
+              status: tableOrderStatus,
+            },
+            o.branchId,
+          );
+        }
+      }
+    }
     return resp;
   }
 
@@ -321,4 +354,21 @@ function toQueueResponse(q: RawQueue): OrderQueueResponse {
       status: i.status,
     })),
   };
+}
+
+/**
+ * Map kitchen queue status → tablet-facing TableOrder status.
+ * Only return a status when the change is meaningful for the customer.
+ */
+function mapQueueStatusToTableOrder(
+  s: OrderQueueStatusDto,
+): "SENT_TO_KITCHEN" | "READY" | "SERVED" | "CANCELLED" | null {
+  switch (s) {
+    case "PREPARING": return "SENT_TO_KITCHEN";
+    case "READY":     return "READY";
+    case "SERVED":    return "SERVED";
+    case "CANCELLED": return "CANCELLED";
+    case "NEW":
+    default:          return null;
+  }
 }

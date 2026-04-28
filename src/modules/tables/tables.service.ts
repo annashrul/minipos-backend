@@ -25,6 +25,7 @@ const TABLE_SELECT = {
   section: true,
   sortOrder: true,
   isActive: true,
+  qrToken: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.RestaurantTableSelect;
@@ -177,6 +178,33 @@ export class TablesService {
     return { success: true };
   }
 
+  /** Generate (or rotate) a QR token used by tablet ordering URL. */
+  async generateQrToken(companyId: string, id: string): Promise<TableResponse> {
+    await this.ensureOwned(companyId, id);
+    let attempts = 0;
+    while (attempts < 5) {
+      const token = randomToken();
+      try {
+        const updated = await this.prisma.restaurantTable.update({
+          where: { id },
+          data: { qrToken: token },
+          select: TABLE_SELECT,
+        });
+        return toTableResponse(updated);
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2002"
+        ) {
+          attempts++;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error("Gagal generate token unik");
+  }
+
   private async ensureOwned(companyId: string, id: string) {
     const existing = await this.prisma.restaurantTable.findFirst({
       where: { id, branch: { companyId } },
@@ -206,7 +234,19 @@ function toTableResponse(t: RawTable): TableResponse {
     section: t.section,
     sortOrder: t.sortOrder,
     isActive: t.isActive,
+    qrToken: t.qrToken,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
+}
+
+function randomToken(): string {
+  // 24 chars URL-safe — easy to embed in QR + short URL
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghijkmnpqrstuvwxyz";
+  let out = "";
+  for (let i = 0; i < 24; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
 }

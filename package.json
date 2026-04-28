@@ -6,14 +6,17 @@
     "build": "tsc && tsc-alias",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
-    "dev": "nodemon --watch src --ext ts --exec \"ts-node -r tsconfig-paths/register src/main.ts\"",
+    "dev": "nodemon --watch src --ext ts --exec \"node --enable-source-maps -r @swc-node/register -r tsconfig-paths/register src/main.ts\"",
+    "dev:watch": "node --watch --watch-path=src --enable-source-maps -r @swc-node/register -r tsconfig-paths/register src/main.ts",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "db:seed:platform-owner": "tsx prisma/seed-platform-owner.ts"
+    "db:seed:platform-owner": "tsx prisma/seed-platform-owner.ts",
+    "db:seed:modifiers": "tsx prisma/seed-modifiers.ts",
+    "db:seed:products": "tsx prisma/seed-products.ts"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
@@ -39,6 +42,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@swc-node/register": "^1.11.1",
+    "@swc/core": "^1.15.32",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
     "@types/node": "^20.17.10",
