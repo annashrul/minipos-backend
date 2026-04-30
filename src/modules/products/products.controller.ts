@@ -108,6 +108,7 @@ export class ProductsController {
       limit?: number;
       offset?: number;
       onlyWithStock?: boolean;
+      restrictToBranchAssigned?: boolean;
     },
   ) {
     const data = await this.products.branchView(companyId, body);

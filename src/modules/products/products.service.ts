@@ -454,6 +454,12 @@ export class ProductsService {
       limit?: number;
       offset?: number;
       onlyWithStock?: boolean;
+      // POS mode: when branchId is set, only include products that were
+      // explicitly assigned to that branch (have BranchStock or BranchPrice).
+      // Tanpa flag ini, view CROSS JOIN-nya membuat semua produk company
+      // muncul di tiap branch via fallback ke stock global — yang user lihat
+      // sebagai "POS menampilkan semua produk".
+      restrictToBranchAssigned?: boolean;
     },
   ): Promise<{ rows: unknown[]; total: number }> {
     const {
@@ -466,6 +472,7 @@ export class ProductsService {
       limit = 20,
       offset = 0,
       onlyWithStock = false,
+      restrictToBranchAssigned = false,
     } = params;
     const conditions: string[] = ["company_id = $1"];
     const values: unknown[] = [companyId];
@@ -498,6 +505,9 @@ export class ProductsService {
       conditions.push("stock > 0 AND stock <= 10");
     else if (stockStatus === "available") conditions.push("stock > 0");
     if (onlyWithStock) conditions.push("has_branch_stock = true");
+    if (restrictToBranchAssigned && branchId) {
+      conditions.push("(has_branch_stock = true OR has_branch_price = true)");
+    }
 
     const whereClause = conditions.join(" AND ");
     const countQuery = `SELECT COUNT(DISTINCT product_id)::int AS total FROM vw_product_branch WHERE ${whereClause}`;
