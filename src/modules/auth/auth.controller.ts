@@ -7,6 +7,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { z } from "zod";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
@@ -38,6 +39,12 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
+  @Throttle({
+    default: {
+      ttl: Number(process.env.THROTTLE_TTL_SECONDS ?? 60) * 1000,
+      limit: Number(process.env.AUTH_THROTTLE_LIMIT ?? 10),
+    },
+  })
   @Post("login")
   async login(@Body(new ZodValidationPipe(loginSchema)) body: z.infer<typeof loginSchema>) {
     const result = await this.auth.login(body.email, body.password);

@@ -35,11 +35,11 @@ export class AuthService {
     if (!user || !user.isActive) {
       throw new UnauthorizedException("Invalid credentials");
     }
-    if (user.role === "SUPER_ADMIN" && !user.emailVerified) {
-      throw new UnauthorizedException("Email not verified");
-    }
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
+    if (user.role === "SUPER_ADMIN" && !user.emailVerified) {
       throw new UnauthorizedException("Invalid credentials");
     }
 

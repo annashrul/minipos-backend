@@ -1,6 +1,8 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "@nestjs/common";
+import { json, urlencoded } from "express";
+import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 
@@ -11,6 +13,12 @@ async function bootstrap() {
 
   app.setGlobalPrefix("api");
   app.useGlobalFilters(new AllExceptionsFilter());
+
+  app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
+  const bodyLimit = process.env.BODY_LIMIT ?? "2mb";
+  app.use(json({ limit: bodyLimit }));
+  app.use(urlencoded({ extended: true, limit: bodyLimit }));
 
   // CORS: comma-separated whitelist via CORS_ORIGINS. Items boleh:
   //   - exact origin   → "https://pos.example.com"

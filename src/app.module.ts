@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { validateEnv } from "./common/config/env.schema";
 import { AuditInterceptor } from "./common/interceptors/audit.interceptor";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { RedisModule } from "./modules/redis/redis.module";
@@ -76,7 +78,14 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [".env"],
+      validate: validateEnv,
     }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: Number(process.env.THROTTLE_TTL_SECONDS ?? 60) * 1000,
+        limit: Number(process.env.THROTTLE_LIMIT ?? 120),
+      },
+    ]),
     PrismaModule,
     RedisModule,
     RealtimeModule,
@@ -146,6 +155,10 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     WhatsappReceiptModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

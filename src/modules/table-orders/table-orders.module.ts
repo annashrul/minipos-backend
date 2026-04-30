@@ -1,5 +1,9 @@
 import { Module } from "@nestjs/common";
 import { RealtimeModule } from "../realtime/realtime.module";
+import { PublicTableService } from "./internal/public-table.service";
+import { TableOrderManagementService } from "./internal/table-order-management.service";
+import { TableOrderSubmitService } from "./internal/table-order-submit.service";
+import { TableSessionService } from "./internal/table-session.service";
 import {
   PublicTableOrdersController,
   TableOrdersController,
@@ -14,7 +18,13 @@ import { TableOrdersService } from "./table-orders.service";
     TableOrdersController,
     TableSessionsController,
   ],
-  providers: [TableOrdersService],
+  providers: [
+    TableOrdersService,
+    PublicTableService,
+    TableOrderSubmitService,
+    TableOrderManagementService,
+    TableSessionService,
+  ],
   exports: [TableOrdersService],
 })
 export class TableOrdersModule {}
