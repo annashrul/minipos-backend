@@ -1,6 +1,7 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
@@ -69,14 +70,18 @@ type RawTxDetail = Prisma.TransactionGetPayload<{
 }>;
 
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { AutoJournalService } from "../auto-journal/auto-journal.service";
 
 @Injectable()
 export class TransactionsService {
+  private readonly logger = new Logger(TransactionsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly debts: DebtsService,
     private readonly points: PointsService,
     private readonly realtime: RealtimeService,
+    private readonly autoJournal: AutoJournalService,
   ) {}
 
   async list(
@@ -397,6 +402,22 @@ export class TransactionsService {
       );
       this.realtime.emit(EVENTS.STOCK_UPDATED, {}, emitBranch);
       this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, emitBranch);
+
+      // Auto-post journal for every successful sales transaction.
+      // Do not block checkout flow if accounting setup is incomplete.
+      try {
+        await this.autoJournal.create(companyId, userId, {
+          referenceType: "TRANSACTION",
+          referenceId: created.id,
+          ...(branchId ? { branchId } : {}),
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Auto journal gagal untuk transaksi ${created.invoiceNumber}: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        );
+      }
 
       return {
         id: created.id,
