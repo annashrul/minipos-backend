@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -189,7 +189,16 @@ export class AutoJournalService {
     const lines: LineInput[] = [];
 
     if (txn.payments && txn.payments.length > 0) {
+      let remainingChange = Math.max(txn.changeAmount || 0, 0);
       for (const payment of txn.payments) {
+        const appliedChange =
+          payment.method === "CASH" && remainingChange > 0
+            ? Math.min(remainingChange, payment.amount)
+            : 0;
+        remainingChange -= appliedChange;
+        const netAmount = Math.max(payment.amount - appliedChange, 0);
+        if (netAmount <= 0) continue;
+
         const target =
           payment.method === "CASH"
             ? cashAccount
@@ -199,7 +208,7 @@ export class AutoJournalService {
         lines.push({
           accountId: target.id,
           description: `Penerimaan ${payment.method} â€” ${txn.invoiceNumber}`,
-          debit: payment.amount,
+          debit: netAmount,
           credit: 0,
         });
       }
