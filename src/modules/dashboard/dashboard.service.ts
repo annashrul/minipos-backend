@@ -1,5 +1,17 @@
 ﻿import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import {
+  APP_TIME_ZONE,
+  addDaysInTimeZone,
+  addMonthsInTimeZone,
+  addYearsInTimeZone,
+  getHourInTimeZone,
+  getWeekdayInTimeZone,
+  startOfDateStringInTimeZone,
+  startOfDayInTimeZone,
+  startOfMonthInTimeZone,
+  startOfYearInTimeZone,
+} from "@/common/utils/timezone";
 import type {
   DashboardAlertsResponse,
   DashboardExtendedStatsQueryDto,
@@ -21,6 +33,8 @@ type RangeBounds = { from: Date; to: Date };
 
 @Injectable()
 export class DashboardService {
+  private readonly timeZone = APP_TIME_ZONE;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async stats(
@@ -45,47 +59,42 @@ export class DashboardService {
     };
     if (branchId) prevWhere.branchId = branchId;
 
-    const [
-      currentAgg,
-      prevAgg,
-      itemRows,
-      customerRows,
-      paymentRows,
-    ] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: prevWhere,
-        _sum: { grandTotal: true },
-      }),
-      this.prisma.transactionItem.groupBy({
-        by: ["productId", "productName", "productCode"],
-        where: { transaction: where },
-        _sum: { quantity: true, subtotal: true },
-        orderBy: { _sum: { subtotal: "desc" } },
-        take: 10,
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["customerId"],
-        where: {
-          ...where,
-          customerId: { not: null },
-        },
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-        orderBy: { _sum: { grandTotal: "desc" } },
-        take: 5,
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["paymentMethod"],
-        where,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-    ]);
+    const [currentAgg, prevAgg, itemRows, customerRows, paymentRows] =
+      await Promise.all([
+        this.prisma.transaction.aggregate({
+          where,
+          _sum: { grandTotal: true },
+          _count: { _all: true },
+        }),
+        this.prisma.transaction.aggregate({
+          where: prevWhere,
+          _sum: { grandTotal: true },
+        }),
+        this.prisma.transactionItem.groupBy({
+          by: ["productId", "productName", "productCode"],
+          where: { transaction: where },
+          _sum: { quantity: true, subtotal: true },
+          orderBy: { _sum: { subtotal: "desc" } },
+          take: 10,
+        }),
+        this.prisma.transaction.groupBy({
+          by: ["customerId"],
+          where: {
+            ...where,
+            customerId: { not: null },
+          },
+          _sum: { grandTotal: true },
+          _count: { _all: true },
+          orderBy: { _sum: { grandTotal: "desc" } },
+          take: 5,
+        }),
+        this.prisma.transaction.groupBy({
+          by: ["paymentMethod"],
+          where,
+          _sum: { grandTotal: true },
+          _count: { _all: true },
+        }),
+      ]);
 
     const totalSales = currentAgg._sum.grandTotal ?? 0;
     const txCount = currentAgg._count._all;
@@ -114,7 +123,7 @@ export class DashboardService {
     const customerMap = new Map(customers.map((c) => [c.id, c.name]));
     const topCustomers: DashboardTopCustomer[] = customerRows.map((c) => ({
       customerId: c.customerId ?? "",
-      name: c.customerId ? customerMap.get(c.customerId) ?? "" : "",
+      name: c.customerId ? (customerMap.get(c.customerId) ?? "") : "",
       totalSpending: c._sum.grandTotal ?? 0,
       transactionCount: c._count._all,
     }));
@@ -204,25 +213,29 @@ export class DashboardService {
     });
 
     const filtered = candidates.filter((p) => p.stock <= p.minStock);
-    const items: LowStockProductResponse[] = filtered.slice(0, limit).map((p) => {
-      const branchStocks: LowStockBranchEntry[] = p.branchStocks.map((bs) => ({
-        branchId: bs.branchId,
-        branchName: bs.branch?.name ?? "",
-        quantity: bs.quantity,
-        minStock: bs.minStock,
-      }));
-      return {
-        productId: p.id,
-        code: p.code,
-        name: p.name,
-        stock: p.stock,
-        minStock: p.minStock,
-        unit: p.unit,
-        categoryId: p.categoryId,
-        categoryName: p.category?.name ?? null,
-        branchStocks,
-      };
-    });
+    const items: LowStockProductResponse[] = filtered
+      .slice(0, limit)
+      .map((p) => {
+        const branchStocks: LowStockBranchEntry[] = p.branchStocks.map(
+          (bs) => ({
+            branchId: bs.branchId,
+            branchName: bs.branch?.name ?? "",
+            quantity: bs.quantity,
+            minStock: bs.minStock,
+          }),
+        );
+        return {
+          productId: p.id,
+          code: p.code,
+          name: p.name,
+          stock: p.stock,
+          minStock: p.minStock,
+          unit: p.unit,
+          categoryId: p.categoryId,
+          categoryName: p.category?.name ?? null,
+          branchStocks,
+        };
+      });
 
     return { items, total: filtered.length };
   }
@@ -320,7 +333,9 @@ export class DashboardService {
         }),
       ]);
 
-    const lowStockCount = candidates.filter((p) => p.stock <= p.minStock).length;
+    const lowStockCount = candidates.filter(
+      (p) => p.stock <= p.minStock,
+    ).length;
 
     return {
       lowStockCount,
@@ -334,7 +349,7 @@ export class DashboardService {
     companyId: string,
     query: DashboardExtendedStatsQueryDto,
   ): Promise<DashboardExtendedStatsResponse> {
-    const { branchId, period } = query;
+    const { branchId, period, from, to } = query;
 
     const companyBranches = await this.prisma.branch.findMany({
       where: { companyId },
@@ -346,36 +361,43 @@ export class DashboardService {
       : { branchId: { in: companyBranchIds } };
 
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const today = startOfDayInTimeZone(now, this.timeZone);
+    const todayEnd = addDaysInTimeZone(today, 1, this.timeZone);
 
     let periodStart: Date;
+    let periodEnd: Date;
     let prevPeriodStart: Date;
 
     if (period === "today") {
       periodStart = today;
-      prevPeriodStart = new Date(today);
-      prevPeriodStart.setDate(prevPeriodStart.getDate() - 1);
+      periodEnd = todayEnd;
+      prevPeriodStart = addDaysInTimeZone(today, -1, this.timeZone);
     } else if (period === "week") {
-      periodStart = new Date(today);
-      periodStart.setDate(today.getDate() - 7);
-      prevPeriodStart = new Date(periodStart);
-      prevPeriodStart.setDate(prevPeriodStart.getDate() - 7);
+      periodStart = addDaysInTimeZone(today, -7, this.timeZone);
+      periodEnd = todayEnd;
+      prevPeriodStart = addDaysInTimeZone(periodStart, -7, this.timeZone);
     } else if (period === "year") {
-      periodStart = new Date(today.getFullYear(), 0, 1);
-      prevPeriodStart = new Date(today.getFullYear() - 1, 0, 1);
-    } else {
-      periodStart = new Date(today.getFullYear(), today.getMonth(), 1);
-      prevPeriodStart = new Date(
-        today.getFullYear(),
-        today.getMonth() - 1,
-        1,
+      periodStart = startOfYearInTimeZone(now, this.timeZone);
+      periodEnd = todayEnd;
+      prevPeriodStart = addYearsInTimeZone(periodStart, -1, this.timeZone);
+    } else if (period === "custom" && from && to) {
+      const fromStart = startOfDateStringInTimeZone(from, this.timeZone);
+      const toStart = startOfDateStringInTimeZone(to, this.timeZone);
+      periodStart = fromStart <= toStart ? fromStart : toStart;
+      const endStart = fromStart <= toStart ? toStart : fromStart;
+      periodEnd = addDaysInTimeZone(endStart, 1, this.timeZone);
+      const rangeMs = Math.max(
+        24 * 60 * 60 * 1000,
+        periodEnd.getTime() - periodStart.getTime(),
       );
+      prevPeriodStart = new Date(periodStart.getTime() - rangeMs);
+    } else {
+      periodStart = startOfMonthInTimeZone(now, this.timeZone);
+      periodEnd = todayEnd;
+      prevPeriodStart = addMonthsInTimeZone(periodStart, -1, this.timeZone);
     }
 
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterday = addDaysInTimeZone(today, -1, this.timeZone);
 
     const completedWhere: Prisma.TransactionWhereInput = {
       status: "COMPLETED",
@@ -395,13 +417,13 @@ export class DashboardService {
       this.prisma.transaction.aggregate({
         _sum: { grandTotal: true },
         where: {
-          createdAt: { gte: periodStart, lt: tomorrow },
+          createdAt: { gte: periodStart, lt: periodEnd },
           ...completedWhere,
         },
       }),
       this.prisma.transaction.count({
         where: {
-          createdAt: { gte: periodStart, lt: tomorrow },
+          createdAt: { gte: periodStart, lt: periodEnd },
           ...completedWhere,
         },
       }),
@@ -441,6 +463,7 @@ export class DashboardService {
       recentTransactions,
       topProductsRaw,
       paymentBreakdownRaw,
+      paymentBreakdownTodayRaw,
       dailySales,
       yearlyComparison,
       topCashiers,
@@ -467,22 +490,31 @@ export class DashboardService {
         _sum: { grandTotal: true },
         _count: { _all: true },
         where: {
-          createdAt: { gte: periodStart, lt: tomorrow },
+          createdAt: { gte: periodStart, lt: periodEnd },
+          ...completedWhere,
+        },
+      }),
+      this.prisma.transaction.groupBy({
+        by: ["paymentMethod"],
+        _sum: { grandTotal: true },
+        _count: { _all: true },
+        where: {
+          createdAt: { gte: today, lt: todayEnd },
           ...completedWhere,
         },
       }),
       this.getDailySalesData(30, branchId, companyBranchIds),
       this.getYearlyComparison(branchId, companyBranchIds),
-      this.getTopCashiers(periodStart, tomorrow, branchId, companyBranchIds),
+      this.getTopCashiers(periodStart, periodEnd, branchId, companyBranchIds),
       this.getCategoryBreakdown(
         periodStart,
-        tomorrow,
+        periodEnd,
         branchId,
         companyBranchIds,
       ),
       this.getHourlySalesData(
         periodStart,
-        tomorrow,
+        periodEnd,
         branchId,
         companyBranchIds,
       ),
@@ -492,14 +524,14 @@ export class DashboardService {
       await Promise.all([
         this.prisma.transaction.count({
           where: {
-            createdAt: { gte: periodStart, lt: tomorrow },
+            createdAt: { gte: periodStart, lt: periodEnd },
             status: "REFUNDED",
             ...branchFilter,
           },
         }),
         this.prisma.transaction.count({
           where: {
-            createdAt: { gte: periodStart, lt: tomorrow },
+            createdAt: { gte: periodStart, lt: periodEnd },
             status: "VOIDED",
             ...branchFilter,
           },
@@ -522,7 +554,7 @@ export class DashboardService {
         }),
       ]);
 
-    const profitParams: unknown[] = [periodStart, tomorrow];
+    const profitParams: unknown[] = [periodStart, periodEnd];
     let profitBranchCond = "";
     if (branchId) {
       profitParams.push(branchId);
@@ -587,7 +619,7 @@ export class DashboardService {
         this.prisma.transaction.groupBy({
           by: ["branchId"],
           where: {
-            createdAt: { gte: periodStart, lt: tomorrow },
+            createdAt: { gte: periodStart, lt: periodEnd },
             status: "COMPLETED",
             ...companyBranchFilter,
           },
@@ -686,7 +718,9 @@ export class DashboardService {
         : 0;
     const txGrowthMonth =
       prevMonthTxCount > 0
-        ? Math.round(((monthTxCount - prevMonthTxCount) / prevMonthTxCount) * 100)
+        ? Math.round(
+            ((monthTxCount - prevMonthTxCount) / prevMonthTxCount) * 100,
+          )
         : 0;
 
     const avgTransactionValue =
@@ -695,6 +729,11 @@ export class DashboardService {
     const weekSales = todaySalesVal;
 
     const paymentBreakdown = paymentBreakdownRaw.map((p) => ({
+      method: p.paymentMethod,
+      total: p._sum.grandTotal || 0,
+      count: p._count._all,
+    }));
+    const paymentBreakdownToday = paymentBreakdownTodayRaw.map((p) => ({
       method: p.paymentMethod,
       total: p._sum.grandTotal || 0,
       count: p._count._all,
@@ -736,6 +775,7 @@ export class DashboardService {
       dailySales,
       yearlyComparison,
       paymentBreakdown,
+      paymentBreakdownToday,
       topCashiers,
       categoryBreakdown,
       hourlySales,
@@ -1002,12 +1042,13 @@ export class DashboardService {
       branchId,
       companyBranchIds,
     );
+    const safeTz = this.timeZone.replace(/'/g, "''");
 
     const rows = await this.prisma.$queryRawUnsafe<
       { h: number; total: bigint; count: bigint }[]
     >(
       `
-      SELECT EXTRACT(HOUR FROM "createdAt")::int as h,
+      SELECT EXTRACT(HOUR FROM (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))::int as h,
              COALESCE(SUM("grandTotal"), 0) as total,
              COUNT(*)::bigint as count
       FROM transactions
@@ -1015,7 +1056,7 @@ export class DashboardService {
         AND "createdAt" < $2
         AND "status" = 'COMPLETED'
         ${branchCondition}
-      GROUP BY EXTRACT(HOUR FROM "createdAt")
+      GROUP BY EXTRACT(HOUR FROM (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))
       ORDER BY h
       `,
       ...params,
@@ -1052,7 +1093,7 @@ export class DashboardService {
     for (let i = 0; i < 24; i++) buckets.set(i, { sales: 0, count: 0 });
 
     for (const t of transactions) {
-      const hour = t.createdAt.getHours();
+      const hour = getHourInTimeZone(t.createdAt, this.timeZone);
       const bucket = buckets.get(hour);
       if (bucket) {
         bucket.sales += t.grandTotal;
@@ -1065,41 +1106,32 @@ export class DashboardService {
       .map(([hour, v]) => ({ hour, sales: v.sales, count: v.count }));
   }
 
-  private resolveRange(
-    period: DashboardStatsQueryDto["period"],
-  ): RangeBounds {
+  private resolveRange(period: DashboardStatsQueryDto["period"]): RangeBounds {
     const now = new Date();
-    const start = new Date(now);
-    const end = new Date(now);
+    const todayStart = startOfDayInTimeZone(now, this.timeZone);
+    let start = todayStart;
+    let end = new Date(
+      addDaysInTimeZone(todayStart, 1, this.timeZone).getTime() - 1,
+    );
 
     switch (period) {
       case "today":
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
         break;
       case "yesterday":
-        start.setDate(start.getDate() - 1);
-        start.setHours(0, 0, 0, 0);
-        end.setDate(end.getDate() - 1);
-        end.setHours(23, 59, 59, 999);
+        start = addDaysInTimeZone(todayStart, -1, this.timeZone);
+        end = new Date(todayStart.getTime() - 1);
         break;
       case "week": {
-        const day = start.getDay();
+        const day = getWeekdayInTimeZone(now, this.timeZone);
         const diff = (day + 6) % 7; // Monday-based
-        start.setDate(start.getDate() - diff);
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
+        start = addDaysInTimeZone(todayStart, -diff, this.timeZone);
         break;
       }
       case "month":
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
+        start = startOfMonthInTimeZone(now, this.timeZone);
         break;
       case "year":
-        start.setMonth(0, 1);
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
+        start = startOfYearInTimeZone(now, this.timeZone);
         break;
     }
 

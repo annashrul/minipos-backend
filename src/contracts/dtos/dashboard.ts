@@ -20,6 +20,7 @@ export const DashboardExtendedPeriodSchema = z.enum([
   "week",
   "month",
   "year",
+  "custom",
 ]);
 export type DashboardExtendedPeriodDto = z.infer<
   typeof DashboardExtendedPeriodSchema
@@ -28,6 +29,8 @@ export type DashboardExtendedPeriodDto = z.infer<
 export const DashboardExtendedStatsQuerySchema = z.object({
   branchId: z.string().optional(),
   period: DashboardExtendedPeriodSchema.default("today"),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type DashboardExtendedStatsQueryDto = z.infer<
   typeof DashboardExtendedStatsQuerySchema
@@ -237,6 +240,7 @@ export type DashboardExtendedStatsResponse = {
   dailySales: DashboardDailySalesEntry[];
   yearlyComparison: DashboardYearlyComparisonEntry[];
   paymentBreakdown: DashboardPaymentBreakdownLegacy[];
+  paymentBreakdownToday: DashboardPaymentBreakdownLegacy[];
   topCashiers: DashboardTopCashier[];
   categoryBreakdown: DashboardCategoryBreakdownEntry[];
   hourlySales: DashboardHourlySalesEntry[];
