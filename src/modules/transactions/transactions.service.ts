@@ -21,6 +21,7 @@ import type {
 import { DebtsService } from "../debts/debts.service";
 import { PointsService } from "../points/points.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 
 const TX_SELECT = {
   id: true,
@@ -82,6 +83,7 @@ export class TransactionsService {
     private readonly points: PointsService,
     private readonly realtime: RealtimeService,
     private readonly autoJournal: AutoJournalService,
+    private readonly whatsapp: WhatsappReceiptService,
   ) {}
 
   async list(
@@ -419,6 +421,18 @@ export class TransactionsService {
         );
       }
 
+      // Auto-kirim struk via WhatsApp ke nomor customer kalau ada.
+      // Fire-and-forget — jangan block checkout response, jangan gagalkan
+      // transaksi kalau WA belum konek / nomor invalid.
+      if (dto.customerId) {
+        void this.dispatchWhatsappReceipt(
+          companyId,
+          dto.customerId,
+          created.id,
+          created.invoiceNumber,
+        );
+      }
+
       return {
         id: created.id,
         invoiceNumber: created.invoiceNumber,
@@ -430,6 +444,42 @@ export class TransactionsService {
         return this.checkout(companyId, userId, dto, retryCount + 1);
       }
       throw err;
+    }
+  }
+
+  /**
+   * Async dispatch struk digital ke WA. Skip diam-diam kalau:
+   *  - customer tidak punya phone
+   *  - sesi WhatsApp belum connect
+   *  - phone = nomor sendiri (self-send rejected by sendText)
+   * Error tidak di-throw — hanya di-log, agar tidak mengganggu flow checkout.
+   */
+  private async dispatchWhatsappReceipt(
+    companyId: string,
+    customerId: string,
+    transactionId: string,
+    invoiceNumber: string,
+  ): Promise<void> {
+    try {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: customerId, companyId },
+        select: { phone: true, name: true },
+      });
+      const phone = customer?.phone?.trim();
+      if (!phone) {
+        // Skip — customer tidak punya nomor; bukan error.
+        return;
+      }
+      await this.whatsapp.sendReceipt(companyId, transactionId, phone);
+      this.logger.log(
+        `Struk WA terkirim invoice=${invoiceNumber} → ${customer?.name ?? "-"} (${phone})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Gagal kirim struk WA invoice=${invoiceNumber}: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      );
     }
   }
 

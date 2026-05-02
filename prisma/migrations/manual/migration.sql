@@ -1,0 +1,3 @@
+-- Legacy manual migration bucket.
+-- Intentionally left as no-op so Prisma can scan migration directories
+-- without failing on missing migration.sql (P3015).

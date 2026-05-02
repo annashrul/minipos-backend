@@ -39,6 +39,7 @@ import { PlatformDashboardModule } from "./modules/platform-dashboard/platform-d
 import { PlatformNotificationsModule } from "./modules/platform-notifications/platform-notifications.module";
 import { PlatformSubscriptionsModule } from "./modules/platform-subscriptions/platform-subscriptions.module";
 import { PointsModule } from "./modules/points/points.module";
+import { PaymentsModule } from "./modules/payments/payments.module";
 import { PosActivityModule } from "./modules/pos-activity/pos-activity.module";
 import { PriceSchedulesModule } from "./modules/price-schedules/price-schedules.module";
 import { ProductExtensionsModule } from "./modules/product-extensions/product-extensions.module";
@@ -113,6 +114,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     PlatformNotificationsModule,
     PlatformSubscriptionsModule,
     PointsModule,
+    PaymentsModule,
     PosActivityModule,
     PriceSchedulesModule,
     ProductExtensionsModule,

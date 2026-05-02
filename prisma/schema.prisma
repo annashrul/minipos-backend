@@ -54,6 +54,14 @@ enum TransactionStatus {
   REFUNDED
 }
 
+enum PaymentOrderStatus {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+  CANCELLED
+}
+
 enum PaymentMethod {
   CASH
   TRANSFER
@@ -139,6 +147,7 @@ model Company {
   recurringTemplates   RecurringJournalTemplate[]
   bankReconciliations  BankReconciliation[]
   modifierGroups       ModifierGroup[]
+  whatsappSession      WhatsappSession?
 
   @@index([slug])
   @@map("companies")
@@ -620,6 +629,7 @@ model Transaction {
   refund         Refund?
   returns        ReturnExchange[]
   orderQueues    OrderQueue[]
+  paymentOrders  PaymentOrder[]
   tableId        String?
   table          RestaurantTable?  @relation(fields: [tableId], references: [id])
   tableSession   TableSession?
@@ -1129,6 +1139,60 @@ model Setting {
   @@index([group])
   @@index([branchId])
   @@map("settings")
+}
+
+model WhatsappSession {
+  id                 String               @id @default(uuid())
+  companyId          String               @unique @map("company_id")
+  company            Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  status             String               @default("DISCONNECTED") // DISCONNECTED, CONNECTING, CONNECTED
+  phoneNumber        String?              @map("phone_number")
+  deviceName         String?              @map("device_name")
+  qrCode             String?              @map("qr_code")
+  authCreds          Json?                @map("auth_creds")
+  lastConnectedAt    DateTime?            @map("last_connected_at")
+  lastDisconnectedAt DateTime?            @map("last_disconnected_at")
+  lastError          String?              @map("last_error")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+  keys               WhatsappSessionKey[]
+  messages           WhatsappMessageLog[]
+
+  @@index([status])
+  @@map("whatsapp_sessions")
+}
+
+model WhatsappSessionKey {
+  id        String          @id @default(uuid())
+  sessionId String          @map("session_id")
+  session   WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  keyType   String          @map("key_type")
+  keyId     String          @map("key_id")
+  value     Json
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  @@unique([sessionId, keyType, keyId])
+  @@index([sessionId, keyType])
+  @@map("whatsapp_session_keys")
+}
+
+model WhatsappMessageLog {
+  id                String          @id @default(uuid())
+  sessionId         String          @map("session_id")
+  session           WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  direction         String // OUTBOUND, INBOUND
+  toNumber          String?         @map("to_number")
+  fromNumber        String?         @map("from_number")
+  messageType       String          @default("text") @map("message_type")
+  content           String?
+  status            String          @default("PENDING")
+  providerMessageId String?         @map("provider_message_id")
+  errorMessage      String?         @map("error_message")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([sessionId, createdAt])
+  @@map("whatsapp_message_logs")
 }
 
 // ===========================
@@ -2054,4 +2118,38 @@ model PlanActionAccess {
   @@unique([plan, menuKey, actionKey])
   @@index([plan])
   @@map("plan_action_access")
+}
+
+model PaymentOrder {
+  id             String              @id @default(uuid())
+  companyId      String
+  transactionId  String?
+  transaction    Transaction?        @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  provider       String              @default("xendit")
+  // ID yang kita kirim ke Xendit sebagai external_id (unik global).
+  externalId     String              @unique
+  // ID dari sisi Xendit (dari response create) — disimpan saat tahu.
+  providerOrderId String?
+  status         PaymentOrderStatus  @default(PENDING)
+  amount         Int
+  currency       String              @default("IDR")
+  description    String?
+  payerEmail     String?
+  paymentUrl     String?
+  // Method final yang dipilih customer di halaman Xendit (BCA/QRIS/OVO/dst).
+  paymentMethod  String?
+  paymentChannel String?
+  paidAt         DateTime?
+  expiresAt      DateTime?
+  failureReason  String?
+  rawCreate      Json?
+  rawCallback    Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([companyId])
+  @@index([transactionId])
+  @@index([status])
+  @@index([provider, providerOrderId])
+  @@map("payment_orders")
 }

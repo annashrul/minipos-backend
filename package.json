@@ -15,8 +15,13 @@
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:platform-owner": "tsx prisma/seed-platform-owner.ts",
+    "db:seed:whatsapp-menu": "tsx prisma/seed-whatsapp-menu.ts",
     "db:seed:modifiers": "tsx prisma/seed-modifiers.ts",
-    "db:seed:products": "tsx prisma/seed-products.ts"
+    "db:seed:products": "tsx prisma/seed-products.ts",
+    "db:seed:default-coa": "tsx prisma/seed-default-coa.ts",
+    "db:backfill:journals:transactions": "tsx prisma/backfill-transaction-journals.ts",
+    "db:seed:transactions:2025": "tsx prisma/seed-transactions-2025.ts",
+    "db:seed:wholesale": "tsx prisma/seed-wholesale.ts"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
@@ -30,12 +35,14 @@
     "@nestjs/platform-express": "^10.4.15",
     "@prisma/client": "^6.19.2",
     "@prisma/extension-accelerate": "^2.0.2",
+    "@whiskeysockets/baileys": "7.0.0-rc.9",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.5.1",
     "groq-sdk": "^1.1.2",
     "ioredis": "^5.10.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pino": "^10.3.1",
     "pusher": "^5.3.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

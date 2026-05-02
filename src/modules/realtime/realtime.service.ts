@@ -35,6 +35,8 @@ export const EVENTS = {
   BUNDLE_UPDATED: "bundle:updated",
   MENU_ACCESS_UPDATED: "menu-access:updated",
   PLAN_ACCESS_UPDATED: "plan-access:updated",
+  PAYMENT_ORDER_CREATED: "payment-order:created",
+  PAYMENT_ORDER_UPDATED: "payment-order:updated",
 } as const;
 
 export type AppEventName = (typeof EVENTS)[keyof typeof EVENTS];
