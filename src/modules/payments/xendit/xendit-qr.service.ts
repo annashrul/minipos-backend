@@ -94,7 +94,28 @@ export class XenditQrService {
       transactionId: order.transactionId,
     });
 
+    this.maybeAutoSuccess(order.id, xenditRes.amount ?? Math.round(input.amount));
+
     return { order, qrString: xenditRes.qr_string };
+  }
+
+  /**
+   * Dev/sandbox helper: kalau XENDIT_DEV_AUTO_SUCCESS=true, simulasikan
+   * webhook PAID setelah delay singkat. Tidak pernah aktif di production
+   * karena env ini tidak di-set di Cloud Run.
+   */
+  private maybeAutoSuccess(orderId: string, amount: number) {
+    const enabled = String(this.config.get<string>("XENDIT_DEV_AUTO_SUCCESS") ?? "")
+      .toLowerCase() === "true";
+    if (!enabled) return;
+    const delayMs = Number(this.config.get<string>("XENDIT_DEV_AUTO_SUCCESS_DELAY_MS") ?? 2000);
+    setTimeout(() => {
+      this.applyQrWebhook(orderId, {
+        status: "SUCCEEDED",
+        amount,
+        _dev_auto_success: true,
+      }).catch((err) => this.logger.warn(`Dev auto-success failed: ${String(err)}`));
+    }, delayMs).unref?.();
   }
 
   /**

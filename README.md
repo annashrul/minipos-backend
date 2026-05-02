@@ -1,6 +1,6 @@
-# minipos-backend
+# menopos-backend
 
-Standalone NestJS backend untuk minipos. Direstrukturisasi dari monorepo `pos-claude` menjadi single-repo agar gampang deploy ke Cloud Run.
+Standalone NestJS backend untuk menopos. Direstrukturisasi dari monorepo `pos-claude` menjadi single-repo agar gampang deploy ke Cloud Run.
 
 ## Stack
 

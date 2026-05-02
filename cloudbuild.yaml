@@ -57,8 +57,8 @@ steps:
       - "--execution-environment=gen2"
       - "--cpu-boost"
       - "--service-account=${_RUNTIME_SA}"
-      - "--set-env-vars=^@^NODE_ENV=production@JWT_EXPIRES_IN=7d@CORS_ORIGINS=${_CORS_ORIGINS}"
-      - "--set-secrets=DATABASE_URL=database-url:latest,DIRECT_URL=direct-url:latest,JWT_SECRET=jwt-secret:latest,CLOUDINARY_URL=cloudinary-url:latest,RESEND_API_KEY=resend-api-key:latest,PUSHER_APP_ID=pusher-app-id:latest,PUSHER_KEY=pusher-key:latest,PUSHER_SECRET=pusher-secret:latest,PUSHER_CLUSTER=pusher-cluster:latest"
+      - "--set-env-vars=^@^NODE_ENV=production@JWT_EXPIRES_IN=7d@CORS_ORIGINS=${_CORS_ORIGINS}@XENDIT_API_BASE=https://api.xendit.co@XENDIT_INVOICE_DURATION=900@XENDIT_QR_DURATION=900@XENDIT_VA_DURATION=86400"
+      - "--set-secrets=DATABASE_URL=database-url:latest,DIRECT_URL=direct-url:latest,JWT_SECRET=jwt-secret:latest,CLOUDINARY_URL=cloudinary-url:latest,RESEND_API_KEY=resend-api-key:latest,PUSHER_APP_ID=pusher-app-id:latest,PUSHER_KEY=pusher-key:latest,PUSHER_SECRET=pusher-secret:latest,PUSHER_CLUSTER=pusher-cluster:latest,XENDIT_SECRET_KEY=xendit-secret-key:latest,XENDIT_WEBHOOK_TOKEN=xendit-webhook-token:latest"
 
 options:
   machineType: E2_HIGHCPU_8
