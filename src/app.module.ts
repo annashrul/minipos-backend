@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { ScheduleModule } from "@nestjs/schedule";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { AuditInterceptor } from "./common/interceptors/audit.interceptor";
 import { PrismaModule } from "./modules/prisma/prisma.module";
@@ -70,6 +71,9 @@ import { TransactionsModule } from "./modules/transactions/transactions.module";
 import { ModifiersModule } from "./modules/modifiers/modifiers.module";
 import { UploadsModule } from "./modules/uploads/uploads.module";
 import { UsersModule } from "./modules/users/users.module";
+import { ServiceOrdersModule } from "./modules/service-orders/service-orders.module";
+import { BookingsModule } from "./modules/bookings/bookings.module";
+import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 
 @Module({
@@ -78,6 +82,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
       isGlobal: true,
       envFilePath: [".env"],
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
     RealtimeModule,
@@ -144,6 +149,9 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     TransactionsModule,
     UploadsModule,
     UsersModule,
+    VehiclesModule,
+    ServiceOrdersModule,
+    BookingsModule,
     VouchersModule,
     WhatsappReceiptModule,
   ],

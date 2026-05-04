@@ -4,45 +4,79 @@ import { z } from "zod";
 // Company self-registration
 // =====================
 
+export const BUSINESS_UNITS = ["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"] as const;
+export type BusinessUnit = (typeof BUSINESS_UNITS)[number];
+
 export const RegisterCompanySchema = z.object({
   companyName: z.string().min(1, "Nama perusahaan wajib diisi"),
   companyPhone: z.string().optional(),
   companyAddress: z.string().optional(),
+  businessUnit: z.enum(BUSINESS_UNITS).default("RETAIL"),
   name: z.string().min(1, "Nama lengkap wajib diisi"),
   email: z.string().email("Format email tidak valid"),
+  phone: z.string().min(8, "Nomor WhatsApp wajib diisi"),
   password: z.string().min(6, "Password minimal 6 karakter"),
 });
 export type RegisterCompanyDto = z.infer<typeof RegisterCompanySchema>;
 
 export type RegisterCompanyResponse =
   | { status: "created" }
-  | { status: "needs_verification"; email: string };
+  | { status: "needs_verification"; phone: string };
 
 // =====================
-// OTP verification
+// OTP verification (via WhatsApp)
 // =====================
 
-export const VerifyEmailOtpSchema = z.object({
-  email: z.string().min(1),
+export const VerifyPhoneOtpSchema = z.object({
+  phone: z.string().min(1),
   otp: z.string().min(1),
 });
-export type VerifyEmailOtpDto = z.infer<typeof VerifyEmailOtpSchema>;
+export type VerifyPhoneOtpDto = z.infer<typeof VerifyPhoneOtpSchema>;
 
-export type VerifyEmailOtpResponse = {
+export type VerifyPhoneOtpResponse = {
   loginToken: string;
 };
 
 // =====================
-// Resend verification email
+// Resend OTP via WhatsApp
 // =====================
 
-export const ResendVerificationEmailSchema = z.object({
-  email: z.string().min(1),
+export const ResendPhoneOtpSchema = z.object({
+  phone: z.string().min(1),
 });
-export type ResendVerificationEmailDto = z.infer<
-  typeof ResendVerificationEmailSchema
->;
+export type ResendPhoneOtpDto = z.infer<typeof ResendPhoneOtpSchema>;
 
-export type ResendVerificationEmailResponse = {
+export type ResendPhoneOtpResponse = {
+  success: true;
+};
+
+// =====================
+// Forgot password (WA OTP)
+// =====================
+
+export const ForgotPasswordSchema = z.object({
+  email: z.string().email("Format email tidak valid"),
+});
+export type ForgotPasswordDto = z.infer<typeof ForgotPasswordSchema>;
+
+export type ForgotPasswordResponse = {
+  // Phone yang menerima OTP (sudah di-mask).
+  phoneMasked: string;
+  // Phone full untuk routing (frontend).
+  phone: string;
+};
+
+// =====================
+// Reset password
+// =====================
+
+export const ResetPasswordSchema = z.object({
+  email: z.string().email(),
+  otp: z.string().min(4),
+  newPassword: z.string().min(6, "Password minimal 6 karakter"),
+});
+export type ResetPasswordDto = z.infer<typeof ResetPasswordSchema>;
+
+export type ResetPasswordResponse = {
   success: true;
 };

@@ -1,4 +1,5 @@
-﻿import { Controller, Get, Query } from "@nestjs/common";
+﻿import { Body, Controller, Get, Patch, Query } from "@nestjs/common";
+import { z } from "zod";
 import {
   MeAccessMatrixQuerySchema,
   type AuthUser,
@@ -7,6 +8,11 @@ import {
   type MeMenusResponse,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
+
+const UpdateBusinessUnitSchema = z.object({
+  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"]),
+});
+type UpdateBusinessUnitDto = z.infer<typeof UpdateBusinessUnitSchema>;
 import { CurrentCompany } from "../auth/current-company.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { MeService } from "./me.service";
@@ -24,7 +30,10 @@ export class MeController {
   async menus(
     @CurrentUser() user: AuthUser,
   ): Promise<{ data: MeMenusResponse }> {
-    const data = await this.meService.getMenusForRole(user.role);
+    const data = await this.meService.getMenusForRole(
+      user.role,
+      user.companyId ?? null,
+    );
     return { data };
   }
 
@@ -55,6 +64,19 @@ export class MeController {
   @Get("company-with-limits")
   async companyWithLimits(@CurrentCompany() companyId: string) {
     const data = await this.meService.getCompanyWithUsage(companyId);
+    return { data };
+  }
+
+  @Patch("company/business-unit")
+  async updateBusinessUnit(
+    @CurrentCompany() companyId: string,
+    @Body(new ZodValidationPipe(UpdateBusinessUnitSchema))
+    body: UpdateBusinessUnitDto,
+  ) {
+    const data = await this.meService.updateCompanyBusinessUnit(
+      companyId,
+      body.businessUnit,
+    );
     return { data };
   }
 }

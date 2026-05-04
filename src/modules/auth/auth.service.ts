@@ -35,12 +35,59 @@ export class AuthService {
     if (!user || !user.isActive) {
       throw new UnauthorizedException("Invalid credentials");
     }
-    if (user.role === "SUPER_ADMIN" && !user.emailVerified) {
-      throw new UnauthorizedException("Email not verified");
+    if (user.role === "SUPER_ADMIN" && !user.phoneVerified) {
+      throw new UnauthorizedException("PHONE_NOT_VERIFIED");
     }
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
       throw new UnauthorizedException("Invalid credentials");
+    }
+
+    const authUser: AuthUser = {
+      id: user.id,
+      role: user.role,
+      companyId: user.companyId,
+      branchId: user.branchId,
+    };
+    const token = this.signToken(authUser);
+
+    void this.writeLoginAudit(user.id, user.email, user.branchId);
+
+    return {
+      token,
+      user: { ...authUser, name: user.name, email: user.email },
+    };
+  }
+
+  /**
+   * Auto-login pakai short-lived `loginToken` yang di-issue saat verify OTP
+   * berhasil. Token ini disimpan di tabel emailVerificationToken (one-time
+   * use, expire 5 menit).
+   */
+  async loginWithToken(loginToken: string): Promise<LoginResult> {
+    if (!loginToken || !loginToken.startsWith("login_")) {
+      throw new UnauthorizedException("Invalid login token");
+    }
+
+    const record = await this.prisma.emailVerificationToken.findUnique({
+      where: { token: loginToken },
+    });
+    if (!record) throw new UnauthorizedException("Invalid login token");
+
+    // Consume — hapus segera supaya tidak bisa dipakai ulang.
+    await this.prisma.emailVerificationToken.delete({
+      where: { id: record.id },
+    });
+
+    if (record.expiresAt < new Date()) {
+      throw new UnauthorizedException("Login token expired");
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: record.email },
+    });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException("User not found or inactive");
     }
 
     const authUser: AuthUser = {

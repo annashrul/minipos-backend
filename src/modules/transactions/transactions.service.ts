@@ -425,11 +425,18 @@ export class TransactionsService {
       // Fire-and-forget — jangan block checkout response, jangan gagalkan
       // transaksi kalau WA belum konek / nomor invalid.
       if (dto.customerId) {
+        this.logger.log(
+          `[wa-receipt] dispatch invoice=${created.invoiceNumber} customerId=${dto.customerId}`,
+        );
         void this.dispatchWhatsappReceipt(
           companyId,
           dto.customerId,
           created.id,
           created.invoiceNumber,
+        );
+      } else {
+        this.logger.log(
+          `[wa-receipt] skip invoice=${created.invoiceNumber} reason=no-customerId`,
         );
       }
 
@@ -467,16 +474,21 @@ export class TransactionsService {
       });
       const phone = customer?.phone?.trim();
       if (!phone) {
-        // Skip — customer tidak punya nomor; bukan error.
+        this.logger.log(
+          `[wa-receipt] skip invoice=${invoiceNumber} reason=customer-no-phone customer=${customer?.name ?? "-"}`,
+        );
         return;
       }
+      this.logger.log(
+        `[wa-receipt] sending invoice=${invoiceNumber} to=${customer?.name ?? "-"} (${phone})`,
+      );
       await this.whatsapp.sendReceipt(companyId, transactionId, phone);
       this.logger.log(
-        `Struk WA terkirim invoice=${invoiceNumber} → ${customer?.name ?? "-"} (${phone})`,
+        `[wa-receipt] sent invoice=${invoiceNumber} to=${customer?.name ?? "-"} (${phone})`,
       );
     } catch (err) {
       this.logger.warn(
-        `Gagal kirim struk WA invoice=${invoiceNumber}: ${
+        `[wa-receipt] FAILED invoice=${invoiceNumber}: ${
           err instanceof Error ? err.message : "Unknown error"
         }`,
       );

@@ -12,7 +12,7 @@ import {
   type WhatsAppReceiptTextParamsDto,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { CurrentCompany } from "../auth/current-company.decorator";
+import { WhatsappCompany } from "../auth/current-company.decorator";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 
 @Controller("whatsapp-receipt")
@@ -20,14 +20,14 @@ export class WhatsappReceiptController {
   constructor(private readonly receipt: WhatsappReceiptService) {}
 
   @Get("baileys/session")
-  async session(@CurrentCompany() companyId: string) {
+  async session(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.getSession(companyId);
     return { data };
   }
 
   @Post("baileys/connect")
   async connect(
-    @CurrentCompany() companyId: string,
+    @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysConnectBodySchema))
     body: WhatsAppBaileysConnectBodyDto,
   ) {
@@ -39,20 +39,20 @@ export class WhatsappReceiptController {
   }
 
   @Post("baileys/disconnect")
-  async disconnect(@CurrentCompany() companyId: string) {
+  async disconnect(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.disconnect(companyId);
     return { data };
   }
 
   @Post("baileys/logout")
-  async logout(@CurrentCompany() companyId: string) {
+  async logout(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.logout(companyId);
     return { data };
   }
 
   @Post("baileys/send-text")
   async sendText(
-    @CurrentCompany() companyId: string,
+    @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysSendTextBodySchema))
     body: WhatsAppBaileysSendTextBodyDto,
   ) {
@@ -66,7 +66,7 @@ export class WhatsappReceiptController {
 
   @Post("baileys/send-receipt")
   async sendReceipt(
-    @CurrentCompany() companyId: string,
+    @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysSendReceiptBodySchema))
     body: WhatsAppBaileysSendReceiptBodyDto,
   ) {
@@ -80,7 +80,7 @@ export class WhatsappReceiptController {
 
   @Get("text/:transactionId")
   async text(
-    @CurrentCompany() companyId: string,
+    @WhatsappCompany() companyId: string,
     @Param(new ZodValidationPipe(WhatsAppReceiptTextParamsSchema))
     params: WhatsAppReceiptTextParamsDto,
   ) {
@@ -93,7 +93,7 @@ export class WhatsappReceiptController {
 
   @Get("link")
   async link(
-    @CurrentCompany() companyId: string,
+    @WhatsappCompany() companyId: string,
     @Query(new ZodValidationPipe(WhatsAppReceiptLinkQuerySchema))
     query: WhatsAppReceiptLinkQueryDto,
   ) {
@@ -103,5 +103,25 @@ export class WhatsappReceiptController {
       query.phone,
     );
     return { data: { url } };
+  }
+
+  @Get("messages")
+  async messages(
+    @WhatsappCompany() companyId: string,
+    @Query("limit") limitRaw?: string,
+    @Query("cursor") cursor?: string,
+    @Query("phone") phone?: string,
+    @Query("direction") direction?: string,
+  ) {
+    const limit = limitRaw ? Number(limitRaw) : 30;
+    const data = await this.receipt.listMessages(companyId, {
+      limit: Number.isFinite(limit) ? limit : 30,
+      ...(cursor ? { cursor } : {}),
+      ...(phone ? { phone } : {}),
+      ...(direction === "INBOUND" || direction === "OUTBOUND"
+        ? { direction }
+        : {}),
+    });
+    return { data };
   }
 }

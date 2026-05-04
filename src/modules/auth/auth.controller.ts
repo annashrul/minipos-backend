@@ -27,6 +27,10 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const loginWithTokenSchema = z.object({
+  token: z.string().min(1),
+});
+
 const checkAccessSchema = z.object({
   menu: z.string().min(1),
   action: z.string().min(1).default("view"),
@@ -41,6 +45,16 @@ export class AuthController {
   @Post("login")
   async login(@Body(new ZodValidationPipe(loginSchema)) body: z.infer<typeof loginSchema>) {
     const result = await this.auth.login(body.email, body.password);
+    return { data: result };
+  }
+
+  @Public()
+  @Post("login-with-token")
+  async loginWithToken(
+    @Body(new ZodValidationPipe(loginWithTokenSchema))
+    body: z.infer<typeof loginWithTokenSchema>,
+  ) {
+    const result = await this.auth.loginWithToken(body.token);
     return { data: result };
   }
 

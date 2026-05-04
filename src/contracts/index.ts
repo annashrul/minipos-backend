@@ -60,6 +60,9 @@ export * from "./dtos/ai-assistant";
 export * from "./dtos/profit-dashboard";
 export * from "./dtos/analytics";
 export * from "./dtos/auto-journal";
+export * from "./dtos/vehicle";
+export * from "./dtos/service-order";
+export * from "./dtos/bookings";
 
 export type ApiSuccess<T> = { data: T };
 

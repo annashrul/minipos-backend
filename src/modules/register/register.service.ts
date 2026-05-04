@@ -1,52 +1,75 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type {
+  ForgotPasswordResponse,
   RegisterCompanyDto,
   RegisterCompanyResponse,
-  ResendVerificationEmailResponse,
-  VerifyEmailOtpDto,
-  VerifyEmailOtpResponse,
+  ResendPhoneOtpResponse,
+  ResetPasswordDto,
+  ResetPasswordResponse,
+  VerifyPhoneOtpDto,
+  VerifyPhoneOtpResponse,
 } from "@/contracts";
+import { PLATFORM_WA_SENDER_ID } from "../auth/current-company.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 
 /**
- * Company self-registration.
+ * Company self-registration dengan verifikasi OTP via WhatsApp.
  *
- * NOTE on email delivery:
- *   The original web server-action used `Resend` (via @/lib/email).
- *   The API does not yet have a Resend (or generic mail) dependency, so this
- *   service falls back to logging the OTP to stdout â€” exactly the same
- *   dev-fallback the web action used when RESEND_API_KEY was missing.
- *   Wire a real mail provider here once the API gets one.
+ * OTP delivery:
+ *   Sender = baris di tabel `whatsapp_sessions` dengan companyId =
+ *   PLATFORM_WA_SENDER_ID (di-hardcode di service). Baris itu harus
+ *   berstatus CONNECTED supaya OTP terkirim. Kalau session tidak ada /
+ *   tidak CONNECTED, fall-back ke console log (dev) atau throw (prod).
  */
 @Injectable()
 export class RegisterService {
+  private readonly logger = new Logger(RegisterService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly waReceipt: WhatsappReceiptService,
   ) {}
 
   async registerCompany(
     dto: RegisterCompanyDto,
   ): Promise<RegisterCompanyResponse> {
     const email = dto.email.trim().toLowerCase();
+    const phone = normalizePhone(dto.phone);
 
-    const existingUser = await this.prisma.user.findUnique({
+    if (!phone) throw new BadRequestException("Nomor WhatsApp tidak valid");
+
+    const existingByEmail = await this.prisma.user.findUnique({
       where: { email },
     });
-    if (existingUser) {
-      if (!existingUser.emailVerified) {
-        await this.sendNewVerificationToken(email);
-        return { status: "needs_verification", email };
+    if (existingByEmail) {
+      if (!existingByEmail.phoneVerified) {
+        await this.sendNewOtp(phone);
+        return { status: "needs_verification", phone };
       }
       throw new ConflictException("Email sudah terdaftar");
+    }
+
+    const existingByPhone = await this.prisma.user.findFirst({
+      where: { phone },
+    });
+    if (existingByPhone) {
+      if (!existingByPhone.phoneVerified) {
+        await this.sendNewOtp(phone);
+        return { status: "needs_verification", phone };
+      }
+      throw new ConflictException("Nomor WhatsApp sudah terdaftar");
     }
 
     let slug = generateSlug(dto.companyName);
@@ -68,6 +91,7 @@ export class RegisterService {
           phone: dto.companyPhone ?? null,
           address: dto.companyAddress ?? null,
           email,
+          businessUnit: dto.businessUnit ?? "RETAIL",
         },
       });
 
@@ -83,11 +107,13 @@ export class RegisterService {
         data: {
           name: dto.name,
           email,
+          phone,
           password: hashedPassword,
           role: "SUPER_ADMIN",
           companyId: company.id,
           branchId: branch.id,
           emailVerified: true,
+          phoneVerified: false,
         },
       });
 
@@ -167,22 +193,25 @@ export class RegisterService {
       });
     }
 
-    return { status: "created" };
+    // Kirim OTP setelah company ter-create supaya user bisa lanjut verifikasi.
+    await this.sendNewOtp(phone);
+
+    return { status: "needs_verification", phone };
   }
 
-  async verifyEmailOtp(
-    dto: VerifyEmailOtpDto,
-  ): Promise<VerifyEmailOtpResponse> {
-    const normalizedEmail = dto.email.trim().toLowerCase();
+  async verifyPhoneOtp(
+    dto: VerifyPhoneOtpDto,
+  ): Promise<VerifyPhoneOtpResponse> {
+    const phone = normalizePhone(dto.phone);
     const normalizedOtp = dto.otp.trim().replace(/\s+/g, "");
 
-    if (!normalizedEmail || !normalizedOtp) {
-      throw new BadRequestException("Email dan OTP wajib diisi");
+    if (!phone || !normalizedOtp) {
+      throw new BadRequestException("Nomor WhatsApp dan OTP wajib diisi");
     }
 
-    const record = await this.prisma.emailVerificationToken.findFirst({
+    const record = await this.prisma.phoneVerificationToken.findFirst({
       where: {
-        email: normalizedEmail,
+        phone,
         token: { startsWith: `${normalizedOtp}-` },
       },
     });
@@ -192,7 +221,7 @@ export class RegisterService {
     }
 
     if (record.expiresAt < new Date()) {
-      await this.prisma.emailVerificationToken.delete({
+      await this.prisma.phoneVerificationToken.delete({
         where: { id: record.id },
       });
       throw new BadRequestException(
@@ -200,27 +229,29 @@ export class RegisterService {
       );
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-      select: { id: true, email: true, emailVerified: true },
+    const user = await this.prisma.user.findFirst({
+      where: { phone },
+      select: { id: true, email: true, phoneVerified: true },
     });
     if (!user) throw new NotFoundException("User tidak ditemukan");
 
-    if (!user.emailVerified) {
+    if (!user.phoneVerified) {
       await this.prisma.user.update({
-        where: { email: normalizedEmail },
-        data: { emailVerified: true },
+        where: { id: user.id },
+        data: { phoneVerified: true, emailVerified: true },
       });
     }
 
-    await this.prisma.emailVerificationToken.deleteMany({
-      where: { email: normalizedEmail },
+    await this.prisma.phoneVerificationToken.deleteMany({
+      where: { phone },
     });
 
+    // Issue short-lived auto-login token via existing email-token store
+    // (one-time use, 5 menit). Auth shim sudah mendukung token ini.
     const loginToken = `login_${crypto.randomBytes(24).toString("hex")}`;
     await this.prisma.emailVerificationToken.create({
       data: {
-        email: normalizedEmail,
+        email: user.email,
         token: loginToken,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
@@ -229,19 +260,93 @@ export class RegisterService {
     return { loginToken };
   }
 
-  async resendVerificationEmail(
-    email: string,
-  ): Promise<ResendVerificationEmailResponse> {
+  async forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (!user || !user.phone) {
+      // Untuk privacy, jangan expose ke client apakah email/phone ada.
+      // Tapi UI butuh phone untuk routing — kalau tidak ada, tetap throw.
+      throw new NotFoundException(
+        "Akun tidak ditemukan atau belum punya nomor WhatsApp",
+      );
+    }
+    if (!user.isActive) {
+      throw new BadRequestException("Akun tidak aktif");
+    }
+    await this.sendNewOtp(user.phone);
+    return {
+      phone: user.phone,
+      phoneMasked: maskPhone(user.phone),
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<ResetPasswordResponse> {
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    const otp = dto.otp.trim().replace(/\s+/g, "");
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (!user || !user.phone) {
+      throw new NotFoundException("Akun tidak ditemukan");
+    }
+
+    const record = await this.prisma.phoneVerificationToken.findFirst({
+      where: { phone: user.phone, token: { startsWith: `${otp}-` } },
+    });
+    if (!record) throw new BadRequestException("Kode OTP tidak valid");
+    if (record.expiresAt < new Date()) {
+      await this.prisma.phoneVerificationToken.delete({
+        where: { id: record.id },
+      });
+      throw new BadRequestException("Kode OTP sudah kedaluwarsa");
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword, phoneVerified: true },
+      }),
+      this.prisma.phoneVerificationToken.deleteMany({
+        where: { phone: user.phone },
+      }),
+    ]);
+
+    return { success: true };
+  }
+
+  async resendOtpByEmail(email: string): Promise<{ phone: string }> {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
     });
     if (!user) throw new NotFoundException("Email tidak ditemukan");
-    if (user.emailVerified) {
-      throw new BadRequestException("Email sudah terverifikasi");
+    if (!user.phone) {
+      throw new BadRequestException("User belum punya nomor WhatsApp terdaftar");
+    }
+    if (user.phoneVerified) {
+      throw new BadRequestException("Akun sudah terverifikasi");
+    }
+    await this.sendNewOtp(user.phone);
+    return { phone: user.phone };
+  }
+
+  async resendPhoneOtp(phone: string): Promise<ResendPhoneOtpResponse> {
+    const normalized = normalizePhone(phone);
+    if (!normalized) throw new BadRequestException("Nomor WhatsApp tidak valid");
+
+    const user = await this.prisma.user.findFirst({
+      where: { phone: normalized },
+    });
+    if (!user) throw new NotFoundException("Nomor WhatsApp tidak ditemukan");
+    if (user.phoneVerified) {
+      throw new BadRequestException("Nomor WhatsApp sudah terverifikasi");
     }
 
-    await this.sendNewVerificationToken(normalizedEmail);
+    await this.sendNewOtp(normalized);
     return { success: true };
   }
 
@@ -249,29 +354,73 @@ export class RegisterService {
   // Helpers
   // ===========================
 
-  private async sendNewVerificationToken(email: string): Promise<void> {
-    await this.prisma.emailVerificationToken.deleteMany({ where: { email } });
+  private async sendNewOtp(phone: string): Promise<void> {
+    await this.prisma.phoneVerificationToken.deleteMany({ where: { phone } });
 
     const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
     const token = `${otp}-${crypto.randomBytes(3).toString("hex")}`;
-    await this.prisma.emailVerificationToken.create({
+    await this.prisma.phoneVerificationToken.create({
       data: {
-        email,
+        phone,
         token,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
 
-    // TODO: wire a real mail provider (Resend / Nodemailer / SES) here.
-    // For now we mirror the dev-fallback used by the web `email.ts`.
+    const message =
+      `*Kode Verifikasi MenoPOS*\n\n` +
+      `OTP: *${otp}*\n` +
+      `Berlaku 15 menit. Jangan bagikan kode ini ke siapa pun.`;
+
+    // Lookup platform sender dari tabel whatsapp_sessions. Pengirim valid
+    // hanya kalau status = CONNECTED (sesi Baileys aktif & punya creds).
+    const senderSession = await this.prisma.whatsappSession.findFirst({
+      where: { companyId: PLATFORM_WA_SENDER_ID },
+      select: { companyId: true, status: true, phoneNumber: true },
+    });
+
+    if (senderSession && senderSession.status === "CONNECTED") {
+      try {
+        await this.waReceipt.sendText(senderSession.companyId, phone, message);
+        this.logger.log(
+          `OTP sent via WA to ${maskPhone(phone)} (sender=${
+            senderSession.phoneNumber ?? senderSession.companyId
+          })`,
+        );
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `WA OTP send failed for ${maskPhone(phone)}: ${msg}`,
+        );
+        if (process.env.NODE_ENV === "production") {
+          throw new ServiceUnavailableException(
+            "Gagal mengirim OTP via WhatsApp. Silakan coba lagi atau hubungi admin.",
+          );
+        }
+      }
+    } else {
+      this.logger.warn(
+        `Platform WA sender (companyId=${PLATFORM_WA_SENDER_ID}) status=${
+          senderSession?.status ?? "NOT_FOUND"
+        } — fallback ke console log (dev only)`,
+      );
+      if (process.env.NODE_ENV === "production") {
+        throw new ServiceUnavailableException(
+          "OTP service belum siap — sesi WhatsApp pengirim tidak aktif.",
+        );
+      }
+    }
+
+    // Dev-fallback: log to stdout
     // eslint-disable-next-line no-console
-    console.log(`\n========== EMAIL VERIFICATION ==========`);
+    console.log(`\n========== WA VERIFICATION (DEV FALLBACK) ==========`);
     // eslint-disable-next-line no-console
-    console.log(`To:  ${email}`);
+    console.log(`To:  ${phone}`);
     // eslint-disable-next-line no-console
     console.log(`OTP: ${otp}`);
     // eslint-disable-next-line no-console
-    console.log(`=========================================\n`);
+    console.log(`====================================================\n`);
   }
 }
 
@@ -282,4 +431,23 @@ function generateSlug(name: string): string {
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .trim();
+}
+
+/**
+ * Normalisasi ke format internasional `+62...` (Indonesia default).
+ * Terima `08...`, `628...`, `+628...`. Drop spasi/dash/dll.
+ */
+function normalizePhone(raw: string | null | undefined): string {
+  const cleaned = (raw ?? "").replace(/[^\d+]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return cleaned;
+  if (cleaned.startsWith("62")) return `+${cleaned}`;
+  if (cleaned.startsWith("0")) return `+62${cleaned.slice(1)}`;
+  return `+62${cleaned}`;
+}
+
+function maskPhone(phone: string): string {
+  return phone.length > 6
+    ? `${phone.slice(0, 4)}***${phone.slice(-3)}`
+    : phone;
 }

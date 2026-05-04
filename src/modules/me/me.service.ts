@@ -14,9 +14,17 @@ export class MeService {
    * Returns the menu tree filtered to a single role's permissions.
    * Each menu/action in the result has `permissions: { [role]: boolean }`.
    * Also returns the role color for sidebar UI.
+   *
+   * Kalau `companyId` provided, menu akan di-filter berdasarkan
+   * `Company.businessUnit`. Menu dengan `businessUnits` non-null yang tidak
+   * include businessUnit company saat ini akan di-drop. PLATFORM_OWNER
+   * (companyId null) tidak di-filter.
    */
-  async getMenusForRole(role: string): Promise<MeMenusResponse> {
-    const [menus, appRole] = await Promise.all([
+  async getMenusForRole(
+    role: string,
+    companyId?: string | null,
+  ): Promise<MeMenusResponse> {
+    const [menus, appRole, company] = await Promise.all([
       this.prisma.appMenu.findMany({
         where: { isActive: true },
         orderBy: [{ group: "asc" }, { sortOrder: "asc" }],
@@ -41,9 +49,25 @@ export class MeService {
         where: { key: role },
         select: { color: true },
       }),
+      companyId
+        ? this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { businessUnit: true },
+          })
+        : Promise.resolve(null),
     ]);
 
-    const mapped: AccessMenuDto[] = menus.map((menu) => ({
+    const businessUnit = company?.businessUnit ?? null;
+    const isPlatformOwner = !companyId;
+
+    const filtered = menus.filter((menu) => {
+      if (isPlatformOwner) return true;
+      const units = menu.businessUnits as string[] | null | undefined;
+      if (!units || units.length === 0) return true;
+      return businessUnit ? units.includes(businessUnit) : true;
+    });
+
+    const mapped: AccessMenuDto[] = filtered.map((menu) => ({
       id: menu.id,
       key: menu.key,
       name: menu.name,
@@ -149,6 +173,7 @@ export class MeService {
     slug: string;
     plan: string;
     planExpiresAt: string | null;
+    businessUnit: string;
   }> {
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
@@ -158,6 +183,7 @@ export class MeService {
         slug: true,
         plan: true,
         planExpiresAt: true,
+        businessUnit: true,
       },
     });
     return {
@@ -166,6 +192,23 @@ export class MeService {
       slug: company?.slug ?? "",
       plan: company?.plan ?? "FREE",
       planExpiresAt: company?.planExpiresAt?.toISOString() ?? null,
+      businessUnit: company?.businessUnit ?? "RETAIL",
+    };
+  }
+
+  async updateCompanyBusinessUnit(
+    companyId: string,
+    businessUnit: "RETAIL" | "BENGKEL" | "RESTAURANT" | "CAFE",
+  ) {
+    const updated = await this.prisma.company.update({
+      where: { id: companyId },
+      data: { businessUnit },
+      select: { id: true, name: true, businessUnit: true },
+    });
+    return {
+      id: updated.id,
+      name: updated.name,
+      businessUnit: updated.businessUnit,
     };
   }
 

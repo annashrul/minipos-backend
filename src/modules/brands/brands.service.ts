@@ -17,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service";
 const BRAND_SELECT = {
   id: true,
   name: true,
+  kind: true,
   createdAt: true,
   updatedAt: true,
   _count: { select: { products: true } },
@@ -32,9 +33,10 @@ export class BrandsService {
     companyId: string,
     query: ListBrandsQueryDto,
   ): Promise<BrandListResponse> {
-    const { search, page, perPage, sortBy, sortDir } = query;
+    const { search, kind, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.BrandWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
+    if (kind) where.kind = kind;
 
     const dir: "asc" | "desc" = sortDir ?? "asc";
     let orderBy: Prisma.BrandOrderByWithRelationInput = { name: "asc" };
@@ -83,7 +85,7 @@ export class BrandsService {
   ): Promise<BrandResponse> {
     try {
       const created = await this.prisma.brand.create({
-        data: { name: dto.name, companyId },
+        data: { name: dto.name, kind: dto.kind ?? "PRODUCT", companyId },
         select: BRAND_SELECT,
       });
       return toBrandResponse(created);
@@ -111,6 +113,7 @@ export class BrandsService {
 
     const data: Prisma.BrandUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
+    if (dto.kind !== undefined) data.kind = dto.kind;
 
     try {
       const updated = await this.prisma.brand.update({
@@ -150,6 +153,7 @@ function toBrandResponse(b: RawBrand): BrandResponse {
   return {
     id: b.id,
     name: b.name,
+    kind: b.kind,
     productCount: b._count.products,
     createdAt: b.createdAt.toISOString(),
     updatedAt: b.updatedAt.toISOString(),

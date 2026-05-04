@@ -21,6 +21,9 @@ const CATEGORY_SELECT = {
   description: true,
   parentId: true,
   parent: { select: { id: true, name: true } },
+  kind: true,
+  brandId: true,
+  brand: { select: { id: true, name: true } },
   createdAt: true,
   updatedAt: true,
   _count: { select: { products: true } },
@@ -39,10 +42,12 @@ export class CategoriesService {
     companyId: string,
     query: ListCategoriesQueryDto,
   ): Promise<CategoryListResponse> {
-    const { search, parentId, page, perPage, sortBy, sortDir } = query;
+    const { search, parentId, kind, brandId, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.CategoryWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
     if (parentId !== undefined) where.parentId = parentId;
+    if (kind) where.kind = kind;
+    if (brandId) where.brandId = brandId;
 
     const dir: "asc" | "desc" = sortDir ?? "asc";
     let orderBy: Prisma.CategoryOrderByWithRelationInput = { name: "asc" };
@@ -96,6 +101,8 @@ export class CategoriesService {
           name: dto.name,
           description: dto.description ?? null,
           parentId: dto.parentId ?? null,
+          kind: dto.kind ?? "PRODUCT",
+          brandId: dto.brandId ?? null,
           companyId,
         },
         select: CATEGORY_SELECT,
@@ -132,6 +139,12 @@ export class CategoriesService {
     if (dto.parentId !== undefined) {
       data.parent = dto.parentId
         ? { connect: { id: dto.parentId } }
+        : { disconnect: true };
+    }
+    if (dto.kind !== undefined) data.kind = dto.kind;
+    if (dto.brandId !== undefined) {
+      data.brand = dto.brandId
+        ? { connect: { id: dto.brandId } }
         : { disconnect: true };
     }
 
@@ -184,6 +197,9 @@ function toCategoryResponse(c: RawCategory): CategoryResponse {
     description: c.description,
     parentId: c.parentId,
     parent: c.parent ? { id: c.parent.id, name: c.parent.name } : null,
+    kind: c.kind,
+    brandId: c.brandId,
+    brand: c.brand ? { id: c.brand.id, name: c.brand.name } : null,
     productCount: c._count.products,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),

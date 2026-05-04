@@ -7,6 +7,7 @@ export const CreateUserSchema = z.object({
   role: z.string().min(1),
   branchId: z.string().nullable().optional(),
   isActive: z.boolean().optional().default(true),
+  isMechanic: z.boolean().optional().default(false),
 });
 export type CreateUserDto = z.infer<typeof CreateUserSchema>;
 
@@ -17,6 +18,7 @@ export const UpdateUserSchema = z.object({
   role: z.string().min(1).optional(),
   branchId: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
+  isMechanic: z.boolean().optional(),
 });
 export type UpdateUserDto = z.infer<typeof UpdateUserSchema>;
 
@@ -24,6 +26,10 @@ export const ListUsersQuerySchema = z.object({
   search: z.string().optional(),
   role: z.string().optional(),
   branchId: z.string().optional(),
+  isMechanic: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(10),
 });
@@ -37,6 +43,7 @@ export type UserResponse = {
   branchId: string | null;
   branch: { id: string; name: string } | null;
   isActive: boolean;
+  isMechanic: boolean;
   createdAt: string;
   transactionCount: number;
 };

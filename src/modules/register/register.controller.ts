@@ -1,11 +1,15 @@
-﻿import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Post } from "@nestjs/common";
 import {
+  ForgotPasswordSchema,
   RegisterCompanySchema,
-  ResendVerificationEmailSchema,
-  VerifyEmailOtpSchema,
+  ResendPhoneOtpSchema,
+  ResetPasswordSchema,
+  VerifyPhoneOtpSchema,
+  type ForgotPasswordDto,
   type RegisterCompanyDto,
-  type ResendVerificationEmailDto,
-  type VerifyEmailOtpDto,
+  type ResendPhoneOtpDto,
+  type ResetPasswordDto,
+  type VerifyPhoneOtpDto,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { Public } from "../auth/public.decorator";
@@ -26,22 +30,50 @@ export class RegisterController {
   }
 
   @Public()
-  @Post("verify-email")
-  async verifyEmailOtp(
-    @Body(new ZodValidationPipe(VerifyEmailOtpSchema))
-    body: VerifyEmailOtpDto,
+  @Post("verify-phone")
+  async verifyPhoneOtp(
+    @Body(new ZodValidationPipe(VerifyPhoneOtpSchema))
+    body: VerifyPhoneOtpDto,
   ) {
-    const data = await this.register.verifyEmailOtp(body);
+    const data = await this.register.verifyPhoneOtp(body);
     return { data };
   }
 
   @Public()
-  @Post("resend-verification")
-  async resendVerificationEmail(
-    @Body(new ZodValidationPipe(ResendVerificationEmailSchema))
-    body: ResendVerificationEmailDto,
+  @Post("resend-otp")
+  async resendPhoneOtp(
+    @Body(new ZodValidationPipe(ResendPhoneOtpSchema))
+    body: ResendPhoneOtpDto,
   ) {
-    const data = await this.register.resendVerificationEmail(body.email);
+    const data = await this.register.resendPhoneOtp(body.phone);
+    return { data };
+  }
+
+  /** Helper untuk login page: lookup phone by email, lalu kirim OTP. */
+  @Public()
+  @Post("resend-otp-by-email")
+  async resendOtpByEmail(@Body() body: { email?: string }) {
+    const data = await this.register.resendOtpByEmail(body?.email ?? "");
+    return { data };
+  }
+
+  @Public()
+  @Post("forgot-password")
+  async forgotPassword(
+    @Body(new ZodValidationPipe(ForgotPasswordSchema))
+    body: ForgotPasswordDto,
+  ) {
+    const data = await this.register.forgotPassword(body.email);
+    return { data };
+  }
+
+  @Public()
+  @Post("reset-password")
+  async resetPassword(
+    @Body(new ZodValidationPipe(ResetPasswordSchema))
+    body: ResetPasswordDto,
+  ) {
+    const data = await this.register.resetPassword(body);
     return { data };
   }
 }

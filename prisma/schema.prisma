@@ -129,6 +129,9 @@ model Company {
   email                String?
   logo                 String?
   plan                 String                     @default("FREE") // FREE, PRO, ENTERPRISE
+  // Jenis usaha — drive ketersediaan menu di sidebar.
+  // RETAIL, BENGKEL, RESTAURANT, CAFE.
+  businessUnit         String                     @default("RETAIL") @map("business_unit")
   planExpiresAt        DateTime?
   isActive             Boolean                    @default(true)
   createdAt            DateTime                   @default(now())
@@ -157,14 +160,19 @@ model User {
   id                  String                     @id @default(uuid())
   name                String
   email               String                     @unique
+  phone               String?
   password            String
   role                String                     @default("CASHIER")
+  // Bengkel: User dengan flag ini bisa di-assign sebagai mekanik di
+  // ServiceOrder & ServiceOrderItem (untuk komisi/payroll).
+  isMechanic          Boolean                    @default(false) @map("is_mechanic")
   companyId           String?
   company             Company?                   @relation(fields: [companyId], references: [id])
   branchId            String?
   branch              Branch?                    @relation(fields: [branchId], references: [id])
   isActive            Boolean                    @default(true)
   emailVerified       Boolean                    @default(false)
+  phoneVerified       Boolean                    @default(false)
   deletedAt           DateTime?
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
@@ -188,11 +196,16 @@ model User {
   journalChangeLogs   JournalChangeLog[]
   recurringTemplates  RecurringJournalTemplate[]
   tableOrdersApproved TableOrder[]
+  serviceOrdersAsMechanic ServiceOrder[]         @relation("ServiceOrderMechanic")
+  serviceOrderItems       ServiceOrderItem[]    @relation("ServiceOrderItemMechanic")
+  bookingsAsMechanic      Booking[]              @relation("BookingMechanic")
+  bookingsCreated         Booking[]              @relation("BookingCreatedBy")
 
   @@index([email])
   @@index([role])
   @@index([companyId])
   @@index([branchId])
+  @@index([isMechanic])
   @@map("users")
 }
 
@@ -204,6 +217,10 @@ model AppMenu {
   group     String
   sortOrder Int                  @default(0)
   isActive  Boolean              @default(true)
+  // Daftar business unit yang bisa lihat menu ini (mis. ["BENGKEL"] berarti
+  // hanya company businessUnit=BENGKEL). NULL atau empty = available untuk
+  // semua. Default null supaya semua menu existing tetap visible.
+  businessUnits Json?            @map("business_units")
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
   actions   MenuAction[]
@@ -308,6 +325,8 @@ model Branch {
   recurringTemplates RecurringJournalTemplate[]
   tableSessions      TableSession[]
   tableOrders        TableOrder[]
+  serviceOrders      ServiceOrder[]
+  bookings           Booking[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -362,29 +381,44 @@ model Category {
   children    Category[]      @relation("SubCategories")
   companyId   String
   company     Company         @relation(fields: [companyId], references: [id])
+  // PRODUCT (default, kategori produk) atau VEHICLE_MODEL (model kendaraan
+  // bengkel — relate ke brand kendaraan).
+  kind        String          @default("PRODUCT")
+  // Untuk VEHICLE_MODEL: relasi ke Brand (mis. model "Vario 150" milik
+  // brand "Honda"). Null untuk kategori produk biasa.
+  brandId     String?
+  brand       Brand?          @relation("CategoryBrand", fields: [brandId], references: [id])
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   products    Product[]
   promotions  Promotion[]
   bundles     ProductBundle[]
+  vehicles    Vehicle[]       @relation("VehicleModel")
 
   @@unique([companyId, name])
   @@index([parentId])
   @@index([companyId])
+  @@index([kind])
+  @@index([brandId])
   @@map("categories")
 }
 
 model Brand {
-  id        String    @id @default(uuid())
-  name      String
-  companyId String
-  company   Company   @relation(fields: [companyId], references: [id])
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  products  Product[]
+  id          String     @id @default(uuid())
+  name        String
+  companyId   String
+  company     Company    @relation(fields: [companyId], references: [id])
+  // PRODUCT (default) atau VEHICLE — Honda, Toyota, dll untuk bengkel.
+  kind        String     @default("PRODUCT")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  products    Product[]
+  models      Category[] @relation("CategoryBrand")
+  vehicles    Vehicle[]  @relation("VehicleBrand")
 
   @@unique([companyId, name])
   @@index([companyId])
+  @@index([kind])
   @@map("brands")
 }
 
@@ -406,6 +440,10 @@ model Product {
   minStock           Int                    @default(5)
   barcode            String?
   unit               String                 @default("pcs")
+  // PRODUCT = barang fisik dengan stock; SERVICE = jasa (no stock validation,
+  // skip stock movement, dipakai bisnis bengkel/jasa). Default PRODUCT supaya
+  // backward-compat.
+  itemType           String                 @default("PRODUCT") @map("item_type")
   isActive           Boolean                @default(true)
   description        String?
   imageUrl           String?
@@ -573,6 +611,9 @@ model Customer {
   storeCredits   StoreCredit[]
   returns        ReturnExchange[]
   giftCards      GiftCard[]
+  vehicles       Vehicle[]
+  serviceOrders  ServiceOrder[]
+  bookings       Booking[]
 
   @@unique([companyId, phone])
   @@unique([companyId, memberCardCode])
@@ -633,6 +674,8 @@ model Transaction {
   tableId        String?
   table          RestaurantTable?  @relation(fields: [tableId], references: [id])
   tableSession   TableSession?
+  // Bengkel: Transaction yang berasal dari finalize ServiceOrder.
+  serviceOrder   ServiceOrder?     @relation("ServiceOrderTransaction")
 
   @@index([invoiceNumber])
   @@index([userId])
@@ -1193,6 +1236,207 @@ model WhatsappMessageLog {
 
   @@index([sessionId, createdAt])
   @@map("whatsapp_message_logs")
+}
+
+// ===========================
+// BENGKEL — Vehicle, Service Order
+// ===========================
+
+model Vehicle {
+  id              String         @id @default(uuid())
+  companyId       String         @map("company_id")
+  customerId      String         @map("customer_id")
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Identitas kendaraan
+  plateNumber     String         @map("plate_number")
+  type            String         @default("MOTOR") // MOTOR, MOBIL
+  // Brand (FK ke Brand dengan kind=VEHICLE) — mis. Honda, Yamaha, Toyota.
+  brandId         String?        @map("brand_id")
+  brand           Brand?         @relation("VehicleBrand", fields: [brandId], references: [id])
+  // Model (FK ke Category dengan kind=VEHICLE_MODEL) — mis. Vario 150, Beat.
+  // Tiap model di-link ke brand-nya, sehingga form bisa cascade.
+  modelId         String?        @map("model_id")
+  modelRef        Category?      @relation("VehicleModel", fields: [modelId], references: [id])
+  year            Int?
+  color           String?
+  vin             String? // No rangka
+  engineNumber    String?        @map("engine_number")
+  engineCapacity  String?        @map("engine_capacity") // 150cc, 1.5L
+  transmission    String? // manual / automatic
+  fuelType        String?        @map("fuel_type") // pertalite, pertamax, solar
+  mileage         Int? // odometer terakhir (km)
+  photoUrl        String?        @map("photo_url")
+  notes           String?
+  isActive        Boolean        @default(true) @map("is_active")
+  lastServicedAt  DateTime?      @map("last_serviced_at")
+  nextServiceKm   Int?           @map("next_service_km")
+  nextServiceDate DateTime?      @map("next_service_date")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  serviceOrders   ServiceOrder[]
+
+  bookings        Booking[]
+
+  @@unique([companyId, plateNumber])
+  @@index([companyId])
+  @@index([customerId])
+  @@index([plateNumber])
+  @@index([brandId])
+  @@index([modelId])
+  @@map("vehicles")
+}
+
+// ===========================
+// BOOKING — universal reservation/appointment
+// ===========================
+//
+// Satu model untuk semua bisnis unit:
+//  - Bengkel  → service appointment (vehicleId, serviceType, mechanicId)
+//  - Resto/Cafe → table reservation (partySize, tableId)
+// Field opsional di-isi sesuai bookingType. Status workflow:
+//   PENDING → CONFIRMED → IN_PROGRESS → COMPLETED
+//   atau CANCELLED / NO_SHOW dari status manapun.
+model Booking {
+  id            String            @id @default(uuid())
+  companyId     String            @map("company_id")
+  branchId      String            @map("branch_id")
+  branch        Branch            @relation(fields: [branchId], references: [id])
+  customerId    String?           @map("customer_id")
+  customer      Customer?         @relation(fields: [customerId], references: [id])
+  // Identitas customer kalau bukan member (walk-in booking).
+  customerName  String?           @map("customer_name")
+  customerPhone String?           @map("customer_phone")
+  // BENGKEL | RESTAURANT | CAFE — menentukan field opsional yang relevan.
+  bookingType   String            @map("booking_type")
+  // Jadwal kedatangan / janji.
+  scheduledAt   DateTime          @map("scheduled_at")
+  durationMin   Int?              @map("duration_min") // estimasi durasi pelayanan
+  // Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW
+  status        String            @default("PENDING")
+  notes         String?
+  // ─── Bengkel-specific ──────────────────────────────────────────
+  vehicleId     String?           @map("vehicle_id")
+  vehicle       Vehicle?          @relation(fields: [vehicleId], references: [id])
+  serviceType   String?           @map("service_type") // Ganti Oli, Tune Up, dll
+  mechanicId    String?           @map("mechanic_id")
+  mechanic      User?             @relation("BookingMechanic", fields: [mechanicId], references: [id])
+  // ─── Resto/Cafe-specific ───────────────────────────────────────
+  partySize     Int?              @map("party_size")
+  tableId       String?           @map("table_id")
+  table         RestaurantTable?  @relation(fields: [tableId], references: [id])
+  // Reminder WA tracking — supaya cron tidak dobel kirim.
+  reminderSentAt DateTime?        @map("reminder_sent_at")
+  // Saat di-finalize jadi service order (bengkel) atau table session (F&B),
+  // simpan reference-nya di sini untuk audit.
+  serviceOrderId String?          @map("service_order_id")
+  cancelReason   String?          @map("cancel_reason")
+  cancelledAt    DateTime?        @map("cancelled_at")
+  completedAt    DateTime?        @map("completed_at")
+  createdById    String?          @map("created_by_id")
+  createdBy      User?             @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([branchId])
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([mechanicId])
+  @@index([tableId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([branchId, scheduledAt])
+  @@map("bookings")
+}
+
+model ServiceOrder {
+  id              String              @id @default(uuid())
+  orderNumber     String              @unique @map("order_number")
+  companyId       String              @map("company_id")
+  branchId        String              @map("branch_id")
+  branch          Branch              @relation(fields: [branchId], references: [id])
+  vehicleId       String              @map("vehicle_id")
+  vehicle         Vehicle             @relation(fields: [vehicleId], references: [id])
+  customerId      String              @map("customer_id")
+  customer        Customer            @relation(fields: [customerId], references: [id])
+  // Mekanik utama yang assigned (boleh null kalau belum di-assign).
+  mechanicId      String?             @map("mechanic_id")
+  mechanic        User?               @relation("ServiceOrderMechanic", fields: [mechanicId], references: [id])
+  // Status: ANTRIAN, DIAGNOSA, MENUNGGU_APPROVAL, DIKERJAKAN, SELESAI, DIBAYAR, DIBATALKAN
+  status          String              @default("ANTRIAN")
+  complaint       String? // Keluhan customer
+  diagnose        String? // Hasil diagnosa mekanik
+  estimateAmount  Float?              @map("estimate_amount")
+  finalAmount     Float?              @map("final_amount") // Total final yg disepakati
+  mileageIn       Int?                @map("mileage_in")
+  mileageOut      Int?                @map("mileage_out")
+  approvedAt      DateTime?           @map("approved_at")
+  startedAt       DateTime?           @map("started_at")
+  completedAt     DateTime?           @map("completed_at")
+  paidAt          DateTime?           @map("paid_at")
+  cancelledAt     DateTime?           @map("cancelled_at")
+  cancelReason    String?             @map("cancel_reason")
+  // Estimasi tanggal service berikutnya — di-set saat finalize, dipakai oleh
+  // cron reminder WA (H-7 / H-3 sebelum tanggal ini).
+  nextServiceAt   DateTime?           @map("next_service_at")
+  // Stempel waktu terakhir reminder dikirim, supaya tidak dobel di window
+  // yang sama (H-7 → tidak dikirim ulang sampai pindah window H-3).
+  lastReminderSentAt DateTime?        @map("last_reminder_sent_at")
+  // Foto sebelum/sesudah, attachment lain. Format: [{url, label, uploadedAt}]
+  attachments     Json?
+  notes           String?
+  // Link ke Transaction setelah dibayar (1:1 — Service Order finalize jadi Transaction).
+  transactionId   String?             @unique @map("transaction_id")
+  transaction     Transaction?        @relation("ServiceOrderTransaction", fields: [transactionId], references: [id])
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  items           ServiceOrderItem[]
+
+  @@index([companyId])
+  @@index([branchId])
+  @@index([vehicleId])
+  @@index([customerId])
+  @@index([mechanicId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([branchId, status, createdAt])
+  // Index untuk cron reminder: filter SO yang sudah punya jadwal & belum
+  // selesai window-nya.
+  @@index([nextServiceAt, lastReminderSentAt])
+  @@map("service_orders")
+}
+
+model ServiceOrderItem {
+  id              String       @id @default(uuid())
+  serviceOrderId  String       @map("service_order_id")
+  serviceOrder    ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  // Kalau item = produk dari katalog, isi productId. Kalau jasa ad-hoc
+  // (mis. "Pengecekan suspensi"), productId null + name diisi manual.
+  productId       String?      @map("product_id")
+  // PRODUCT atau SERVICE — duplikasi dari Product.itemType supaya tidak
+  // butuh JOIN di list view. Default SERVICE supaya UI default ke "jasa".
+  itemType        String       @default("SERVICE") @map("item_type")
+  name            String
+  quantity        Float        @default(1)
+  unitPrice       Float        @map("unit_price")
+  discount        Float        @default(0)
+  subtotal        Float
+  // Mekanik yang nge-handle item ini (untuk komisi). Bisa beda dengan
+  // mekanik utama di ServiceOrder kalau ada lebih dari 1 mekanik.
+  mechanicId      String?      @map("mechanic_id")
+  mechanic        User?        @relation("ServiceOrderItemMechanic", fields: [mechanicId], references: [id])
+  // Untuk JASA: persen komisi yang akan dihitung. Default 0.
+  commissionPct   Float        @default(0) @map("commission_pct")
+  // Computed dari subtotal × commissionPct/100 saat finalize. Disimpan
+  // supaya laporan komisi tidak butuh re-compute.
+  commissionAmount Float       @default(0) @map("commission_amount")
+  notes           String?
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  @@index([serviceOrderId])
+  @@index([productId])
+  @@index([mechanicId])
+  @@map("service_order_items")
 }
 
 // ===========================
@@ -1955,6 +2199,7 @@ model RestaurantTable {
   orderQueues   OrderQueue[]
   tableSessions TableSession[]
   tableOrders   TableOrder[]
+  bookings      Booking[]
 
   @@unique([number, branchId])
   @@index([branchId, status])
@@ -2074,6 +2319,18 @@ model EmailVerificationToken {
   @@index([email])
   @@index([token])
   @@map("email_verification_tokens")
+}
+
+model PhoneVerificationToken {
+  id        String   @id @default(uuid())
+  phone     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+  @@index([token])
+  @@map("phone_verification_tokens")
 }
 
 model SubscriptionPayment {

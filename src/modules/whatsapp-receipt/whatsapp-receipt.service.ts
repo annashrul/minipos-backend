@@ -14,6 +14,7 @@ import type {
 } from "@whiskeysockets/baileys";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 import { waDebugLogSync } from "./wa-debug.logger";
 
 /**
@@ -100,7 +101,75 @@ export class WhatsappReceiptService
   private readonly sockets = new Map<string, WASocket>();
   private baileysRuntime: BaileysRuntime | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
+
+  /** Emit realtime event saat status sesi WA berubah supaya UI auto-refresh. */
+  private emitSessionUpdate(
+    companyId: string,
+    payload: {
+      status: string;
+      hasQr?: boolean;
+      phoneNumber?: string | null;
+      deviceName?: string | null;
+      reason?: string | null;
+    },
+  ) {
+    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, {
+      companyId,
+      status: payload.status,
+      hasQr: payload.hasQr ?? false,
+      phoneNumber: payload.phoneNumber ?? null,
+      deviceName: payload.deviceName ?? null,
+      reason: payload.reason ?? null,
+    });
+  }
+
+  /**
+   * Simpan pesan inbound dari Baileys ke whatsapp_message_logs.
+   * Skip pesan fromMe (echo dari device kita). Idempotent terhadap
+   * providerMessageId.
+   */
+  private async persistInboundMessages(
+    sessionId: string,
+    messages: Array<{
+      key: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null };
+      message?: Record<string, unknown> | null;
+      messageTimestamp?: number | Long | null;
+      pushName?: string | null;
+    }>,
+  ): Promise<void> {
+    for (const m of messages) {
+      if (m.key.fromMe) continue;
+      const providerId = m.key.id ?? null;
+      if (!providerId) continue;
+      const remoteJid = m.key.remoteJid ?? "";
+      const fromNumber = remoteJid.split("@")[0] || null;
+
+      // Idempotency: skip kalau sudah ada
+      const existing = await this.prisma.whatsappMessageLog.findFirst({
+        where: { sessionId, providerMessageId: providerId },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      const { content, messageType } = extractMessageContent(m.message ?? {});
+
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId,
+          direction: "INBOUND",
+          fromNumber,
+          messageType,
+          content,
+          status: "RECEIVED",
+          providerMessageId: providerId,
+        },
+      });
+    }
+  }
 
   /**
    * Restore semua sesi yang status CONNECTED + punya authCreds saat startup.
@@ -298,6 +367,19 @@ export class WhatsappReceiptService
         firstFromMe: m.messages[0]?.key.fromMe,
         firstId: m.messages[0]?.key.id,
       });
+      // Persist incoming messages (skip outbound — sudah di-log di sendText).
+      // type "notify" = realtime baru, "append" = catch-up. Persist keduanya
+      // tapi skip "fromMe" supaya tidak dobel-count outbound.
+      void this.persistInboundMessages(
+        session.id,
+        m.messages as unknown as Parameters<typeof this.persistInboundMessages>[1],
+      ).catch((err) => {
+        waDebugLogSync({
+          event: "messages.upsert.persist.error",
+          companyId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     });
     sock.ev.on("messages.update", (updates) => {
       for (const u of updates) {
@@ -387,6 +469,7 @@ export class WhatsappReceiptService
             lastError: null,
           },
         });
+        this.emitSessionUpdate(companyId, { status: "CONNECTING", hasQr: true });
         if (resolveFirstQr) {
           resolveFirstQr();
           resolveFirstQr = null;
@@ -412,6 +495,12 @@ export class WhatsappReceiptService
             lastConnectedAt: new Date(),
             lastError: null,
           },
+        });
+        this.emitSessionUpdate(companyId, {
+          status: "CONNECTED",
+          hasQr: false,
+          phoneNumber: phone,
+          deviceName: sock.user?.name ?? null,
         });
         if (resolveFirstQr) {
           resolveFirstQr();
@@ -447,6 +536,11 @@ export class WhatsappReceiptService
             lastDisconnectedAt: new Date(),
             lastError: reason,
           },
+        });
+        this.emitSessionUpdate(companyId, {
+          status: "DISCONNECTED",
+          hasQr: false,
+          reason,
         });
         this.sockets.delete(companyId);
         if (resolveFirstQr) {
@@ -509,6 +603,7 @@ export class WhatsappReceiptService
         lastDisconnectedAt: new Date(),
       },
     });
+    this.emitSessionUpdate(companyId, { status: "DISCONNECTED", hasQr: false });
     const latest = await this.ensureSession(companyId);
     return this.toSessionView(latest);
   }
@@ -546,8 +641,171 @@ export class WhatsappReceiptService
         },
       }),
     ]);
+    this.emitSessionUpdate(companyId, { status: "DISCONNECTED", hasQr: false });
     const latest = await this.ensureSession(companyId);
     return this.toSessionView(latest);
+  }
+
+  async listMessages(
+    companyId: string,
+    opts: { limit?: number; cursor?: string; phone?: string; direction?: "INBOUND" | "OUTBOUND" } = {},
+  ) {
+    const session = await this.ensureSession(companyId);
+    const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
+
+    const where: Record<string, unknown> = { sessionId: session.id };
+    if (opts.direction) where.direction = opts.direction;
+    if (opts.phone) {
+      const cleaned = opts.phone.replace(/[^\d]/g, "");
+      where.OR = [
+        { fromNumber: { contains: cleaned } },
+        { toNumber: { contains: cleaned } },
+      ];
+    }
+
+    const items = await this.prisma.whatsappMessageLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    });
+    const hasMore = items.length > limit;
+    const slice = hasMore ? items.slice(0, limit) : items;
+
+    // ── Enrich: kumpulkan distinct phone (peer) + invoice numbers dari content,
+    // lalu lookup users / customers / transactions sekali jalan.
+    const peers = new Set<string>();
+    for (const it of slice) {
+      const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
+      if (peer) peers.add(peer);
+    }
+    const phoneVariants = (raw: string): string[] => {
+      const digits = raw.replace(/[^\d]/g, "");
+      const variants = new Set<string>();
+      variants.add(raw);
+      variants.add(digits);
+      if (digits.startsWith("62")) {
+        variants.add("0" + digits.slice(2));
+        variants.add("+" + digits);
+      } else if (digits.startsWith("0")) {
+        variants.add("62" + digits.slice(1));
+        variants.add("+62" + digits.slice(1));
+      }
+      return Array.from(variants);
+    };
+    const allVariants = new Set<string>();
+    peers.forEach((p) => phoneVariants(p).forEach((v) => allVariants.add(v)));
+    const variantList = Array.from(allVariants);
+
+    const [users, customers, sessionMeta] = await Promise.all([
+      variantList.length === 0
+        ? Promise.resolve([])
+        : this.prisma.user.findMany({
+            where: { phone: { in: variantList } },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              phone: true,
+              company: { select: { id: true, name: true } },
+            },
+          }),
+      variantList.length === 0
+        ? Promise.resolve([])
+        : this.prisma.customer.findMany({
+            where: { phone: { in: variantList } },
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              email: true,
+              memberLevel: true,
+              company: { select: { id: true, name: true } },
+            },
+          }),
+      this.prisma.whatsappSession.findUnique({
+        where: { id: session.id },
+        select: {
+          companyId: true,
+          phoneNumber: true,
+          deviceName: true,
+          status: true,
+          company: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    // Index by normalized digits — supaya "08123…" cocok dengan "62812…"
+    const normalize = (raw: string | null | undefined): string => {
+      if (!raw) return "";
+      const d = raw.replace(/[^\d]/g, "");
+      if (d.startsWith("0")) return "62" + d.slice(1);
+      return d;
+    };
+    const userByPhone = new Map<string, (typeof users)[number]>();
+    for (const u of users) {
+      const k = normalize(u.phone);
+      if (k) userByPhone.set(k, u);
+    }
+    const customerByPhone = new Map<string, (typeof customers)[number]>();
+    for (const c of customers) {
+      const k = normalize(c.phone);
+      if (k) customerByPhone.set(k, c);
+    }
+
+    return {
+      session: sessionMeta
+        ? {
+            companyId: sessionMeta.companyId,
+            companyName: sessionMeta.company?.name ?? null,
+            phoneNumber: sessionMeta.phoneNumber,
+            deviceName: sessionMeta.deviceName,
+            status: sessionMeta.status,
+          }
+        : null,
+      items: slice.map((it) => {
+        const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
+        const peerNorm = normalize(peer);
+        const matchedUser = peerNorm ? userByPhone.get(peerNorm) ?? null : null;
+        const matchedCustomer = peerNorm ? customerByPhone.get(peerNorm) ?? null : null;
+
+        return {
+          id: it.id,
+          direction: it.direction,
+          toNumber: it.toNumber,
+          fromNumber: it.fromNumber,
+          peer,
+          messageType: it.messageType,
+          content: it.content,
+          status: it.status,
+          providerMessageId: it.providerMessageId,
+          errorMessage: it.errorMessage,
+          createdAt: it.createdAt.toISOString(),
+          user: matchedUser
+            ? {
+                id: matchedUser.id,
+                name: matchedUser.name,
+                email: matchedUser.email,
+                role: matchedUser.role,
+                companyId: matchedUser.company?.id ?? null,
+                companyName: matchedUser.company?.name ?? null,
+              }
+            : null,
+          customer: matchedCustomer
+            ? {
+                id: matchedCustomer.id,
+                name: matchedCustomer.name,
+                email: matchedCustomer.email,
+                memberLevel: matchedCustomer.memberLevel,
+                companyId: matchedCustomer.company?.id ?? null,
+                companyName: matchedCustomer.company?.name ?? null,
+              }
+            : null,
+        };
+      }),
+      nextCursor: hasMore ? slice[slice.length - 1]?.id ?? null : null,
+    };
   }
 
   async sendText(
@@ -776,6 +1034,35 @@ export class WhatsappReceiptService
       throw new NotFoundException("Transaksi tidak ditemukan");
     }
 
+    // Kalau transaksi dibuat dari Service Order, ambil item dari ServiceOrder.
+    // Alasan: TransactionItem.productId required, jadi item JASA ad-hoc (tanpa
+    // productId) di-skip saat finalize SO. Tanpa ini, nota WA muncul kosong /
+    // hanya berisi item produk dari katalog.
+    const serviceOrder = await this.prisma.serviceOrder.findUnique({
+      where: { transactionId },
+      include: { items: { orderBy: { createdAt: "asc" } } },
+    });
+
+    const receiptItems = serviceOrder
+      ? serviceOrder.items.map((it) => ({
+          name: it.name,
+          qty: it.quantity,
+          unitName: it.itemType === "SERVICE" ? "JASA" : "PCS",
+          unitPrice: it.unitPrice,
+          subtotal: it.subtotal,
+          discount: it.discount,
+          notes: it.notes,
+        }))
+      : transaction.items.map((it) => ({
+          name: it.productName,
+          qty: it.quantity,
+          unitName: it.unitName,
+          unitPrice: it.unitPrice,
+          subtotal: it.subtotal,
+          discount: it.discount,
+          notes: it.notes,
+        }));
+
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { name: true, address: true, phone: true },
@@ -804,15 +1091,7 @@ export class WhatsappReceiptService
         branch: transaction.branch?.name ?? null,
         customer: transaction.customer?.name ?? null,
         memberLevel: transaction.customer?.memberLevel ?? null,
-        items: transaction.items.map((it) => ({
-          name: it.productName,
-          qty: it.quantity,
-          unitName: it.unitName,
-          unitPrice: it.unitPrice,
-          subtotal: it.subtotal,
-          discount: it.discount,
-          notes: it.notes,
-        })),
+        items: receiptItems,
         subtotal: transaction.subtotal,
         discountAmount: transaction.discountAmount,
         taxAmount: transaction.taxAmount,
@@ -1298,6 +1577,65 @@ export function normalizePhone(phone: string): string {
     cleaned = "62" + cleaned.slice(1);
   }
   return cleaned;
+}
+
+/**
+ * Extract human-readable text content + type dari message proto Baileys.
+ * Mendukung text, conversation, extendedText, image+caption, video+caption,
+ * document, audio, sticker. Untuk media tanpa caption, content = `[image]`,
+ * `[video]`, dst.
+ */
+function extractMessageContent(
+  msg: Record<string, unknown>,
+): { content: string | null; messageType: string } {
+  if (!msg) return { content: null, messageType: "unknown" };
+  const get = (k: string) => msg[k] as Record<string, unknown> | undefined;
+
+  if (typeof msg.conversation === "string") {
+    return { content: msg.conversation, messageType: "text" };
+  }
+  const ext = get("extendedTextMessage");
+  if (ext && typeof ext.text === "string") {
+    return { content: ext.text, messageType: "text" };
+  }
+  const img = get("imageMessage");
+  if (img) {
+    return {
+      content: typeof img.caption === "string" ? img.caption : "[image]",
+      messageType: "image",
+    };
+  }
+  const vid = get("videoMessage");
+  if (vid) {
+    return {
+      content: typeof vid.caption === "string" ? vid.caption : "[video]",
+      messageType: "video",
+    };
+  }
+  const doc = get("documentMessage");
+  if (doc) {
+    const fileName = typeof doc.fileName === "string" ? doc.fileName : "";
+    return { content: `[document] ${fileName}`.trim(), messageType: "document" };
+  }
+  const aud = get("audioMessage");
+  if (aud) {
+    return { content: "[audio]", messageType: "audio" };
+  }
+  const sticker = get("stickerMessage");
+  if (sticker) {
+    return { content: "[sticker]", messageType: "sticker" };
+  }
+  const loc = get("locationMessage");
+  if (loc) {
+    return { content: "[location]", messageType: "location" };
+  }
+  const contact = get("contactMessage");
+  if (contact) {
+    return { content: "[contact]", messageType: "contact" };
+  }
+  // Fallback: detect first sub-key
+  const keys = Object.keys(msg);
+  return { content: null, messageType: keys[0] ?? "unknown" };
 }
 
 function extractPhoneFromJid(jid?: string | null): string | null {

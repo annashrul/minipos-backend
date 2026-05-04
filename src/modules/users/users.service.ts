@@ -23,6 +23,7 @@ const USER_SELECT = {
   branchId: true,
   branch: { select: { id: true, name: true } },
   isActive: true,
+  isMechanic: true,
   createdAt: true,
   _count: { select: { transactions: true } },
 } satisfies Prisma.UserSelect;
@@ -34,7 +35,7 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(companyId: string, query: ListUsersQueryDto): Promise<UserListResponse> {
-    const { search, role, branchId, page, perPage } = query;
+    const { search, role, branchId, isMechanic, page, perPage } = query;
     const where: Prisma.UserWhereInput = { companyId };
     if (search) {
       where.OR = [
@@ -44,6 +45,7 @@ export class UsersService {
     }
     if (role && role !== "all") where.role = role;
     if (branchId && branchId !== "ALL") where.branchId = branchId;
+    if (typeof isMechanic === "boolean") where.isMechanic = isMechanic;
 
     const [rows, total] = await Promise.all([
       this.prisma.user.findMany({
@@ -84,6 +86,7 @@ export class UsersService {
         password: hashed,
         role: dto.role,
         isActive: dto.isActive ?? true,
+        isMechanic: dto.isMechanic ?? false,
         emailVerified: true,
         companyId,
         branchId: dto.branchId ?? null,
@@ -105,6 +108,7 @@ export class UsersService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.role !== undefined) data.role = dto.role;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.isMechanic !== undefined) data.isMechanic = dto.isMechanic;
     if (dto.branchId !== undefined) {
       data.branch = dto.branchId ? { connect: { id: dto.branchId } } : { disconnect: true };
     }
@@ -153,6 +157,7 @@ function toUserResponse(user: RawUser): UserResponse {
     branchId: user.branchId,
     branch: user.branch ? { id: user.branch.id, name: user.branch.name } : null,
     isActive: user.isActive,
+    isMechanic: user.isMechanic,
     createdAt: user.createdAt.toISOString(),
     transactionCount: user._count.transactions,
   };
