@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -15,6 +16,7 @@ import type {
   UpdateBookingDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 
 const BOOKING_INCLUDE = {
   branch: { select: { id: true, name: true } },
@@ -42,7 +44,11 @@ const VALID_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
 
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(BookingsService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly waReceipt: WhatsappReceiptService,
+  ) {}
 
   async list(
     companyId: string,
@@ -244,7 +250,83 @@ export class BookingsService {
       data,
       include: BOOKING_INCLUDE,
     });
+
+    // Kirim WA konfirmasi ke customer ketika status di-set ke CONFIRMED.
+    // Fire-and-forget — kalau WA session belum aktif / nomor invalid,
+    // booking transition tetap sukses; admin lihat error di log/UI manual.
+    if (dto.status === "CONFIRMED") {
+      void this.sendConfirmationWa(companyId, updated).catch((err) => {
+        this.logger.warn(
+          `[booking ${id}] WA konfirmasi gagal: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+    }
+
     return this.toResponse(updated);
+  }
+
+  /**
+   * Kirim pesan WA konfirmasi ke customer setelah admin approve booking.
+   * Pakai customerPhone walk-in atau customer.phone master kalau ter-link.
+   * Fire-and-forget: tidak block transition flow.
+   */
+  private async sendConfirmationWa(
+    companyId: string,
+    booking: Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>,
+  ): Promise<void> {
+    const phone = booking.customerPhone ?? booking.customer?.phone ?? null;
+    if (!phone) return;
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { name: true, phone: true, address: true },
+    });
+
+    const customerName = booking.customerName ?? booking.customer?.name ?? "Pelanggan";
+    const branchName = booking.branch?.name ?? "—";
+    const scheduled = new Intl.DateTimeFormat("id-ID", {
+      weekday: "long",
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(booking.scheduledAt);
+
+    const lines: string[] = [];
+    lines.push(`Halo *${customerName}*, 👋`);
+    lines.push("");
+    lines.push(
+      `Booking Anda di *${company?.name ?? "Bengkel kami"}* sudah *DIKONFIRMASI* ✅`,
+    );
+    lines.push("");
+    lines.push("📋 *Detail Booking:*");
+    lines.push(`• Kode: ${booking.id.slice(0, 8).toUpperCase()}`);
+    lines.push(`• Cabang: ${branchName}`);
+    lines.push(`• Jadwal: ${scheduled} WIB`);
+    if (booking.serviceType) {
+      lines.push(`• Service: ${booking.serviceType}`);
+    }
+    if (booking.notes) {
+      lines.push("");
+      lines.push(booking.notes);
+    }
+    lines.push("");
+    lines.push(
+      "Mohon datang sesuai jadwal. Kalau ada perubahan, balas pesan ini.",
+    );
+    if (company?.phone) {
+      lines.push("");
+      lines.push(`📞 Kontak kami: ${company.phone}`);
+    }
+    if (company?.address) {
+      lines.push(`📍 ${company.address}`);
+    }
+    lines.push("");
+    lines.push("Terima kasih 🙏");
+
+    await this.waReceipt.sendText(companyId, phone, lines.join("\n"));
   }
 
   async delete(

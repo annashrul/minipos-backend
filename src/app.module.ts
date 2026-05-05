@@ -73,6 +73,7 @@ import { UploadsModule } from "./modules/uploads/uploads.module";
 import { UsersModule } from "./modules/users/users.module";
 import { ServiceOrdersModule } from "./modules/service-orders/service-orders.module";
 import { BookingsModule } from "./modules/bookings/bookings.module";
+import { PublicBookingsModule } from "./modules/public-bookings/public-bookings.module";
 import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 
@@ -152,6 +153,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     VehiclesModule,
     ServiceOrdersModule,
     BookingsModule,
+    PublicBookingsModule,
     VouchersModule,
     WhatsappReceiptModule,
   ],
