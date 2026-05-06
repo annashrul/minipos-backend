@@ -266,8 +266,9 @@ export class StockOpnameService {
       for (const item of opname.items) {
         if (item.difference === 0) continue;
 
+        let balanceAfter: number;
         if (opname.branchId) {
-          await tx.branchStock.upsert({
+          const upserted = await tx.branchStock.upsert({
             where: {
               branchId_productId: {
                 branchId: opname.branchId,
@@ -280,21 +281,34 @@ export class StockOpnameService {
               quantity: item.actualStock,
             },
             update: { quantity: item.actualStock },
+            select: { quantity: true },
           });
+          balanceAfter = upserted.quantity;
         } else {
-          await tx.product.update({
+          const updatedP = await tx.product.update({
             where: { id: item.productId },
             data: { stock: item.actualStock },
+            select: { stock: true },
           });
+          balanceAfter = updatedP.stock;
         }
+
+        // difference = actual - system. Positif = stok bertambah (IN),
+        // negatif = stok berkurang (OUT).
+        const direction: "IN" | "OUT" = item.difference > 0 ? "IN" : "OUT";
 
         await tx.stockMovement.create({
           data: {
             productId: item.productId,
             branchId: opname.branchId ?? null,
             companyId,
-            type: "OPNAME",
+            type: "OPNAME_ADJUSTMENT",
             quantity: Math.abs(item.difference),
+            direction,
+            balanceAfter,
+            refType: "stock_opname",
+            refId: id,
+            refNumber: opname.opnameNumber,
             note: `Opname ${opname.opnameNumber}`,
             reference: opname.opnameNumber,
             createdBy: userId,

@@ -20,6 +20,7 @@ import { BankReconciliationModule } from "./modules/bank-reconciliation/bank-rec
 import { BranchesModule } from "./modules/branches/branches.module";
 import { BrandsModule } from "./modules/brands/brands.module";
 import { BundlesModule } from "./modules/bundles/bundles.module";
+import { RecipesModule } from "./modules/recipes/recipes.module";
 import { CashierModule } from "./modules/cashier/cashier.module";
 import { CategoriesModule } from "./modules/categories/categories.module";
 import { ClosingReportsModule } from "./modules/closing-reports/closing-reports.module";
@@ -101,6 +102,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     BranchesModule,
     BrandsModule,
     BundlesModule,
+    RecipesModule,
     CashierModule,
     CategoriesModule,
     ClosingReportsModule,

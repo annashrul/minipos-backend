@@ -140,35 +140,36 @@ export class RegisterService {
       const acRevenue = await tx.accountCategory.create({ data: { name: "Pendapatan", type: "REVENUE", normalSide: "CREDIT", sortOrder: 4, companyId: company.id } });
       const acExpense = await tx.accountCategory.create({ data: { name: "Beban", type: "EXPENSE", normalSide: "DEBIT", sortOrder: 5, companyId: company.id } });
 
-      const withCompanyCode = (baseCode: string) =>
-        `${baseCode}-${company.id.slice(0, 4).toUpperCase()}`;
-
+      // Pakai kode polos (tanpa suffix companyId) supaya match dengan
+      // pola lookup di AutoJournalService.getSystemAccounts(["1-1001",...])
+      // yang nyari berdasarkan kode + categoryId.companyId. Account.code
+      // tidak punya unique constraint global → suffix tidak diperlukan.
       await tx.account.createMany({
         data: [
-          { code: withCompanyCode("1-1001"), name: "Kas", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("1-1002"), name: "Bank", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("1-1003"), name: "Piutang Dagang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("1-1004"), name: "Persediaan Barang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("1-1005"), name: "Perlengkapan Toko", categoryId: acAsset.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("1-2001"), name: "Peralatan Toko", categoryId: acAsset.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("2-1001"), name: "Hutang Dagang", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("2-1002"), name: "Hutang Pajak", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("2-1003"), name: "Hutang Gaji", categoryId: acLiability.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("3-1001"), name: "Modal Pemilik", categoryId: acEquity.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("3-1002"), name: "Laba Ditahan", categoryId: acEquity.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("4-1001"), name: "Pendapatan Penjualan", categoryId: acRevenue.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("4-1002"), name: "Retur Penjualan", categoryId: acRevenue.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("4-2001"), name: "Pendapatan Lain-lain", categoryId: acRevenue.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("5-1001"), name: "Harga Pokok Penjualan", categoryId: acExpense.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("5-1002"), name: "Beban Operasional", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("5-1003"), name: "Beban Gaji", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("5-1004"), name: "Beban Listrik & Air", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("5-1005"), name: "Beban Sewa", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
-          { code: withCompanyCode("5-1010"), name: "Beban PPh 23", categoryId: acExpense.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("2-1100"), name: "PPN Keluaran", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("1-1100"), name: "PPN Masukan", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("2-1200"), name: "Hutang PPh 21", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
-          { code: withCompanyCode("2-1201"), name: "Hutang PPh 23", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1001", name: "Kas", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1002", name: "Bank", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1003", name: "Piutang Dagang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1004", name: "Persediaan Barang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1005", name: "Perlengkapan Toko", categoryId: acAsset.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "1-2001", name: "Peralatan Toko", categoryId: acAsset.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "2-1001", name: "Hutang Dagang", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1002", name: "Hutang Pajak", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1003", name: "Hutang Gaji", categoryId: acLiability.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "3-1001", name: "Modal Pemilik", categoryId: acEquity.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "3-1002", name: "Laba Ditahan", categoryId: acEquity.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "4-1001", name: "Pendapatan Penjualan", categoryId: acRevenue.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "4-1002", name: "Retur Penjualan", categoryId: acRevenue.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "4-2001", name: "Pendapatan Lain-lain", categoryId: acRevenue.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "5-1001", name: "Harga Pokok Penjualan", categoryId: acExpense.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "5-1002", name: "Beban Operasional", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "5-1003", name: "Beban Gaji", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "5-1004", name: "Beban Listrik & Air", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "5-1005", name: "Beban Sewa", categoryId: acExpense.id, isActive: true, isSystem: false, openingBalance: 0 },
+          { code: "5-1010", name: "Beban PPh 23", categoryId: acExpense.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1100", name: "PPN Keluaran", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1100", name: "PPN Masukan", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1200", name: "Hutang PPh 21", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1201", name: "Hutang PPh 23", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
         ],
       });
 

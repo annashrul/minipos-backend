@@ -26,7 +26,7 @@ const RETURN_SELECT = {
   id: true,
   returnNumber: true,
   transactionId: true,
-  transaction: { select: { id: true, invoiceNumber: true } },
+  transaction: { select: { id: true, invoiceNumber: true, invoiceDisplayNumber: true } },
   customerId: true,
   customer: { select: { id: true, name: true } },
   type: true,
@@ -387,9 +387,33 @@ export class ReturnsService {
     userId: string,
     id: string,
   ): Promise<ReturnDetailResponse> {
+    // Approve = sekaligus complete: restock produk yg di-retur, decrement
+    // produk pengganti (kalau EXCHANGE), terbitkan store credit (kalau ada).
+    // Frontend hanya expose 1 tombol "Setujui", jadi tanpa langkah ini stok
+    // tidak pernah balik ke gudang.
     const existing = await this.prisma.returnExchange.findFirst({
       where: { id, ...this.tenantWhereClause(companyId) },
-      select: { id: true, status: true },
+      select: {
+        id: true,
+        status: true,
+        type: true,
+        returnNumber: true,
+        totalRefund: true,
+        refundMethod: true,
+        customerId: true,
+        branchId: true,
+        transactionId: true,
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            quantity: true,
+            exchangeProductId: true,
+            exchangeQuantity: true,
+            restocked: true,
+          },
+        },
+      },
     });
     if (!existing) throw new NotFoundException("Return not found");
     if (existing.status !== "PENDING") {
@@ -397,15 +421,125 @@ export class ReturnsService {
         "Hanya retur dengan status PENDING yang dapat disetujui",
       );
     }
-    const updated = await this.prisma.returnExchange.update({
-      where: { id },
-      data: {
-        status: "APPROVED",
-        approvedBy: userId,
-        approvedAt: new Date(),
-      },
-      select: RETURN_DETAIL_SELECT,
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const branchId = existing.branchId ?? null;
+
+      for (const item of existing.items) {
+        if (!item.restocked) {
+          await this.adjustStock(tx, {
+            productId: item.productId,
+            branchId,
+            delta: item.quantity, // restock kembali ke gudang
+            reference: existing.returnNumber,
+            note: `Retur ${existing.returnNumber}`,
+            type: "IN",
+            createdBy: userId,
+            companyId,
+            refId: existing.id,
+          });
+        }
+
+        if (
+          existing.type === "EXCHANGE" &&
+          item.exchangeProductId &&
+          item.exchangeQuantity &&
+          item.exchangeQuantity > 0
+        ) {
+          await this.adjustStock(tx, {
+            productId: item.exchangeProductId,
+            branchId,
+            delta: -item.exchangeQuantity,
+            reference: existing.returnNumber,
+            note: `Tukar produk ${existing.returnNumber}`,
+            type: "OUT",
+            createdBy: userId,
+            companyId,
+            refId: existing.id,
+          });
+        }
+
+        await tx.returnExchangeItem.update({
+          where: { id: item.id },
+          data: { restocked: true },
+        });
+      }
+
+      // Issue store credit kalau metode refund-nya store credit & nominal > 0.
+      if (
+        existing.refundMethod === "STORE_CREDIT" &&
+        existing.customerId &&
+        existing.totalRefund > 0
+      ) {
+        await tx.storeCredit.create({
+          data: {
+            customerId: existing.customerId,
+            code: generateStoreCreditCode(existing.returnNumber),
+            balance: existing.totalRefund,
+            initialAmount: existing.totalRefund,
+            isActive: true,
+            issuedBy: userId,
+          },
+        });
+      }
+
+      const completed = await tx.returnExchange.update({
+        where: { id },
+        data: {
+          status: "COMPLETED",
+          approvedBy: userId,
+          approvedAt: new Date(),
+        },
+        select: RETURN_DETAIL_SELECT,
+      });
+
+      // Sinkron status transaksi sumber: kalau setelah retur ini total qty
+      // yg di-return (lintas semua retur COMPLETED) sudah menutupi seluruh
+      // qty yg dibeli per produk → transaksi pindah ke REFUNDED. Partial
+      // return tetap dibiarkan COMPLETED — modul retur jadi single source
+      // of truth nominal yg dikembalikan.
+      const txDetail = await tx.transaction.findUnique({
+        where: { id: existing.transactionId },
+        select: {
+          status: true,
+          items: { select: { productId: true, quantity: true } },
+        },
+      });
+      if (txDetail && txDetail.status !== "REFUNDED") {
+        const purchasedByProduct = new Map<string, number>();
+        for (const it of txDetail.items) {
+          purchasedByProduct.set(
+            it.productId,
+            (purchasedByProduct.get(it.productId) ?? 0) + it.quantity,
+          );
+        }
+        const returnedAgg = await tx.returnExchangeItem.groupBy({
+          by: ["productId"],
+          where: {
+            returnExchange: {
+              transactionId: existing.transactionId,
+              status: "COMPLETED",
+            },
+          },
+          _sum: { quantity: true },
+        });
+        const returnedByProduct = new Map<string, number>(
+          returnedAgg.map((r) => [r.productId, r._sum.quantity ?? 0]),
+        );
+        const fullyReturned = Array.from(purchasedByProduct.entries()).every(
+          ([pid, qty]) => (returnedByProduct.get(pid) ?? 0) >= qty,
+        );
+        if (fullyReturned) {
+          await tx.transaction.update({
+            where: { id: existing.transactionId },
+            data: { status: "REFUNDED" },
+          });
+        }
+      }
+
+      return completed;
     });
+
     return toReturnDetailResponse(updated);
   }
 
@@ -495,6 +629,8 @@ export class ReturnsService {
             note: `Retur ${existing.returnNumber}`,
             type: "IN",
             createdBy: userId,
+            companyId,
+            refId: existing.id,
           });
         }
 
@@ -512,6 +648,8 @@ export class ReturnsService {
             note: `Tukar produk ${existing.returnNumber}`,
             type: "OUT",
             createdBy: userId,
+            companyId,
+            refId: existing.id,
           });
         }
 
@@ -567,6 +705,8 @@ export class ReturnsService {
       OR: [
         { invoiceNumber: { equals: q, mode: "insensitive" } },
         { invoiceNumber: { contains: q, mode: "insensitive" } },
+        { invoiceDisplayNumber: { equals: q, mode: "insensitive" } },
+        { invoiceDisplayNumber: { contains: q, mode: "insensitive" } },
         { customer: { name: { contains: q, mode: "insensitive" } } },
       ],
     };
@@ -581,6 +721,7 @@ export class ReturnsService {
       select: {
         id: true,
         invoiceNumber: true,
+        invoiceDisplayNumber: true,
         userId: true,
         user: { select: { id: true, name: true } },
         branchId: true,
@@ -639,6 +780,7 @@ export class ReturnsService {
     return {
       id: transaction.id,
       invoiceNumber: transaction.invoiceNumber,
+      invoiceDisplayNumber: transaction.invoiceDisplayNumber ?? null,
       userId: transaction.userId,
       user: transaction.user
         ? { id: transaction.user.id, name: transaction.user.name }
@@ -825,13 +967,17 @@ export class ReturnsService {
       note: string;
       type: "IN" | "OUT";
       createdBy: string;
+      // Optional explicit context utk ledger refType/refId (return record).
+      companyId?: string | null;
+      refId?: string | null;
     },
   ) {
     const absQty = Math.abs(params.delta);
     if (absQty === 0) return;
 
+    let balanceAfter: number | null = null;
     if (params.branchId) {
-      await tx.branchStock.upsert({
+      const upserted = await tx.branchStock.upsert({
         where: {
           branchId_productId: {
             branchId: params.branchId,
@@ -849,9 +995,11 @@ export class ReturnsService {
               ? { increment: absQty }
               : { decrement: absQty },
         },
+        select: { quantity: true },
       });
+      balanceAfter = upserted.quantity;
     } else {
-      await tx.product.update({
+      const updatedP = await tx.product.update({
         where: { id: params.productId },
         data: {
           stock:
@@ -859,15 +1007,25 @@ export class ReturnsService {
               ? { increment: absQty }
               : { decrement: absQty },
         },
+        select: { stock: true },
       });
+      balanceAfter = updatedP.stock;
     }
+
+    const granularType = params.type === "IN" ? "RETURN_IN" : "RETURN_OUT";
 
     await tx.stockMovement.create({
       data: {
         productId: params.productId,
         branchId: params.branchId,
-        type: params.type,
+        ...(params.companyId ? { companyId: params.companyId } : {}),
+        type: granularType,
         quantity: absQty,
+        direction: params.type,
+        balanceAfter,
+        refType: "return_exchange",
+        ...(params.refId ? { refId: params.refId } : {}),
+        refNumber: params.reference,
         note: params.note,
         reference: params.reference,
         createdBy: params.createdBy,
@@ -916,7 +1074,8 @@ function toReturnResponse(
     id: r.id,
     returnNumber: r.returnNumber,
     transactionId: r.transactionId,
-    transactionInvoice: r.transaction.invoiceNumber,
+    transactionInvoice:
+      r.transaction.invoiceDisplayNumber ?? r.transaction.invoiceNumber,
     customerId: r.customerId,
     customer: r.customer ? { id: r.customer.id, name: r.customer.name } : null,
     type: r.type,

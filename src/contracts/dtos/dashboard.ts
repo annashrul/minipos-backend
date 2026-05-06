@@ -143,6 +143,7 @@ export type DashboardAlertsResponse = {
 export type DashboardRecentTransaction = {
   id: string;
   invoiceNumber: string;
+  invoiceDisplayNumber?: string | null;
   grandTotal: number;
   paymentMethod: string;
   status: string;

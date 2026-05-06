@@ -1085,7 +1085,8 @@ export class WhatsappReceiptService
       showDateTime: receiptCfg.showDateTime,
       showPaymentMethod: receiptCfg.showPaymentMethod,
       transaction: {
-        invoiceNumber: transaction.invoiceNumber,
+        invoiceNumber:
+          transaction.invoiceDisplayNumber || transaction.invoiceNumber,
         date: formatReceiptDate(transaction.createdAt),
         cashier: transaction.user.name,
         branch: transaction.branch?.name ?? null,

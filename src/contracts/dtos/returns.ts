@@ -84,6 +84,7 @@ export type SearchReturnTransactionItem = {
 export type SearchReturnTransactionResponse = {
   id: string;
   invoiceNumber: string;
+  invoiceDisplayNumber?: string | null;
   userId: string;
   user: { id: string; name: string } | null;
   branchId: string | null;

@@ -60,6 +60,8 @@ export type TransactionItemResponse = {
 export type TransactionResponse = {
   id: string;
   invoiceNumber: string;
+  /** Display number "INV-DDMMYYYY-NNNNN" — readable, sequential per company per hari. */
+  invoiceDisplayNumber: string | null;
   userId: string;
   user: { id: string; name: string } | null;
   branchId: string | null;
@@ -193,6 +195,7 @@ export type CheckoutDto = z.infer<typeof CheckoutSchema>;
 export type CheckoutResponse = {
   id: string;
   invoiceNumber: string;
+  invoiceDisplayNumber: string | null;
   pointsEarned: number;
   pointsRedeemed: number;
 };

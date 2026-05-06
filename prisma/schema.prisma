@@ -39,11 +39,25 @@ model AppRole {
 }
 
 enum StockMovementType {
+  // Legacy (data lama sebelum ledger refactor)
   IN
   OUT
   ADJUSTMENT
   TRANSFER
   OPNAME
+  // Granular — service ledger pakai ini sejak refactor
+  PURCHASE_RECEIVE
+  SALE
+  RETURN_IN
+  RETURN_OUT
+  TRANSFER_OUT
+  TRANSFER_IN
+  OPNAME_ADJUSTMENT
+  WASTE
+  RECIPE_DEDUCT
+  MANUAL_IN
+  MANUAL_OUT
+  RTV
 }
 
 enum TransactionStatus {
@@ -469,6 +483,8 @@ model Product {
   bundleItems        ProductBundleItem[]
   modifierGroups     ProductModifierGroup[]
   tableOrderItems    TableOrderItem[]
+  recipe             Recipe?
+  usedInRecipes      RecipeIngredient[]     @relation("RecipeIngredient")
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -645,7 +661,16 @@ model CustomerPointHistory {
 
 model Transaction {
   id             String            @id @default(uuid())
+  // Global-unique invoice — composite "{COMPANY_SLUG}-{BRANCH_CODE}-{RAND}".
+  // Tetap dipakai sebagai authoritative ID lintas system (export, audit log).
   invoiceNumber  String            @unique
+  // Display invoice — readable per company per hari, format
+  // "INV-DDMMYYYY-NNNNN" (NNNNN sequential per companyId per date).
+  // Nullable utk row legacy sebelum kolom ini dibuat.
+  invoiceDisplayNumber String?
+  // Denormalized companyId (sumber: user.companyId) supaya unique constraint
+  // (companyId, invoiceDisplayNumber) bisa dipasang langsung.
+  companyId      String?
   userId         String
   user           User              @relation(fields: [userId], references: [id])
   branchId       String?
@@ -677,6 +702,7 @@ model Transaction {
   // Bengkel: Transaction yang berasal dari finalize ServiceOrder.
   serviceOrder   ServiceOrder?     @relation("ServiceOrderTransaction")
 
+  @@unique([companyId, invoiceDisplayNumber])
   @@index([invoiceNumber])
   @@index([userId])
   @@index([branchId])
@@ -688,6 +714,7 @@ model Transaction {
   @@index([branchId, createdAt])
   @@index([userId, createdAt])
   @@index([branchId, status, createdAt])
+  @@index([companyId, createdAt])
   @@map("transactions")
 }
 
@@ -808,18 +835,36 @@ model Refund {
 // ===========================
 
 model StockMovement {
-  id        String            @id @default(uuid())
-  productId String
-  product   Product           @relation(fields: [productId], references: [id])
-  branchId  String?
-  branch    Branch?           @relation(fields: [branchId], references: [id])
-  companyId String?
-  type      StockMovementType
-  quantity  Int
-  note      String?
-  reference String?
-  createdBy String?
-  createdAt DateTime          @default(now())
+  id           String            @id @default(uuid())
+  productId    String
+  product      Product           @relation(fields: [productId], references: [id])
+  branchId     String?
+  branch       Branch?           @relation(fields: [branchId], references: [id])
+  companyId    String?
+  type         StockMovementType
+  // Magnitude positif. Direction encoded di `direction` agar query running
+  // balance bisa pakai aritmatika langsung tanpa CASE WHEN type IN (...).
+  quantity     Int
+  direction    String?           // "IN" | "OUT" — null untuk row legacy
+  // Running balance branch_stock setelah movement ini (per branch+product).
+  // Null untuk row legacy sebelum ledger refactor — UI kartu stok fallback
+  // ke recompute kalau null.
+  balanceAfter Int?
+  // Costing — diisi oleh service saat dipakai (Opsi B). Boleh null.
+  unitCost     Decimal?          @db.Decimal(14, 2)
+  totalCost    Decimal?          @db.Decimal(14, 2)
+  // Referensi polymorphic ke dokumen sumber. refType: "purchase_order",
+  // "transaction", "stock_transfer", "stock_opname", "return_exchange",
+  // "manual_adjustment", dll.
+  refType      String?
+  refId        String?
+  // Human-readable nomor dokumen (PO-001, INV-202506-001) — duplikasi dari
+  // `reference` untuk row baru, dipertahankan utk display.
+  refNumber    String?
+  note         String?
+  reference    String?
+  createdBy    String?
+  createdAt    DateTime          @default(now())
 
   @@index([productId])
   @@index([branchId])
@@ -829,6 +874,7 @@ model StockMovement {
   @@index([branchId, createdAt])
   @@index([productId, createdAt])
   @@index([branchId, productId, createdAt])
+  @@index([refType, refId])
   @@map("stock_movements")
 }
 
@@ -2130,6 +2176,49 @@ model BankReconciliationItem {
   @@index([reconciliationId])
   @@index([matchStatus])
   @@map("bank_reconciliation_items")
+}
+
+// ===========================
+// RECIPES (BOM untuk F&B)
+// ===========================
+//
+// Konsep: satu Product (mis. menu "Nasi Goreng") punya 1 Recipe yg merangkai
+// daftar ingredient (Product lain yg di-stock sebagai bahan baku — beras,
+// telur, ayam, dst). Saat menu tsb dijual, transaction service expand recipe
+// → decrement stok bahan baku, bukan stok menu. Cocok untuk restoran/cafe
+// di mana stok menu sebenarnya = ketersediaan bahan-bahan-nya.
+//
+// `yieldQty` = berapa porsi dihasilkan dari 1 batch resep. Default 1 (1
+// resep = 1 porsi). Kalau resep "kuah soto 1 panci = 8 porsi", set 8 — qty
+// ingredient akan dibagi yieldQty saat decrement.
+
+model Recipe {
+  id          String             @id @default(uuid())
+  productId   String             @unique
+  product     Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  yieldQty    Float              @default(1)
+  notes       String?
+  ingredients RecipeIngredient[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id           String   @id @default(uuid())
+  recipeId     String
+  recipe       Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Product  @relation("RecipeIngredient", fields: [ingredientId], references: [id])
+  quantity     Float
+  unit         String   @default("pcs")
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  @@index([recipeId])
+  @@index([ingredientId])
+  @@map("recipe_ingredients")
 }
 
 // ===========================

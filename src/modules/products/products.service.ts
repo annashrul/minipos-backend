@@ -30,6 +30,7 @@ const PRODUCT_SELECT = {
   minStock: true,
   barcode: true,
   unit: true,
+  itemType: true,
   isActive: true,
   description: true,
   imageUrl: true,
@@ -52,6 +53,8 @@ export class ProductsService {
       categoryId,
       brandId,
       supplierId,
+      itemType,
+      excludeIngredient,
       isActive,
       page,
       perPage,
@@ -69,6 +72,12 @@ export class ProductsService {
     if (categoryId) where.categoryId = categoryId;
     if (brandId) where.brandId = brandId;
     if (supplierId) where.supplierId = supplierId;
+    if (itemType) where.itemType = itemType;
+    // POS / cashier flow: exclude bahan baku (INGREDIENT) supaya tidak
+    // muncul di list produk yg bisa dijual.
+    if (excludeIngredient) {
+      where.itemType = { not: "INGREDIENT" };
+    }
     if (isActive !== undefined) where.isActive = isActive;
 
     const dir: "asc" | "desc" = sortDir ?? "asc";
@@ -183,6 +192,7 @@ export class ProductsService {
           minStock: dto.minStock ?? 5,
           barcode: dto.barcode ?? null,
           unit: dto.unit ?? "pcs",
+          itemType: dto.itemType ?? "PRODUCT",
           isActive: dto.isActive ?? true,
           description: dto.description ?? null,
           imageUrl: dto.imageUrl ?? null,
@@ -241,6 +251,7 @@ export class ProductsService {
     if (dto.minStock !== undefined) data.minStock = dto.minStock;
     if (dto.barcode !== undefined) data.barcode = dto.barcode;
     if (dto.unit !== undefined) data.unit = dto.unit;
+    if (dto.itemType !== undefined) data.itemType = dto.itemType;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
@@ -460,6 +471,11 @@ export class ProductsService {
       // muncul di tiap branch via fallback ke stock global — yang user lihat
       // sebagai "POS menampilkan semua produk".
       restrictToBranchAssigned?: boolean;
+      // F&B: exclude bahan baku (itemType=INGREDIENT) supaya tidak muncul
+      // di POS / browse product cashier. Bahan baku hanya dipakai sebagai
+      // ingredient di Recipe / BOM, bukan dijual langsung.
+      excludeIngredient?: boolean;
+      itemType?: "PRODUCT" | "SERVICE" | "INGREDIENT";
     },
   ): Promise<{ rows: unknown[]; total: number }> {
     const {
@@ -473,6 +489,8 @@ export class ProductsService {
       offset = 0,
       onlyWithStock = false,
       restrictToBranchAssigned = false,
+      excludeIngredient = false,
+      itemType,
     } = params;
     const conditions: string[] = ["company_id = $1"];
     const values: unknown[] = [companyId];
@@ -507,6 +525,21 @@ export class ProductsService {
     if (onlyWithStock) conditions.push("has_branch_stock = true");
     if (restrictToBranchAssigned && branchId) {
       conditions.push("(has_branch_stock = true OR has_branch_price = true)");
+    }
+    if (excludeIngredient) {
+      // View belum punya kolom item_type — pakai subquery ke products.
+      // Prisma field `itemType` ter-map ke kolom DB `item_type` via
+      // @map("item_type"), jadi nama kolom yang benar di raw SQL adalah
+      // snake_case (tanpa double-quote camelCase).
+      conditions.push(
+        `product_id NOT IN (SELECT id FROM products WHERE item_type = 'INGREDIENT')`,
+      );
+    }
+    if (itemType) {
+      conditions.push(
+        `product_id IN (SELECT id FROM products WHERE item_type = $${i++})`,
+      );
+      values.push(itemType);
     }
 
     const whereClause = conditions.join(" AND ");
@@ -601,6 +634,7 @@ function toProductResponse(p: RawProduct): ProductResponse {
     minStock: p.minStock,
     barcode: p.barcode,
     unit: p.unit,
+    itemType: (p.itemType as ProductResponse["itemType"]) ?? "PRODUCT",
     isActive: p.isActive,
     description: p.description,
     imageUrl: p.imageUrl,

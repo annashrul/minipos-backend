@@ -352,13 +352,17 @@ export class ServiceOrdersService {
       throw new BadRequestException("Pembayaran kurang dari total");
     }
 
-    // Generate invoice
+    // Generate invoice. invoiceNumber tetap pakai pola SO untuk linkage; display
+    // number di-generate sequential per (company, hari) sama dgn POS.
     const invoiceNumber = `INV-SO-${so.orderNumber}`;
+    const invoiceDisplayNumber = await this.nextInvoiceDisplayNumber(companyId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const trx = await tx.transaction.create({
         data: {
           invoiceNumber,
+          invoiceDisplayNumber,
+          companyId,
           userId,
           branchId: so.branchId,
           customerId: so.customerId,
@@ -438,6 +442,33 @@ export class ServiceOrdersService {
     });
 
     return toResponse(result);
+  }
+
+  /**
+   * Generate display invoice number "INV-DDMMYYYY-NNNNN" sequential per
+   * (companyId, date). Sama dengan logika di TransactionsService.
+   */
+  private async nextInvoiceDisplayNumber(companyId: string): Promise<string> {
+    const date = new Date();
+    const dd = String(date.getDate()).padStart(2, "0");
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(date.getFullYear());
+    const prefix = `INV-${dd}${mm}${yyyy}-`;
+    const last = await this.prisma.transaction.findFirst({
+      where: {
+        companyId,
+        invoiceDisplayNumber: { startsWith: prefix },
+      },
+      orderBy: { invoiceDisplayNumber: "desc" },
+      select: { invoiceDisplayNumber: true },
+    });
+    let nextSeq = 1;
+    if (last?.invoiceDisplayNumber) {
+      const tail = last.invoiceDisplayNumber.slice(prefix.length);
+      const parsed = parseInt(tail, 10);
+      if (!Number.isNaN(parsed)) nextSeq = parsed + 1;
+    }
+    return `${prefix}${String(nextSeq).padStart(5, "0")}`;
   }
 
   async delete(

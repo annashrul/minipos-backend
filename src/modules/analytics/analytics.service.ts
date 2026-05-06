@@ -408,6 +408,7 @@ export class AnalyticsService {
     const transactions = await this.prisma.$queryRawUnsafe<
       {
         invoiceNumber: string;
+        invoiceDisplayNumber: string | null;
         cashierName: string;
         role: string;
         subtotal: number;
@@ -418,6 +419,7 @@ export class AnalyticsService {
     >(
       `
       SELECT t."invoiceNumber",
+             t."invoiceDisplayNumber",
              u.name AS "cashierName",
              u.role,
              t.subtotal,
@@ -439,7 +441,7 @@ export class AnalyticsService {
     );
 
     return transactions.map((tx) => ({
-      invoiceNumber: tx.invoiceNumber,
+      invoiceNumber: tx.invoiceDisplayNumber || tx.invoiceNumber,
       cashier: tx.cashierName,
       role: tx.role,
       subtotal: tx.subtotal,

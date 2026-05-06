@@ -178,6 +178,10 @@ export class AutoJournalService {
     ]);
     if (!txn) throw new NotFoundException("Transaksi tidak ditemukan");
 
+    // Pakai display number untuk deskripsi & reference jurnal — readable per
+    // company per hari. Fallback ke invoiceNumber global untuk row legacy.
+    const invoiceRef = txn.invoiceDisplayNumber || txn.invoiceNumber;
+
     const cashAccount = accs.get("1-1001")!;
     const bankAccount = accs.get("1-1002")!;
     const receivableAccount = accs.get("1-1003")!;
@@ -207,7 +211,7 @@ export class AutoJournalService {
               : bankAccount;
         lines.push({
           accountId: target.id,
-          description: `Penerimaan ${payment.method} â€” ${txn.invoiceNumber}`,
+          description: `Penerimaan ${payment.method} â€” ${invoiceRef}`,
           debit: netAmount,
           credit: 0,
         });
@@ -221,7 +225,7 @@ export class AutoJournalService {
             : bankAccount;
       lines.push({
         accountId: target.id,
-        description: `Penerimaan ${txn.paymentMethod} â€” ${txn.invoiceNumber}`,
+        description: `Penerimaan ${txn.paymentMethod} â€” ${invoiceRef}`,
         debit: txn.grandTotal,
         credit: 0,
       });
@@ -231,7 +235,7 @@ export class AutoJournalService {
     const dpp = txn.grandTotal - taxAmount;
     lines.push({
       accountId: revenueAccount.id,
-      description: `Pendapatan penjualan â€” ${txn.invoiceNumber}`,
+      description: `Pendapatan penjualan â€” ${invoiceRef}`,
       debit: 0,
       credit: dpp,
     });
@@ -239,7 +243,7 @@ export class AutoJournalService {
     if (taxAmount > 0 && ppnKeluaranAccount) {
       lines.push({
         accountId: ppnKeluaranAccount.id,
-        description: `PPN Keluaran â€” ${txn.invoiceNumber}`,
+        description: `PPN Keluaran â€” ${invoiceRef}`,
         debit: 0,
         credit: taxAmount,
         taxType: "PPN_KELUARAN",
@@ -257,19 +261,19 @@ export class AutoJournalService {
     if (totalCogs > 0) {
       lines.push({
         accountId: cogsAccount.id,
-        description: `HPP â€” ${txn.invoiceNumber}`,
+        description: `HPP â€” ${invoiceRef}`,
         debit: totalCogs,
         credit: 0,
       });
       lines.push({
         accountId: inventoryAccount.id,
-        description: `Pengurangan persediaan â€” ${txn.invoiceNumber}`,
+        description: `Pengurangan persediaan â€” ${invoiceRef}`,
         debit: 0,
         credit: totalCogs,
       });
     }
 
-    push(`Penjualan ${txn.invoiceNumber}`, txn.invoiceNumber, lines);
+    push(`Penjualan ${invoiceRef}`, invoiceRef, lines);
   }
 
   private async buildPurchaseLines(

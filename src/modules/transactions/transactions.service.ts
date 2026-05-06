@@ -26,6 +26,7 @@ import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.ser
 const TX_SELECT = {
   id: true,
   invoiceNumber: true,
+  invoiceDisplayNumber: true,
   userId: true,
   user: { select: { id: true, name: true } },
   branchId: true,
@@ -200,10 +201,60 @@ export class TransactionsService {
       company?.slug ?? company?.name,
       "COMPANY",
     )}-${normalizeCodePart(branch?.code ?? branch?.name, "MAIN")}-${randomInvoicePart(8)}`;
+    const invoiceDisplayNumber = await this.generateDisplayInvoiceNumber(
+      companyId,
+      new Date(),
+    );
 
     const shouldValidateStock = await this.shouldValidateStock(branchId);
 
-    const aggregatedDeductions = aggregateDeductions(dto.items);
+    // Recipe expansion: kalau ada produk yg punya Recipe (mis. menu restoran),
+    // decrement-nya menempel ke ingredient (bahan baku), bukan ke produk
+    // menu-nya. Bundle tetap pakai logika lama (komponen sudah eksplisit di
+    // dto.bundleItems). Untuk produk yg tidak punya recipe, behavior lama
+    // (decrement self) berlaku.
+    const candidateProductIds = Array.from(
+      new Set(
+        dto.items
+          .filter((it) => !it.productId.startsWith("bundle:"))
+          .map((it) => it.productId),
+      ),
+    );
+    const recipes = candidateProductIds.length
+      ? await this.prisma.recipe.findMany({
+          where: { productId: { in: candidateProductIds } },
+          include: {
+            ingredients: {
+              include: {
+                ingredient: { select: { id: true, name: true } },
+              },
+            },
+          },
+        })
+      : [];
+    const recipeMap = new Map<
+      string,
+      {
+        yieldQty: number;
+        ingredients: {
+          ingredientId: string;
+          ingredientName: string;
+          quantity: number;
+        }[];
+      }
+    >();
+    for (const r of recipes) {
+      recipeMap.set(r.productId, {
+        yieldQty: r.yieldQty || 1,
+        ingredients: r.ingredients.map((i) => ({
+          ingredientId: i.ingredientId,
+          ingredientName: i.ingredient?.name ?? "(deleted)",
+          quantity: i.quantity,
+        })),
+      });
+    }
+
+    const aggregatedDeductions = aggregateDeductions(dto.items, recipeMap);
 
     try {
       const created = await this.prisma.$transaction(
@@ -260,6 +311,8 @@ export class TransactionsService {
           const newTx = await tx.transaction.create({
             data: {
               invoiceNumber,
+              invoiceDisplayNumber,
+              companyId,
               userId,
               branchId,
               customerId: dto.customerId ?? null,
@@ -309,7 +362,7 @@ export class TransactionsService {
                 })),
               },
             },
-            select: { id: true, invoiceNumber: true },
+            select: { id: true, invoiceNumber: true, invoiceDisplayNumber: true },
           });
 
           if (dto.promoIds && dto.promoIds.length > 0) {
@@ -319,34 +372,75 @@ export class TransactionsService {
             });
           }
 
-          await Promise.all(
-            aggregatedDeductions.map(async (d) => {
-              if (branchId) {
-                return tx.branchStock.update({
-                  where: {
-                    branchId_productId: { branchId, productId: d.productId },
-                  },
-                  data: { quantity: { decrement: d.quantity } },
-                });
-              }
-              return Promise.all([
-                tx.product.update({
-                  where: { id: d.productId },
-                  data: { stock: { decrement: d.quantity } },
-                }),
-                tx.stockMovement.create({
-                  data: {
-                    productId: d.productId,
-                    branchId: null,
-                    type: "OUT",
-                    quantity: d.quantity,
-                    note: `Penjualan ${invoiceNumber}`,
-                    reference: invoiceNumber,
-                  },
-                }),
-              ]);
-            }),
-          );
+          // Sequential — tidak Promise.all — supaya balanceAfter per movement
+          // konsisten urutan & menghindari race pada same productId.
+          for (const d of aggregatedDeductions) {
+            // Stock di schema masih Int — recipe expansion bisa menghasilkan
+            // pecahan (mis. yield=4, 1 porsi → ¼ recipe). Bulatkan ke atas
+            // supaya tidak under-deduct (lebih aman over-deduct sedikit
+            // daripada kelebihan stok semu).
+            const qtyInt = Math.ceil(d.quantity);
+            if (qtyInt <= 0) continue;
+
+            const movementType =
+              d.source === "RECIPE_DEDUCT" ? "RECIPE_DEDUCT" : "SALE";
+            // Note & refNumber pakai display number (readable per company per
+            // hari). invoiceNumber global tetap dipakai sbg `reference` lama
+            // untuk backward-compat dengan filter/search yang sudah ada.
+            const displayRef = invoiceDisplayNumber || invoiceNumber;
+            const note =
+              d.source === "RECIPE_DEDUCT"
+                ? `Pakai bahan untuk ${displayRef}`
+                : `Penjualan ${displayRef}`;
+
+            if (branchId) {
+              const updated = await tx.branchStock.update({
+                where: {
+                  branchId_productId: { branchId, productId: d.productId },
+                },
+                data: { quantity: { decrement: qtyInt } },
+                select: { quantity: true },
+              });
+              await tx.stockMovement.create({
+                data: {
+                  productId: d.productId,
+                  branchId,
+                  companyId,
+                  type: movementType,
+                  quantity: qtyInt,
+                  direction: "OUT",
+                  balanceAfter: updated.quantity,
+                  refType: "transaction",
+                  refId: newTx.id,
+                  refNumber: displayRef,
+                  note,
+                  reference: invoiceNumber,
+                  createdBy: userId,
+                },
+              });
+            } else {
+              await tx.product.update({
+                where: { id: d.productId },
+                data: { stock: { decrement: qtyInt } },
+              });
+              await tx.stockMovement.create({
+                data: {
+                  productId: d.productId,
+                  branchId: null,
+                  companyId,
+                  type: movementType,
+                  quantity: qtyInt,
+                  direction: "OUT",
+                  refType: "transaction",
+                  refId: newTx.id,
+                  refNumber: displayRef,
+                  note,
+                  reference: invoiceNumber,
+                  createdBy: userId,
+                },
+              });
+            }
+          }
 
           const terminPayment = paymentsData.find(
             (p) => p.method === "TERMIN" && p.amount > 0,
@@ -360,7 +454,8 @@ export class TransactionsService {
               companyId,
               userId,
               transactionId: newTx.id,
-              invoiceNumber: newTx.invoiceNumber,
+              invoiceNumber:
+                newTx.invoiceDisplayNumber || newTx.invoiceNumber,
               branchId,
               customerId: dto.customerId,
               partyName: customer?.name ?? "Customer",
@@ -376,14 +471,16 @@ export class TransactionsService {
               await this.points.redeemForTransaction(tx, {
                 customerId: dto.customerId,
                 points: dto.redeemPoints,
-                invoiceNumber: newTx.invoiceNumber,
+                invoiceNumber:
+                  newTx.invoiceDisplayNumber || newTx.invoiceNumber,
               });
               pointsRedeemed = dto.redeemPoints;
             }
             const earn = await this.points.earnFromTransaction(tx, {
               customerId: dto.customerId,
               amount: dto.grandTotal,
-              invoiceNumber: newTx.invoiceNumber,
+              invoiceNumber:
+                newTx.invoiceDisplayNumber || newTx.invoiceNumber,
             });
             pointsEarned = earn.earned;
           }
@@ -443,6 +540,7 @@ export class TransactionsService {
       return {
         id: created.id,
         invoiceNumber: created.invoiceNumber,
+        invoiceDisplayNumber: created.invoiceDisplayNumber ?? null,
         pointsEarned: created.pointsEarned,
         pointsRedeemed: created.pointsRedeemed,
       };
@@ -717,6 +815,44 @@ export class TransactionsService {
     };
   }
 
+  /**
+   * Generate `invoiceDisplayNumber` per (companyId, date) sequential.
+   * Format: "INV-DDMMYYYY-NNNNN" (5-digit zero-padded).
+   *
+   * Cara kerja:
+   *   - Cari max NNNNN di transaksi dgn companyId & tanggal yang sama
+   *   - Tambah 1, pad jadi 5 digit
+   *   - Race protection ditangani retry on P2002 di catch block checkout
+   *     (sama dengan invoiceNumber lama).
+   */
+  private async generateDisplayInvoiceNumber(
+    companyId: string,
+    date: Date,
+  ): Promise<string> {
+    const dd = String(date.getDate()).padStart(2, "0");
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(date.getFullYear());
+    const prefix = `INV-${dd}${mm}${yyyy}-`;
+
+    const last = await this.prisma.transaction.findFirst({
+      where: {
+        companyId,
+        invoiceDisplayNumber: { startsWith: prefix },
+      },
+      orderBy: { invoiceDisplayNumber: "desc" },
+      select: { invoiceDisplayNumber: true },
+    });
+
+    let nextSeq = 1;
+    if (last?.invoiceDisplayNumber) {
+      const tail = last.invoiceDisplayNumber.slice(prefix.length);
+      const parsed = parseInt(tail, 10);
+      if (!Number.isNaN(parsed)) nextSeq = parsed + 1;
+    }
+
+    return `${prefix}${String(nextSeq).padStart(5, "0")}`;
+  }
+
   private async shouldValidateStock(branchId: string | null): Promise<boolean> {
     const setting = branchId
       ? await this.prisma.setting.findFirst({
@@ -737,6 +873,7 @@ function toTransactionResponse(t: RawTx): TransactionResponse {
   return {
     id: t.id,
     invoiceNumber: t.invoiceNumber,
+    invoiceDisplayNumber: t.invoiceDisplayNumber ?? null,
     userId: t.userId,
     user: t.user ? { id: t.user.id, name: t.user.name } : null,
     branchId: t.branchId,
@@ -778,34 +915,93 @@ function toTransactionDetailResponse(
   };
 }
 
+type DeductionSource = "SALE" | "RECIPE_DEDUCT";
+
 function aggregateDeductions(
   items: CheckoutDto["items"],
-): Array<{ productId: string; productName: string; quantity: number }> {
-  const map = new Map<string, { productName: string; quantity: number }>();
+  recipeMap?: Map<
+    string,
+    {
+      yieldQty: number;
+      ingredients: {
+        ingredientId: string;
+        ingredientName: string;
+        quantity: number;
+      }[];
+    }
+  >,
+): Array<{
+  productId: string;
+  productName: string;
+  quantity: number;
+  source: DeductionSource;
+}> {
+  // Key: `${productId}|${source}` supaya bisa beda type di kartu stok
+  // jika produk yg sama muncul sbg direct sale & ingredient di trx yg sama.
+  const map = new Map<
+    string,
+    {
+      productId: string;
+      productName: string;
+      quantity: number;
+      source: DeductionSource;
+    }
+  >();
+  const addDeduction = (
+    productId: string,
+    productName: string,
+    qty: number,
+    source: DeductionSource,
+  ) => {
+    const key = `${productId}|${source}`;
+    const prev = map.get(key);
+    map.set(key, {
+      productId,
+      productName: prev?.productName ?? productName,
+      quantity: (prev?.quantity ?? 0) + qty,
+      source,
+    });
+  };
+
   for (const item of items) {
     if (item.productId.startsWith("bundle:") && item.bundleItems) {
+      // Bundle: expand komponen explicit. Recipe di komponen tidak di-expand
+      // lagi (asumsi: bundle restaurant biasanya tidak punya recipe nested,
+      // dan kalau pun ada, owner bisa pakai 1 dari 2 mekanisme — bukan dual).
       for (const comp of item.bundleItems) {
-        const qty = comp.quantity * item.quantity;
-        const prev = map.get(comp.productId);
-        map.set(comp.productId, {
-          productName: prev?.productName ?? comp.productName,
-          quantity: (prev?.quantity ?? 0) + qty,
-        });
+        addDeduction(
+          comp.productId,
+          comp.productName,
+          comp.quantity * item.quantity,
+          "SALE",
+        );
       }
       continue;
     }
-    const qty = item.quantity * (item.conversionQty ?? 1);
-    const prev = map.get(item.productId);
-    map.set(item.productId, {
-      productName: prev?.productName ?? item.productName,
-      quantity: (prev?.quantity ?? 0) + qty,
-    });
+
+    const totalQty = item.quantity * (item.conversionQty ?? 1);
+    const recipe = recipeMap?.get(item.productId);
+    if (recipe && recipe.ingredients.length > 0) {
+      // Menu dgn recipe: decrement ingredient sesuai (qty * porsi / yieldQty).
+      // Tidak men-decrement stok menu itu sendiri — menu di restoran umumnya
+      // tidak di-track stoknya secara langsung.
+      const yieldQty = recipe.yieldQty || 1;
+      for (const ing of recipe.ingredients) {
+        const deduct = (ing.quantity * totalQty) / yieldQty;
+        addDeduction(
+          ing.ingredientId,
+          ing.ingredientName,
+          deduct,
+          "RECIPE_DEDUCT",
+        );
+      }
+      continue;
+    }
+
+    // Default: decrement self (produk retail biasa).
+    addDeduction(item.productId, item.productName, totalQty, "SALE");
   }
-  return Array.from(map.entries()).map(([productId, v]) => ({
-    productId,
-    productName: v.productName,
-    quantity: v.quantity,
-  }));
+  return Array.from(map.values());
 }
 
 function normalizeCodePart(
@@ -832,7 +1028,10 @@ function isInvoiceConflict(err: unknown): boolean {
     err.code === "P2002"
   ) {
     const target = err.meta?.target;
-    if (Array.isArray(target) && target.includes("invoiceNumber")) return true;
+    if (Array.isArray(target)) {
+      if (target.includes("invoiceNumber")) return true;
+      if (target.includes("invoiceDisplayNumber")) return true;
+    }
   }
   return false;
 }

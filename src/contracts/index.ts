@@ -15,6 +15,7 @@ export * from "./dtos/settings";
 export * from "./dtos/promotions";
 export * from "./dtos/shifts";
 export * from "./dtos/bundles";
+export * from "./dtos/recipes";
 export * from "./dtos/modifiers";
 export * from "./dtos/expenses";
 export * from "./dtos/debts";

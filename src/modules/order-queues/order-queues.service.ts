@@ -19,7 +19,7 @@ const QUEUE_SELECT = {
   id: true,
   queueNumber: true,
   transactionId: true,
-  transaction: { select: { id: true, invoiceNumber: true } },
+  transaction: { select: { id: true, invoiceNumber: true, invoiceDisplayNumber: true } },
   branchId: true,
   branch: { select: { id: true, name: true, companyId: true } },
   tableId: true,
@@ -332,7 +332,11 @@ function toQueueResponse(q: RawQueue): OrderQueueResponse {
     queueNumber: q.queueNumber,
     transactionId: q.transactionId,
     transaction: q.transaction
-      ? { id: q.transaction.id, invoiceNumber: q.transaction.invoiceNumber }
+      ? {
+          id: q.transaction.id,
+          invoiceNumber: q.transaction.invoiceNumber,
+          invoiceDisplayNumber: q.transaction.invoiceDisplayNumber ?? null,
+        }
       : null,
     branchId: q.branchId,
     branch: q.branch ? { id: q.branch.id, name: q.branch.name } : null,

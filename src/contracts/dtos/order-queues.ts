@@ -70,7 +70,7 @@ export type OrderQueueResponse = {
   id: string;
   queueNumber: number;
   transactionId: string | null;
-  transaction: { id: string; invoiceNumber: string } | null;
+  transaction: { id: string; invoiceNumber: string; invoiceDisplayNumber?: string | null } | null;
   branchId: string | null;
   branch: { id: string; name: string } | null;
   tableId: string | null;

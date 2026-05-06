@@ -105,6 +105,48 @@ export class BookingsService {
     return this.toResponse(b);
   }
 
+  // Hitung total per status (mengabaikan filter status — supaya pill counter
+  // konsisten saat user memilih satu status). Filter cabang/tanggal/search
+  // tetap dihormati.
+  async stats(
+    companyId: string,
+    query: Omit<ListBookingsQueryDto, "status" | "page" | "limit">,
+  ): Promise<{ total: number; byStatus: Record<string, number> }> {
+    const { search, branchId, bookingType, dateFrom, dateTo } = query;
+    const where: Prisma.BookingWhereInput = { companyId };
+    if (branchId) where.branchId = branchId;
+    if (bookingType) where.bookingType = bookingType;
+    if (dateFrom || dateTo) {
+      where.scheduledAt = {};
+      if (dateFrom) where.scheduledAt.gte = new Date(dateFrom);
+      if (dateTo) where.scheduledAt.lte = new Date(dateTo);
+    }
+    if (search) {
+      const q = search.trim();
+      where.OR = [
+        { customerName: { contains: q, mode: "insensitive" } },
+        { customerPhone: { contains: q, mode: "insensitive" } },
+        { customer: { name: { contains: q, mode: "insensitive" } } },
+        { vehicle: { plateNumber: { contains: q, mode: "insensitive" } } },
+        { serviceType: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
+    const groups = await this.prisma.booking.groupBy({
+      by: ["status"],
+      where,
+      _count: { _all: true },
+    });
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    for (const g of groups) {
+      const c = g._count._all;
+      byStatus[g.status] = c;
+      total += c;
+    }
+    return { total, byStatus };
+  }
+
   async create(
     companyId: string,
     dto: CreateBookingDto,
@@ -260,9 +302,148 @@ export class BookingsService {
           `[booking ${id}] WA konfirmasi gagal: ${err instanceof Error ? err.message : err}`,
         );
       });
+
+      // Auto-create Service Order untuk booking BENGKEL — booking yang
+      // dikonfirmasi langsung masuk ke antrian service order. Customer +
+      // Vehicle di-find-or-create dari data booking.
+      if (
+        updated.bookingType === "BENGKEL" &&
+        !updated.serviceOrderId
+      ) {
+        try {
+          const so = await this.promoteToServiceOrder(companyId, updated);
+          if (so) {
+            await this.prisma.booking.update({
+              where: { id: updated.id },
+              data: { serviceOrderId: so.id },
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[booking ${id}] auto-create service order gagal: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      }
     }
 
     return this.toResponse(updated);
+  }
+
+  /**
+   * Promote booking BENGKEL ke ServiceOrder dengan status ANTRIAN.
+   * Customer + Vehicle di-find-or-create kalau belum di-link.
+   * Dipanggil saat admin konfirmasi booking — flow transaksi service
+   * lanjut dari sini (Diagnosa → Dikerjakan → Dibayar).
+   */
+  private async promoteToServiceOrder(
+    companyId: string,
+    booking: Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>,
+  ): Promise<{ id: string; orderNumber: string } | null> {
+    // Resolve customer — link existing kalau sudah ada, atau buat baru
+    // dari customerName + customerPhone.
+    let customerId = booking.customerId;
+    if (!customerId) {
+      if (!booking.customerPhone || !booking.customerName) {
+        this.logger.warn(
+          `[booking ${booking.id}] tidak bisa promote: customer info tidak lengkap`,
+        );
+        return null;
+      }
+      const phone = booking.customerPhone;
+      const existing = await this.prisma.customer.findFirst({
+        where: { companyId, phone },
+        select: { id: true },
+      });
+      if (existing) {
+        customerId = existing.id;
+      } else {
+        const created = await this.prisma.customer.create({
+          data: {
+            companyId,
+            name: booking.customerName,
+            phone: booking.customerPhone,
+          },
+          select: { id: true },
+        });
+        customerId = created.id;
+      }
+    }
+
+    // Resolve vehicle — link existing kalau ada, atau buat baru dari
+    // info di notes booking (format: "🚗/🏍️ TYPE · PLATE · BRAND MODEL").
+    let vehicleId = booking.vehicleId;
+    let parsedComplaint: string | null = null;
+    if (!vehicleId) {
+      const parsed = parseBookingVehicleInfo(booking.notes);
+      parsedComplaint = parsed?.complaint ?? null;
+      if (!parsed?.plate) {
+        this.logger.warn(
+          `[booking ${booking.id}] tidak bisa promote: plat kendaraan tidak ditemukan di notes`,
+        );
+        return null;
+      }
+      const plate = parsed.plate.toUpperCase();
+      const existing = await this.prisma.vehicle.findFirst({
+        where: { companyId, plateNumber: plate },
+        select: { id: true },
+      });
+      if (existing) {
+        vehicleId = existing.id;
+      } else {
+        const created = await this.prisma.vehicle.create({
+          data: {
+            companyId,
+            customerId,
+            plateNumber: plate,
+            type: parsed.type ?? "MOTOR",
+            // brand/model tidak di-set dari free-text — admin bisa link
+            // manual ke master setelahnya. notes kendaraan diisi free text
+            // untuk audit.
+            notes:
+              [parsed.brand, parsed.model].filter(Boolean).join(" ") ||
+              null,
+          },
+          select: { id: true },
+        });
+        vehicleId = created.id;
+      }
+    }
+
+    // Susun complaint: gabung serviceType + keluhan dari notes booking.
+    const complaintParts: string[] = [];
+    if (booking.serviceType) complaintParts.push(booking.serviceType);
+    if (parsedComplaint) complaintParts.push(parsedComplaint);
+    const complaint = complaintParts.join(" — ") || null;
+
+    // Generate orderNumber sama format dengan ServiceOrdersService.
+    const d = new Date();
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+    const orderNumber = `SO-${yy}${mm}${dd}-${rand}`;
+
+    const so = await this.prisma.serviceOrder.create({
+      data: {
+        orderNumber,
+        companyId,
+        branchId: booking.branchId,
+        vehicleId,
+        customerId,
+        mechanicId: booking.mechanicId ?? null,
+        complaint,
+        notes: `Auto-created dari booking ${booking.id.slice(0, 8).toUpperCase()}`,
+        status: "ANTRIAN",
+      },
+      select: { id: true, orderNumber: true },
+    });
+
+    this.logger.log(
+      `[booking ${booking.id}] promoted to service order ${so.orderNumber}`,
+    );
+    return so;
   }
 
   /**
@@ -391,4 +572,52 @@ export class BookingsService {
       updatedAt: b.updatedAt.toISOString(),
     };
   }
+}
+
+
+/**
+ * Parse string notes booking yang di-generate public-bookings controller:
+ *   "🚗 MOBIL · B 1234 ABC · Toyota Avanza"
+ *   "💬 Keluhan: ..."
+ *
+ * Return null kalau format tidak match (mis. notes manual dari admin).
+ */
+function parseBookingVehicleInfo(notes: string | null | undefined): {
+  type: "MOBIL" | "MOTOR" | null;
+  plate: string;
+  brand: string | null;
+  model: string | null;
+  complaint: string | null;
+} | null {
+  if (!notes) return null;
+  const lines = notes.split("\n").map((l) => l.trim());
+  const vehicleLine = lines.find(
+    (l) => l.startsWith("🚗") || l.startsWith("🏍️"),
+  );
+  const complaintLine = lines.find((l) => l.startsWith("💬"));
+  const complaint = complaintLine
+    ? complaintLine.replace(/^💬\s*Keluhan:\s*/, "").trim() || null
+    : null;
+
+  if (!vehicleLine) return null;
+  // Buang ikon awal, split pakai " · "
+  const cleaned = vehicleLine.replace(/^[🚗🏍️]\s*/, "");
+  const parts = cleaned.split(" · ").map((p) => p.trim());
+  if (parts.length < 2) return null;
+  const typeRaw = parts[0]?.toUpperCase();
+  const type =
+    typeRaw === "MOBIL" || typeRaw === "MOTOR" ? typeRaw : null;
+  const plate = parts[1] ?? "";
+  if (!plate) return null;
+  // [2] = "Brand Model" — split kata pertama sebagai brand, sisanya model.
+  const brandModel = parts[2] ?? "";
+  const [brand, ...modelParts] = brandModel.split(" ");
+  const model = modelParts.join(" ").trim() || null;
+  return {
+    type,
+    plate,
+    brand: brand || null,
+    model,
+    complaint,
+  };
 }

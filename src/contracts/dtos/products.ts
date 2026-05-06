@@ -1,10 +1,29 @@
 import { z } from "zod";
 
+// Tipe item:
+// - PRODUCT     : barang fisik yg dijual (default; semua bisnis unit pakai)
+// - SERVICE     : jasa, tanpa stock validation (bengkel, dll)
+// - INGREDIENT  : bahan baku F&B (beras, telur, dll). Di-stock seperti PRODUCT
+//                 tapi tidak tampil di POS — hanya dipakai sbg ingredient di
+//                 Recipe / BOM. Khusus business unit RESTAURANT / CAFE.
+export const ProductItemTypeSchema = z.enum([
+  "PRODUCT",
+  "SERVICE",
+  "INGREDIENT",
+]);
+export type ProductItemType = z.infer<typeof ProductItemTypeSchema>;
+
 export const ListProductsQuerySchema = z.object({
   search: z.string().optional(),
   categoryId: z.string().optional(),
   brandId: z.string().optional(),
   supplierId: z.string().optional(),
+  itemType: ProductItemTypeSchema.optional(),
+  // Untuk POS / cashier: exclude bahan baku yg tidak dijual langsung.
+  excludeIngredient: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+    .optional(),
   isActive: z
     .union([z.boolean(), z.enum(["true", "false"])])
     .transform((v) => (typeof v === "boolean" ? v : v === "true"))
@@ -39,6 +58,7 @@ export const CreateProductSchema = z.object({
   minStock: z.number().int().nonnegative().optional().default(5),
   barcode: z.string().nullable().optional(),
   unit: z.string().optional().default("pcs"),
+  itemType: ProductItemTypeSchema.optional(),
   isActive: z.boolean().optional().default(true),
   description: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
@@ -66,6 +86,7 @@ export type ProductResponse = {
   minStock: number;
   barcode: string | null;
   unit: string;
+  itemType: ProductItemType;
   isActive: boolean;
   description: string | null;
   imageUrl: string | null;

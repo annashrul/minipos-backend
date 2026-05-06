@@ -226,7 +226,7 @@ export class StockTransfersService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       for (const item of transfer.items) {
-        await tx.branchStock.update({
+        const updatedStock = await tx.branchStock.update({
           where: {
             branchId_productId: {
               branchId: transfer.fromBranchId,
@@ -234,6 +234,7 @@ export class StockTransfersService {
             },
           },
           data: { quantity: { decrement: item.quantity } },
+          select: { quantity: true },
         });
 
         await tx.stockMovement.create({
@@ -241,8 +242,13 @@ export class StockTransfersService {
             productId: item.productId,
             branchId: transfer.fromBranchId,
             companyId,
-            type: "TRANSFER",
+            type: "TRANSFER_OUT",
             quantity: item.quantity,
+            direction: "OUT",
+            balanceAfter: updatedStock.quantity,
+            refType: "stock_transfer",
+            refId: id,
+            refNumber: transfer.transferNumber,
             note: `Transfer keluar ${transfer.transferNumber}`,
             reference: transfer.transferNumber,
             createdBy: userId,
@@ -326,7 +332,7 @@ export class StockTransfersService {
         });
 
         if (input.receivedQuantity > 0) {
-          await tx.branchStock.upsert({
+          const upserted = await tx.branchStock.upsert({
             where: {
               branchId_productId: {
                 branchId: transfer.toBranchId,
@@ -339,6 +345,7 @@ export class StockTransfersService {
               quantity: input.receivedQuantity,
             },
             update: { quantity: { increment: input.receivedQuantity } },
+            select: { quantity: true },
           });
 
           await tx.stockMovement.create({
@@ -346,8 +353,13 @@ export class StockTransfersService {
               productId: input.productId,
               branchId: transfer.toBranchId,
               companyId,
-              type: "TRANSFER",
+              type: "TRANSFER_IN",
               quantity: input.receivedQuantity,
+              direction: "IN",
+              balanceAfter: upserted.quantity,
+              refType: "stock_transfer",
+              refId: id,
+              refNumber: transfer.transferNumber,
               note: `Transfer masuk ${transfer.transferNumber}`,
               reference: transfer.transferNumber,
               createdBy: userId,
@@ -403,7 +415,7 @@ export class StockTransfersService {
     const updated = await this.prisma.$transaction(async (tx) => {
       if (wasInTransit) {
         for (const item of transfer.items) {
-          await tx.branchStock.upsert({
+          const upserted = await tx.branchStock.upsert({
             where: {
               branchId_productId: {
                 branchId: transfer.fromBranchId,
@@ -416,6 +428,7 @@ export class StockTransfersService {
               quantity: item.quantity,
             },
             update: { quantity: { increment: item.quantity } },
+            select: { quantity: true },
           });
 
           await tx.stockMovement.create({
@@ -423,8 +436,13 @@ export class StockTransfersService {
               productId: item.productId,
               branchId: transfer.fromBranchId,
               companyId,
-              type: "TRANSFER",
+              type: "TRANSFER_IN",
               quantity: item.quantity,
+              direction: "IN",
+              balanceAfter: upserted.quantity,
+              refType: "stock_transfer",
+              refId: id,
+              refNumber: transfer.transferNumber,
               note: `Pembatalan transfer ${transfer.transferNumber} (rollback)`,
               reference: transfer.transferNumber,
               createdBy: userId,

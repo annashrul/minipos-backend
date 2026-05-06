@@ -765,6 +765,7 @@ export class DashboardService {
       recentTransactions: recentTransactions.map((t) => ({
         id: t.id,
         invoiceNumber: t.invoiceNumber,
+        invoiceDisplayNumber: t.invoiceDisplayNumber ?? null,
         grandTotal: t.grandTotal,
         paymentMethod: t.paymentMethod,
         status: t.status,

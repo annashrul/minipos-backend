@@ -430,10 +430,16 @@ export class PurchasesService {
           });
         }
 
-        // Update stock + create stock movement
+        // Update stock + create stock movement (ledger fields lengkap)
         for (const input of dto.items) {
+          // Lookup unit cost dari PO item supaya HPP per movement ter-isi
+          // (foundation untuk Average/FIFO costing).
+          const poItem = itemMap.get(input.productId);
+          const unitCost = poItem?.unitPrice ?? 0;
+
+          let balanceAfter: number | null = null;
           if (targetBranchId) {
-            await tx.branchStock.upsert({
+            const updated = await tx.branchStock.upsert({
               where: {
                 branchId_productId: {
                   branchId: targetBranchId,
@@ -448,12 +454,16 @@ export class PurchasesService {
               update: {
                 quantity: { increment: input.quantityReceived },
               },
+              select: { quantity: true },
             });
+            balanceAfter = updated.quantity;
           } else {
-            await tx.product.update({
+            const updated = await tx.product.update({
               where: { id: input.productId },
               data: { stock: { increment: input.quantityReceived } },
+              select: { stock: true },
             });
+            balanceAfter = updated.stock;
           }
 
           await tx.stockMovement.create({
@@ -461,8 +471,21 @@ export class PurchasesService {
               productId: input.productId,
               branchId: targetBranchId,
               companyId,
-              type: "IN",
+              type: "PURCHASE_RECEIVE",
               quantity: input.quantityReceived,
+              direction: "IN",
+              balanceAfter,
+              ...(unitCost > 0
+                ? {
+                    unitCost,
+                    totalCost:
+                      Math.round(unitCost * input.quantityReceived * 100) /
+                      100,
+                  }
+                : {}),
+              refType: "purchase_order",
+              refId: id,
+              refNumber: receiptNumber,
               note: `Penerimaan ${receiptNumber}`,
               reference: receiptNumber,
               createdBy: userId,

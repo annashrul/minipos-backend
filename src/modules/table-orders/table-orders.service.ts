@@ -730,11 +730,17 @@ export class TableOrdersService {
     }
 
     const invoiceNumber = await nextInvoiceNumber(this.prisma, session.branchId);
+    const invoiceDisplayNumber = await nextInvoiceDisplayNumber(
+      this.prisma,
+      companyId,
+    );
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const trx = await tx.transaction.create({
         data: {
           invoiceNumber,
+          invoiceDisplayNumber,
+          companyId,
           userId,
           branchId: session.branchId,
           subtotal: grandTotal,
@@ -1035,6 +1041,38 @@ async function nextInvoiceNumber(
   });
   const seq = String(count + 1).padStart(4, "0");
   return `INV-${ymd}-${seq}`;
+}
+
+/**
+ * Generate display invoice number "INV-DDMMYYYY-NNNNN" sequential per
+ * (companyId, date). Mirror logika di TransactionsService.generateDisplayInvoiceNumber.
+ */
+async function nextInvoiceDisplayNumber(
+  prisma: PrismaService,
+  companyId: string,
+): Promise<string> {
+  const date = new Date();
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(date.getFullYear());
+  const prefix = `INV-${dd}${mm}${yyyy}-`;
+
+  const last = await prisma.transaction.findFirst({
+    where: {
+      companyId,
+      invoiceDisplayNumber: { startsWith: prefix },
+    },
+    orderBy: { invoiceDisplayNumber: "desc" },
+    select: { invoiceDisplayNumber: true },
+  });
+
+  let nextSeq = 1;
+  if (last?.invoiceDisplayNumber) {
+    const tail = last.invoiceDisplayNumber.slice(prefix.length);
+    const parsed = parseInt(tail, 10);
+    if (!Number.isNaN(parsed)) nextSeq = parsed + 1;
+  }
+  return `${prefix}${String(nextSeq).padStart(5, "0")}`;
 }
 
 function toOrderResponse(o: RawOrder): TableOrderResponse {

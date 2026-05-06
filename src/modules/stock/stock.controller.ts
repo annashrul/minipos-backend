@@ -11,10 +11,12 @@ import {
   AdjustStockSchema,
   ListBranchStockQuerySchema,
   ListStockMovementsQuerySchema,
+  StockCardQuerySchema,
   type AdjustStockDto,
   type AuthUser,
   type ListBranchStockQueryDto,
   type ListStockMovementsQueryDto,
+  type StockCardQueryDto,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
@@ -68,6 +70,16 @@ export class StockController {
     @Param("productId") productId: string,
   ) {
     const data = await this.stock.byProduct(companyId, productId);
+    return { data };
+  }
+
+  @Get("card")
+  @RequireAccess("stock", "view")
+  async stockCard(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(StockCardQuerySchema)) query: StockCardQueryDto,
+  ) {
+    const data = await this.stock.stockCard(companyId, query);
     return { data };
   }
 }

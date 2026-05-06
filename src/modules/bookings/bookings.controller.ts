@@ -43,6 +43,26 @@ export class BookingsController {
     return { data };
   }
 
+  @Get("stats")
+  @RequireAccess("bookings", "view")
+  async stats(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+    @Query("bookingType") bookingType?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+    @Query("search") search?: string,
+  ) {
+    const data = await this.svc.stats(companyId, {
+      branchId,
+      bookingType: bookingType as never,
+      dateFrom,
+      dateTo,
+      search,
+    });
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("bookings", "view")
   async findOne(

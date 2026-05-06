@@ -1,11 +1,25 @@
 import { z } from "zod";
 
 export const StockMovementTypeSchema = z.enum([
+  // Legacy
   "IN",
   "OUT",
   "ADJUSTMENT",
   "TRANSFER",
   "OPNAME",
+  // Granular (ledger refactor)
+  "PURCHASE_RECEIVE",
+  "SALE",
+  "RETURN_IN",
+  "RETURN_OUT",
+  "TRANSFER_OUT",
+  "TRANSFER_IN",
+  "OPNAME_ADJUSTMENT",
+  "WASTE",
+  "RECIPE_DEDUCT",
+  "MANUAL_IN",
+  "MANUAL_OUT",
+  "RTV",
 ]);
 export type StockMovementTypeDto = z.infer<typeof StockMovementTypeSchema>;
 
@@ -77,6 +91,53 @@ export type BranchStockResponse = {
 
 export type BranchStockListResponse = {
   stocks: BranchStockResponse[];
+  total: number;
+  totalPages: number;
+};
+
+// ===== Stock Card / Kartu Stok =====
+export const StockCardQuerySchema = z.object({
+  productId: z.string().min(1),
+  branchId: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  type: StockMovementTypeSchema.optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(500).default(50),
+});
+export type StockCardQueryDto = z.infer<typeof StockCardQuerySchema>;
+
+export type StockCardEntry = {
+  id: string;
+  date: string;
+  type: string;
+  direction: "IN" | "OUT" | null;
+  qtyIn: number;
+  qtyOut: number;
+  balanceAfter: number | null;
+  unitCost: number | null;
+  totalCost: number | null;
+  refType: string | null;
+  refId: string | null;
+  refNumber: string | null;
+  note: string | null;
+  createdBy: string | null;
+  branch: { id: string; name: string } | null;
+};
+
+export type StockCardSummary = {
+  openingBalance: number; // saldo sebelum periode
+  totalIn: number; // jumlah qty masuk dlm periode
+  totalOut: number; // jumlah qty keluar dlm periode
+  endingBalance: number; // saldo akhir periode
+  movementCount: number;
+};
+
+export type StockCardResponse = {
+  product: { id: string; name: string; code: string; unit: string } | null;
+  branch: { id: string; name: string } | null;
+  summary: StockCardSummary;
+  entries: StockCardEntry[];
   total: number;
   totalPages: number;
 };
