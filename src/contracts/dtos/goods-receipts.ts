@@ -61,6 +61,8 @@ export type GoodsReceiptDetailItemResponse = {
   productName: string;
   quantityOrdered: number;
   quantityReceived: number;
+  unitPrice: number | null;
+  previousPurchasePrice: number | null;
   notes: string | null;
 };
 

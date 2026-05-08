@@ -17,6 +17,9 @@ export const PaymentMethodSchema = z.enum([
   "DEBIT",
   "CREDIT_CARD",
   "TERMIN",
+  // SPLIT_BILL bukan metode konkret — penanda transaksi pakai banyak pembayar.
+  // Detail per orang ada di payments[].
+  "SPLIT_BILL",
 ]);
 export type PaymentMethodDto = z.infer<typeof PaymentMethodSchema>;
 
@@ -55,6 +58,20 @@ export type TransactionItemResponse = {
   unitPrice: number;
   discount: number;
   subtotal: number;
+  /** Penanda asal promo: GIFT, TEBUS, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, VOUCHER. */
+  promoType: string | null;
+  /** Nama promo untuk display di badge. */
+  promoName: string | null;
+  /** Modifier/varian yang dipilih saat transaksi (warna, ukuran, dll). */
+  modifiers: Array<{
+    groupId: string;
+    groupName: string;
+    optionId: string;
+    optionName: string;
+    priceAdjustment: number;
+  }> | null;
+  /** Catatan dapur/staff per item (mis. "tanpa bawang"). */
+  notes: string | null;
 };
 
 export type TransactionResponse = {
@@ -81,6 +98,17 @@ export type TransactionResponse = {
   createdAt: string;
   updatedAt: string;
   itemCount: number;
+  /** Payments dikembalikan juga di list endpoint supaya UI tabel bisa render
+   *  badge bank / e-wallet (reference) tanpa fetch detail per row. */
+  payments: PaymentDetailResponse[];
+};
+
+export type PaymentDetailResponse = {
+  id: string;
+  method: string;
+  amount: number;
+  reference: string | null;
+  personLabel: string | null;
 };
 
 export type TransactionDetailResponse = TransactionResponse & {
@@ -130,13 +158,22 @@ export const CheckoutItemSchema = z.object({
   bundleItems: z.array(CheckoutBundleComponentSchema).optional(),
   modifiers: z.array(CheckoutItemModifierSchema).optional(),
   notes: z.string().optional(),
+  // Penanda asal promo per item — backend simpan ke transaction_items
+  // (promoType + promoName) supaya detail riwayat bisa render badge.
+  // GIFT, TEBUS, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, VOUCHER.
+  promoType: z.string().optional(),
+  promoName: z.string().optional(),
 });
 export type CheckoutItemDto = z.infer<typeof CheckoutItemSchema>;
 
 export const CheckoutPaymentSchema = z.object({
   method: PaymentMethodSchema,
   amount: z.number().nonnegative(),
+  // Bank name / no. rek / ref code untuk metode non-tunai. Free-form.
   reference: z.string().nullable().optional(),
+  // Label pembayar untuk Split Bill ("Orang 1", "Andi", dll). NULL kalau bukan
+  // split. Backend simpan apa adanya untuk display di detail modal.
+  personLabel: z.string().nullable().optional(),
 });
 export type CheckoutPaymentDto = z.infer<typeof CheckoutPaymentSchema>;
 

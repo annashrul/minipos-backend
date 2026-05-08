@@ -73,6 +73,7 @@ export class MeService {
       name: menu.name,
       path: menu.path,
       group: menu.group,
+      subgroup: menu.subgroup ?? null,
       sortOrder: menu.sortOrder,
       isActive: menu.isActive,
       permissions: { [role]: menu.roleMenus[0]?.allowed ?? false },
@@ -126,6 +127,7 @@ export class MeService {
       name: menu.name,
       path: menu.path,
       group: menu.group,
+      subgroup: menu.subgroup ?? null,
       sortOrder: menu.sortOrder,
       isActive: menu.isActive,
       permissions: Object.fromEntries(

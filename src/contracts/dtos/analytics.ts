@@ -278,6 +278,13 @@ export type AppliedPromoResponse = {
   type: string;
   discountAmount: number;
   appliedTo: string;
+  /** Untuk BUY_X_GET_Y: produk hadiah yang akan ditambahkan ke cart. */
+  giftProductId?: string | null;
+  giftProductName?: string | null;
+  /** Code produk hadiah — wajib di-pass ke checkout DTO (productCode min 1 char). */
+  giftProductCode?: string | null;
+  giftQuantity?: number | null;
+  giftUnitPrice?: number | null;
 };
 
 export type CalculateAutoPromoResponse = {

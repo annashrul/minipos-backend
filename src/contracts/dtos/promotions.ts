@@ -50,6 +50,12 @@ export const CreatePromotionSchema = z
     isActive: z.boolean().optional().default(true),
     startDate: z.string().datetime(),
     endDate: z.string().datetime(),
+    // Multi-trigger products (any-of). Customer beli salah satu sudah cukup.
+    // Kalau di-set, override single `productId` semantic untuk eligibility.
+    triggerProductIds: z.array(z.string()).optional(),
+    // Multi-reward products (Tebus Murah). Customer dapat memilih salah satu.
+    // Kalau di-set, override single `getProductId`.
+    getProductIds: z.array(z.string()).optional(),
   })
   .refine((v) => new Date(v.endDate) >= new Date(v.startDate), {
     message: "endDate harus >= startDate",
@@ -96,6 +102,8 @@ export const UpdatePromotionSchema = z.object({
   isActive: z.boolean().optional(),
   startDate: z.string().datetime().optional(),
   endDate: z.string().datetime().optional(),
+  triggerProductIds: z.array(z.string()).optional(),
+  getProductIds: z.array(z.string()).optional(),
 });
 export type UpdatePromotionDto = z.infer<typeof UpdatePromotionSchema>;
 
@@ -130,6 +138,9 @@ export type PromotionResponse = {
   endDate: string;
   createdAt: string;
   updatedAt: string;
+  triggerProducts: Array<{ id: string; name: string; code: string }>;
+  getProduct: { id: string; name: string; code: string } | null;
+  getProducts: Array<{ id: string; name: string; code: string }>;
 };
 
 export type PromotionListResponse = {

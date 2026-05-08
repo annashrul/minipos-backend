@@ -12,6 +12,7 @@
 import {
   ClosePurchaseSchema,
   CreatePurchaseSchema,
+  ListPurchaseTransactionLogQuerySchema,
   ListPurchasesQuerySchema,
   ReceivePurchaseSchema,
   UpdatePurchaseSchema,
@@ -19,6 +20,7 @@ import {
   type AuthUser,
   type ClosePurchaseDto,
   type CreatePurchaseDto,
+  type ListPurchaseTransactionLogQueryDto,
   type ListPurchasesQueryDto,
   type ReceivePurchaseDto,
   type UpdatePurchaseDto,
@@ -58,6 +60,19 @@ export class PurchasesController {
     return { data };
   }
 
+  // Laporan Pembelian — list semua row PurchaseTransactionLog (pergerakan
+  // status PO + receiving + completion). Akses guard pakai purchase-report.
+  @Get("transaction-log")
+  @RequireAccess("purchase-report", "view")
+  async transactionLog(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(ListPurchaseTransactionLogQuerySchema))
+    query: ListPurchaseTransactionLogQueryDto,
+  ) {
+    const data = await this.purchases.listTransactionLog(companyId, query);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("purchases", "view")
   async findOne(
@@ -94,11 +109,17 @@ export class PurchasesController {
   @RequireAccess("purchases", "update")
   async updateStatus(
     @CurrentCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Body(new ZodValidationPipe(UpdatePurchaseStatusSchema))
     body: UpdatePurchaseStatusDto,
   ) {
-    const data = await this.purchases.updateStatus(companyId, id, body);
+    const data = await this.purchases.updateStatus(
+      companyId,
+      user.id,
+      id,
+      body,
+    );
     return { data };
   }
 
@@ -118,10 +139,11 @@ export class PurchasesController {
   @RequireAccess("purchases", "receive")
   async close(
     @CurrentCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Body(new ZodValidationPipe(ClosePurchaseSchema)) body: ClosePurchaseDto,
   ) {
-    const data = await this.purchases.close(companyId, id, body);
+    const data = await this.purchases.close(companyId, user.id, id, body);
     return { data };
   }
 

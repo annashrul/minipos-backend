@@ -16,6 +16,10 @@ import type {
   TransitionStatusDto,
   UpdateServiceOrderDto,
 } from "@/contracts";
+import {
+  dayRange,
+  nextDocumentNumber,
+} from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
@@ -152,8 +156,8 @@ export class ServiceOrdersService {
     if (!customer) throw new NotFoundException("Customer tidak ditemukan");
     if (!branch) throw new NotFoundException("Branch tidak ditemukan");
 
-    // Generate orderNumber: SO-YYMMDD-RAND6
-    const orderNumber = generateOrderNumber();
+    // Generate orderNumber: SO-YYYYMMDD-NNNN (per company per hari)
+    const orderNumber = await this.nextOrderNumber(companyId);
 
     const items = (dto.items ?? []).map((item) => {
       const subtotal = computeSubtotal(item.quantity, item.unitPrice, item.discount);
@@ -488,19 +492,29 @@ export class ServiceOrdersService {
     await this.prisma.serviceOrder.delete({ where: { id } });
     return { id, deleted: true };
   }
+
+  // SO-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
+  private async nextOrderNumber(companyId: string): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "SO",
+      countToday: () =>
+        this.prisma.serviceOrder.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.serviceOrder.findFirst({
+          where: { companyId, orderNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
+  }
 }
 
 function computeSubtotal(qty: number, price: number, discount: number): number {
   return Math.max(0, Math.round(qty * price - discount));
-}
-
-function generateOrderNumber(): string {
-  const d = new Date();
-  const yy = String(d.getFullYear()).slice(-2);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `SO-${yy}${mm}${dd}-${rand}`;
 }
 
 function toResponse(so: SoWithIncludes): ServiceOrderResponse {

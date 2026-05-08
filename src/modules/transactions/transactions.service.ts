@@ -46,6 +46,18 @@ const TX_SELECT = {
   createdAt: true,
   updatedAt: true,
   _count: { select: { items: true } },
+  // Include payments di list response biar UI tabel bisa render badge
+  // bank/ewallet (reference) tanpa fetch detail per row.
+  payments: {
+    select: {
+      id: true,
+      method: true,
+      amount: true,
+      reference: true,
+      personLabel: true,
+    },
+    orderBy: { createdAt: "asc" },
+  },
 } satisfies Prisma.TransactionSelect;
 
 const TX_DETAIL_SELECT = {
@@ -61,6 +73,23 @@ const TX_DETAIL_SELECT = {
       unitPrice: true,
       discount: true,
       subtotal: true,
+      promoType: true,
+      promoName: true,
+      // modifiers stored as JSON: [{groupId, groupName, optionId, optionName, priceAdjustment}].
+      // Dipakai untuk display nama varian/modifier di riwayat.
+      modifiers: true,
+      notes: true,
+    },
+    orderBy: { createdAt: "asc" },
+  },
+  payments: {
+    select: {
+      id: true,
+      method: true,
+      amount: true,
+      reference: true,
+      personLabel: true,
+      createdAt: true,
     },
     orderBy: { createdAt: "asc" },
   },
@@ -254,13 +283,88 @@ export class TransactionsService {
       });
     }
 
-    const aggregatedDeductions = aggregateDeductions(dto.items, recipeMap);
+    // Resolve variant per cart item dari kombinasi modifier optionIds yang
+    // dipilih kasir. Variant info dipakai supaya StockMovement mencatat
+    // pergerakan per varian (Putih · S, Hitam · L) — bukan agregat product
+    // saja. Lookup di sini supaya bisa di-batch sekali per checkout.
+    const itemsNeedingVariant = dto.items
+      .map((it, idx) => ({ idx, item: it }))
+      .filter(({ item }) => (item.modifiers ?? []).some((m) => m.optionId));
+    const itemVariantMap = new Map<
+      number,
+      { variantId: string; variantLabel: string }
+    >();
+    if (itemsNeedingVariant.length > 0) {
+      const productIdsWithMods = Array.from(
+        new Set(itemsNeedingVariant.map(({ item }) => item.productId)),
+      );
+      const variantRows = await this.prisma.productVariant.findMany({
+        where: { productId: { in: productIdsWithMods } },
+        select: {
+          id: true,
+          productId: true,
+          options: {
+            select: {
+              optionId: true,
+              option: { select: { name: true } },
+            },
+          },
+        },
+      });
+      const byProduct = new Map<
+        string,
+        Array<{ id: string; optionIds: Set<string>; label: string }>
+      >();
+      for (const v of variantRows) {
+        const optionIds = new Set(v.options.map((o) => o.optionId));
+        const label = v.options.map((o) => o.option.name).join(" · ");
+        const arr = byProduct.get(v.productId) ?? [];
+        arr.push({ id: v.id, optionIds, label });
+        byProduct.set(v.productId, arr);
+      }
+      for (const { idx, item } of itemsNeedingVariant) {
+        const optionIds = (item.modifiers ?? [])
+          .map((m) => m.optionId)
+          .filter((x): x is string => !!x);
+        if (optionIds.length === 0) continue;
+        const candidates = byProduct.get(item.productId) ?? [];
+        const optSet = new Set(optionIds);
+        const matched = candidates.find(
+          (c) =>
+            c.optionIds.size === optSet.size &&
+            Array.from(c.optionIds).every((id) => optSet.has(id)),
+        );
+        if (matched) {
+          itemVariantMap.set(idx, {
+            variantId: matched.id,
+            variantLabel: matched.label,
+          });
+        }
+      }
+    }
+
+    const aggregatedDeductions = aggregateDeductions(
+      dto.items,
+      recipeMap,
+      itemVariantMap,
+    );
 
     try {
       const created = await this.prisma.$transaction(
         async (tx) => {
           if (shouldValidateStock && aggregatedDeductions.length > 0) {
-            const productIds = aggregatedDeductions.map((d) => d.productId);
+            const productTotals = new Map<
+              string,
+              { name: string; quantity: number }
+            >();
+            for (const d of aggregatedDeductions) {
+              const prev = productTotals.get(d.productId);
+              productTotals.set(d.productId, {
+                name: prev?.name ?? d.productName,
+                quantity: (prev?.quantity ?? 0) + d.quantity,
+              });
+            }
+            const productIds = Array.from(productTotals.keys());
             if (branchId) {
               const stocks = await tx.branchStock.findMany({
                 where: { branchId, productId: { in: productIds } },
@@ -269,12 +373,55 @@ export class TransactionsService {
               const stockMap = new Map(
                 stocks.map((s) => [s.productId, s.quantity]),
               );
-              for (const d of aggregatedDeductions) {
-                const available = stockMap.get(d.productId) ?? 0;
-                if (available < d.quantity) {
+              for (const [pid, total] of productTotals) {
+                const available = stockMap.get(pid) ?? 0;
+                if (available < total.quantity) {
                   throw new BadRequestException(
-                    `Stok ${d.productName} tidak mencukupi di cabang ini (sisa: ${available})`,
+                    `Stok ${total.name} tidak mencukupi di cabang ini (sisa: ${available})`,
                   );
+                }
+              }
+              // Validasi per varian: kalau item resolve ke ProductVariant,
+              // cek stok ProductBranchSku-nya. Tanpa ini, transaksi varian
+              // bisa lolos meski stok varian-nya 0 (asal total branch_stock
+              // masih cukup karena varian lain masih ada).
+              const variantDeductions = aggregatedDeductions.filter(
+                (d) => d.variantId,
+              );
+              if (variantDeductions.length > 0) {
+                // Validasi pakai base-unit row (unitId=null) — itu source
+                // of truth untuk stok per varian. Filter eksplisit.
+                const skuRows = await tx.productBranchSku.findMany({
+                  where: {
+                    branchId,
+                    unitId: null,
+                    OR: variantDeductions.map((d) => ({
+                      productId: d.productId,
+                      variantId: d.variantId!,
+                    })),
+                  },
+                  select: {
+                    productId: true,
+                    variantId: true,
+                    stock: true,
+                  },
+                });
+                const variantStockMap = new Map<string, number>();
+                for (const r of skuRows) {
+                  const key = `${r.productId}|${r.variantId}`;
+                  variantStockMap.set(key, r.stock);
+                }
+                for (const d of variantDeductions) {
+                  const key = `${d.productId}|${d.variantId}`;
+                  const available = variantStockMap.get(key) ?? 0;
+                  if (available < d.quantity) {
+                    const label = d.variantLabel
+                      ? `${d.productName} (${d.variantLabel})`
+                      : d.productName;
+                    throw new BadRequestException(
+                      `Stok ${label} tidak mencukupi di cabang ini (sisa: ${available})`,
+                    );
+                  }
                 }
               }
             } else {
@@ -283,16 +430,16 @@ export class TransactionsService {
                 select: { id: true, name: true, stock: true },
               });
               const stockMap = new Map(products.map((p) => [p.id, p]));
-              for (const d of aggregatedDeductions) {
-                const p = stockMap.get(d.productId);
+              for (const [pid, total] of productTotals) {
+                const p = stockMap.get(pid);
                 if (!p) {
                   throw new NotFoundException(
-                    `Produk ${d.productName} tidak ditemukan`,
+                    `Produk ${total.name} tidak ditemukan`,
                   );
                 }
-                if (p.stock < d.quantity) {
+                if (p.stock < total.quantity) {
                   throw new BadRequestException(
-                    `Stok ${d.productName} tidak mencukupi (sisa: ${p.stock})`,
+                    `Stok ${total.name} tidak mencukupi (sisa: ${p.stock})`,
                   );
                 }
               }
@@ -303,9 +450,16 @@ export class TransactionsService {
             dto.payments && dto.payments.length > 0
               ? dto.payments
               : [{ method: dto.paymentMethod, amount: dto.paymentAmount }];
-          const primaryMethod = paymentsData.reduce((a, b) =>
-            a.amount >= b.amount ? a : b,
-          ).method;
+          // Split Bill detection: kalau ada minimal 1 payment row dengan
+          // personLabel, set paymentMethod transaksi ke SPLIT_BILL terlepas
+          // dari method per orang. Detail per orang tetap di payments[].
+          const isSplitBill = paymentsData.some(
+            (p) => "personLabel" in p && p.personLabel,
+          );
+          const primaryMethod: import("@prisma/client").PaymentMethod = isSplitBill
+            ? "SPLIT_BILL"
+            : paymentsData.reduce((a, b) => (a.amount >= b.amount ? a : b))
+                .method;
           const totalPaid = paymentsData.reduce((s, p) => s + p.amount, 0);
 
           const newTx = await tx.transaction.create({
@@ -351,6 +505,8 @@ export class TransactionsService {
                         }
                       : {}),
                     ...(item.notes ? { notes: item.notes } : {}),
+                    ...(item.promoType ? { promoType: item.promoType } : {}),
+                    ...(item.promoName ? { promoName: item.promoName } : {}),
                   };
                 }),
               },
@@ -359,6 +515,8 @@ export class TransactionsService {
                   method: p.method,
                   amount: p.amount,
                   reference: ("reference" in p && p.reference) || null,
+                  personLabel:
+                    ("personLabel" in p && p.personLabel) || null,
                 })),
               },
             },
@@ -401,10 +559,31 @@ export class TransactionsService {
                 data: { quantity: { decrement: qtyInt } },
                 select: { quantity: true },
               });
+              // Decrement ProductBranchSku — match base-unit row exact
+              // (unitId=null) supaya stok varian di matriks produk berkurang.
+              // Postgres `ORDER BY x ASC` default `NULLS LAST`, jadi pakai
+              // `unitId: null` filter eksplisit, bukan andalkan ordering.
+              const skuRow = await tx.productBranchSku.findFirst({
+                where: {
+                  productId: d.productId,
+                  branchId,
+                  variantId: d.variantId ?? null,
+                  unitId: null,
+                },
+                select: { id: true },
+              });
+              if (skuRow) {
+                await tx.productBranchSku.update({
+                  where: { id: skuRow.id },
+                  data: { stock: { decrement: qtyInt } },
+                });
+              }
               await tx.stockMovement.create({
                 data: {
                   productId: d.productId,
                   branchId,
+                  variantId: d.variantId,
+                  variantLabel: d.variantLabel,
                   companyId,
                   type: movementType,
                   quantity: qtyInt,
@@ -427,6 +606,8 @@ export class TransactionsService {
                 data: {
                   productId: d.productId,
                   branchId: null,
+                  variantId: d.variantId,
+                  variantLabel: d.variantLabel,
                   companyId,
                   type: movementType,
                   quantity: qtyInt,
@@ -893,6 +1074,13 @@ function toTransactionResponse(t: RawTx): TransactionResponse {
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     itemCount: t._count.items,
+    payments: t.payments.map((p) => ({
+      id: p.id,
+      method: p.method,
+      amount: p.amount,
+      reference: p.reference,
+      personLabel: p.personLabel,
+    })),
   };
 }
 
@@ -911,6 +1099,25 @@ function toTransactionDetailResponse(
       unitPrice: i.unitPrice,
       discount: i.discount,
       subtotal: i.subtotal,
+      promoType: i.promoType,
+      promoName: i.promoName,
+      // modifiers JSON di DB: array {groupId, groupName, optionId, optionName, priceAdjustment}.
+      // Cast as known shape buat display di FE riwayat.
+      modifiers: (i.modifiers as Array<{
+        groupId: string;
+        groupName: string;
+        optionId: string;
+        optionName: string;
+        priceAdjustment: number;
+      }> | null) ?? null,
+      notes: i.notes ?? null,
+    })),
+    payments: t.payments.map((p) => ({
+      id: p.id,
+      method: p.method,
+      amount: p.amount,
+      reference: p.reference,
+      personLabel: p.personLabel,
     })),
   };
 }
@@ -930,14 +1137,18 @@ function aggregateDeductions(
       }[];
     }
   >,
+  itemVariantMap?: Map<number, { variantId: string; variantLabel: string }>,
 ): Array<{
   productId: string;
   productName: string;
   quantity: number;
   source: DeductionSource;
+  variantId: string | null;
+  variantLabel: string | null;
 }> {
-  // Key: `${productId}|${source}` supaya bisa beda type di kartu stok
-  // jika produk yg sama muncul sbg direct sale & ingredient di trx yg sama.
+  // Key: `${productId}|${variantId}|${source}` supaya kartu stok bisa
+  // breakdown per varian (Putih · S, Hitam · L) — beda tipe juga dipisah
+  // (sale vs recipe deduct) supaya tampil sebagai row terpisah di riwayat.
   const map = new Map<
     string,
     {
@@ -945,6 +1156,8 @@ function aggregateDeductions(
       productName: string;
       quantity: number;
       source: DeductionSource;
+      variantId: string | null;
+      variantLabel: string | null;
     }
   >();
   const addDeduction = (
@@ -952,28 +1165,40 @@ function aggregateDeductions(
     productName: string,
     qty: number,
     source: DeductionSource,
+    variantId: string | null,
+    variantLabel: string | null,
   ) => {
-    const key = `${productId}|${source}`;
+    const key = `${productId}|${variantId ?? ""}|${source}`;
     const prev = map.get(key);
     map.set(key, {
       productId,
       productName: prev?.productName ?? productName,
       quantity: (prev?.quantity ?? 0) + qty,
       source,
+      variantId,
+      variantLabel,
     });
   };
 
-  for (const item of items) {
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx]!;
+    const variantInfo = itemVariantMap?.get(idx) ?? null;
+    const variantId = variantInfo?.variantId ?? null;
+    const variantLabel = variantInfo?.variantLabel ?? null;
+
     if (item.productId.startsWith("bundle:") && item.bundleItems) {
       // Bundle: expand komponen explicit. Recipe di komponen tidak di-expand
       // lagi (asumsi: bundle restaurant biasanya tidak punya recipe nested,
       // dan kalau pun ada, owner bisa pakai 1 dari 2 mekanisme — bukan dual).
+      // Komponen bundle tidak punya variant di payload — selalu null.
       for (const comp of item.bundleItems) {
         addDeduction(
           comp.productId,
           comp.productName,
           comp.quantity * item.quantity,
           "SALE",
+          null,
+          null,
         );
       }
       continue;
@@ -984,7 +1209,8 @@ function aggregateDeductions(
     if (recipe && recipe.ingredients.length > 0) {
       // Menu dgn recipe: decrement ingredient sesuai (qty * porsi / yieldQty).
       // Tidak men-decrement stok menu itu sendiri — menu di restoran umumnya
-      // tidak di-track stoknya secara langsung.
+      // tidak di-track stoknya secara langsung. Ingredient juga tidak punya
+      // variant (variant melekat di menu, bukan bahan).
       const yieldQty = recipe.yieldQty || 1;
       for (const ing of recipe.ingredients) {
         const deduct = (ing.quantity * totalQty) / yieldQty;
@@ -993,13 +1219,23 @@ function aggregateDeductions(
           ing.ingredientName,
           deduct,
           "RECIPE_DEDUCT",
+          null,
+          null,
         );
       }
       continue;
     }
 
-    // Default: decrement self (produk retail biasa).
-    addDeduction(item.productId, item.productName, totalQty, "SALE");
+    // Default: decrement self (produk retail biasa). Pakai variant kalau
+    // item resolve ke ProductVariant — supaya kartu stok per varian.
+    addDeduction(
+      item.productId,
+      item.productName,
+      totalQty,
+      "SALE",
+      variantId,
+      variantLabel,
+    );
   }
   return Array.from(map.values());
 }

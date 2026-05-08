@@ -854,17 +854,23 @@ export class AnalyticsService {
     const productIdsForPrice = promotions
       .map((promo) => promo.getProductId)
       .filter((id): id is string => Boolean(id));
-    const productPriceMap =
+    const giftProductInfoMap =
       productIdsForPrice.length > 0
         ? new Map(
             (
               await this.prisma.product.findMany({
                 where: { id: { in: Array.from(new Set(productIdsForPrice)) } },
-                select: { id: true, sellingPrice: true },
+                select: { id: true, name: true, code: true, sellingPrice: true },
               })
-            ).map((p) => [p.id, p.sellingPrice]),
+            ).map((p) => [p.id, p]),
           )
-        : new Map<string, number>();
+        : new Map<
+            string,
+            { id: string; name: string; code: string; sellingPrice: number }
+          >();
+    const productPriceMap = new Map<string, number>(
+      Array.from(giftProductInfoMap.values()).map((p) => [p.id, p.sellingPrice]),
+    );
 
     const findQualifiedItems = (promo: {
       productId: string | null;
@@ -929,26 +935,31 @@ export class AnalyticsService {
           const targetItem = items.find(
             (i) => i.productId === targetProductId,
           );
+          const giftInfo = giftProductInfoMap.get(targetProductId);
+          const giftName =
+            giftInfo?.name || targetItem?.productName || buyItem.productName;
           const freeUnitPrice =
             targetItem?.unitPrice ||
-            productPriceMap.get(targetProductId) ||
+            giftInfo?.sellingPrice ||
             buyItem.unitPrice;
-          const disc = capDiscount(
-            freeItems * freeUnitPrice,
-            promo.maxDiscount,
-          );
-          if (disc <= 0) continue;
-          // Map promo ke BUY product (yang ADA di cart), bukan GET product
-          // (yang mungkin belum ada di cart). Frontend butuh cart-line ID
-          // untuk render badge promo per-line.
+          if (freeItems <= 0) continue;
+          // BUY_X_GET_Y: hadiah ditambahkan ke cart sebagai line dengan
+          // unitPrice=0 (frontend rebuild). Karena gift line gratis, NO
+          // monetary discount diperlukan — discountAmount = 0. Promo info
+          // tetap dikirim supaya frontend bisa render gift line + label.
           appliedPromos.push({
             promoId: promo.id,
             promoName: promo.name,
             type: promo.type,
-            discountAmount: disc,
+            discountAmount: 0,
             appliedTo: buyItem.productId,
+            giftProductId: targetProductId,
+            giftProductName: giftName,
+            giftProductCode: giftInfo?.code ?? null,
+            giftQuantity: freeItems,
+            giftUnitPrice: freeUnitPrice,
           });
-          totalDiscount += disc;
+          // totalDiscount tidak ditambah — gift IS the benefit, bukan diskon.
         }
       }
     }
@@ -1031,18 +1042,31 @@ export class AnalyticsService {
         startDate: { lte: now },
         endDate: { gte: now },
         type: "BUNDLE",
-        getProductId: { not: null },
+        // Promo eligible kalau punya getProductId (legacy single) ATAU
+        // punya entry di getProducts (multi-reward).
+        OR: [
+          { getProductId: { not: null } },
+          { getProducts: { some: {} } },
+        ],
       },
       include: {
         category: { select: { id: true, name: true } },
         product: { select: { id: true, name: true } },
+        triggerProducts: {
+          include: { product: { select: { id: true, name: true } } },
+        },
+        getProducts: {
+          include: { product: { select: { id: true, name: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    const productIds = promos
-      .map((promo) => promo.getProductId)
-      .filter((id): id is string => Boolean(id));
+    const productIds = promos.flatMap((promo) => {
+      const ids = promo.getProducts.map((gp) => gp.productId);
+      if (promo.getProductId) ids.push(promo.getProductId);
+      return ids;
+    });
     const products = await this.prisma.product.findMany({
       where: { id: { in: Array.from(new Set(productIds)) } },
       select: {
@@ -1056,13 +1080,41 @@ export class AnalyticsService {
       },
     });
     const productMap = new Map(products.map((product) => [product.id, product]));
-    const selectedQtyMap = new Map(
-      (selections ?? []).map((item) => [item.promoId, item.quantity]),
-    );
+    // Quota selektif PER promoId (bukan per option). Pilih salah satu produk
+    // tebus konsumsi 1 quota promo; option lain auto-berkurang remainingQty-nya.
+    const selectedQtyMap = new Map<string, number>();
+    for (const sel of selections ?? []) {
+      selectedQtyMap.set(
+        sel.promoId,
+        (selectedQtyMap.get(sel.promoId) ?? 0) + sel.quantity,
+      );
+    }
 
     return promos
-      .map((promo) => {
-        const triggerQty = promo.productId
+      .flatMap((promo) => {
+        // Daftar produk reward: gabungan multi-reward + legacy single.
+        const rewardIds = new Set<string>();
+        for (const gp of promo.getProducts) rewardIds.add(gp.productId);
+        if (promo.getProductId) rewardIds.add(promo.getProductId);
+        return Array.from(rewardIds).map((rewardProductId) =>
+          buildOption(promo, rewardProductId),
+        );
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    function buildOption(
+      promo: (typeof promos)[number],
+      rewardProductId: string,
+    ): TebusMurahOptionResponse | null {
+      // Multi-trigger (any-of): customer beli salah satu produk dari list
+      // sudah memenuhi syarat.
+      const multiTriggerIds = promo.triggerProducts.map((tp) => tp.productId);
+      const hasMultiTrigger = multiTriggerIds.length > 0;
+      const triggerQty = hasMultiTrigger
+        ? items
+            .filter((item) => multiTriggerIds.includes(item.productId))
+            .reduce((sum, item) => sum + item.quantity, 0)
+        : promo.productId
           ? items
               .filter((item) => item.productId === promo.productId)
               .reduce((sum, item) => sum + item.quantity, 0)
@@ -1071,57 +1123,60 @@ export class AnalyticsService {
                 .filter((item) => item.categoryId === promo.categoryId)
                 .reduce((sum, item) => sum + item.quantity, 0)
             : items.reduce((sum, item) => sum + item.quantity, 0);
-        const buyQty = promo.buyQty || 1;
-        const triggerMultiplier =
-          promo.productId || promo.categoryId
-            ? Math.floor(triggerQty / buyQty)
-            : 1;
-        const minPurchaseMultiplier = promo.minPurchase
-          ? Math.floor(subtotal / promo.minPurchase)
-          : Number.POSITIVE_INFINITY;
-        const eligibleMultiplier = Math.min(
-          triggerMultiplier || 0,
-          minPurchaseMultiplier,
-        );
-        const tebusPerMultiplier = promo.getQty || 1;
-        const rawMaxQty =
-          eligibleMultiplier > 0 ? tebusPerMultiplier * eligibleMultiplier : 0;
-        const maxQty = promo.maxDiscount
-          ? Math.min(rawMaxQty, Math.floor(promo.maxDiscount))
-          : rawMaxQty;
-        const usedQty = selectedQtyMap.get(promo.id) || 0;
-        const remainingQty = Math.max(0, maxQty - usedQty);
-        const product = promo.getProductId
-          ? productMap.get(promo.getProductId)
-          : null;
-        if (!product || remainingQty <= 0) return null;
-        return {
-          promoId: promo.id,
-          promoName: promo.name,
-          tebusPrice: promo.value,
-          buyQty,
-          tebusQty: tebusPerMultiplier,
-          maxQty,
-          usedQty,
-          remainingQty,
-          triggerLabel: promo.product
+      const buyQty = promo.buyQty || 1;
+      const triggerMultiplier =
+        hasMultiTrigger || promo.productId || promo.categoryId
+          ? Math.floor(triggerQty / buyQty)
+          : 1;
+      const minPurchaseMultiplier = promo.minPurchase
+        ? Math.floor(subtotal / promo.minPurchase)
+        : Number.POSITIVE_INFINITY;
+      const eligibleMultiplier = Math.min(
+        triggerMultiplier || 0,
+        minPurchaseMultiplier,
+      );
+      const tebusPerMultiplier = promo.getQty || 1;
+      const rawMaxQty =
+        eligibleMultiplier > 0 ? tebusPerMultiplier * eligibleMultiplier : 0;
+      const maxQty = promo.maxDiscount
+        ? Math.min(rawMaxQty, Math.floor(promo.maxDiscount))
+        : rawMaxQty;
+      // Quota di-share di level promo. Pilih option A consume quota; option
+      // lain dari promo yang sama otomatis remainingQty berkurang.
+      const usedQty = selectedQtyMap.get(promo.id) || 0;
+      const remainingQty = Math.max(0, maxQty - usedQty);
+      const product = productMap.get(rewardProductId);
+      if (!product || remainingQty <= 0) return null;
+      return {
+        promoId: promo.id,
+        promoName: promo.name,
+        tebusPrice: promo.value,
+        buyQty,
+        tebusQty: tebusPerMultiplier,
+        maxQty,
+        usedQty,
+        remainingQty,
+        triggerLabel: hasMultiTrigger
+          ? `Beli ${buyQty} dari: ${promo.triggerProducts
+              .map((tp) => tp.product.name)
+              .join(", ")}`
+          : promo.product
             ? `Beli ${buyQty} ${promo.product.name}`
             : promo.category
               ? `Beli ${buyQty} produk kategori ${promo.category.name}`
               : promo.minPurchase
                 ? `Belanja minimal ${promo.minPurchase}`
                 : "Belanja produk promo",
-          product: {
-            id: product.id,
-            name: product.name,
-            code: product.code,
-            sellingPrice: product.sellingPrice,
-            stock: product.stock,
-            minStock: product.minStock,
-            imageUrl: product.imageUrl,
-          },
-        } satisfies TebusMurahOptionResponse;
-      })
-      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+        product: {
+          id: product.id,
+          name: product.name,
+          code: product.code,
+          sellingPrice: product.sellingPrice,
+          stock: product.stock,
+          minStock: product.minStock,
+          imageUrl: product.imageUrl,
+        },
+      };
+    }
   }
 }

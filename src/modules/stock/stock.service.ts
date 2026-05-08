@@ -25,6 +25,8 @@ const MOVEMENT_SELECT = {
   product: { select: { id: true, name: true, code: true } },
   branchId: true,
   branch: { select: { id: true, name: true } },
+  variantId: true,
+  variantLabel: true,
   type: true,
   quantity: true,
   note: true,
@@ -64,7 +66,7 @@ export class StockService {
     companyId: string,
     query: ListStockMovementsQueryDto,
   ): Promise<StockMovementListResponse> {
-    const { productId, branchId, type, reference, from, to, page, perPage } =
+    const { productId, branchId, type, refType, reference, from, to, page, perPage } =
       query;
 
     const where: Prisma.StockMovementWhereInput = {
@@ -73,6 +75,7 @@ export class StockService {
     if (productId) where.productId = productId;
     if (branchId) where.branchId = branchId;
     if (type) where.type = type;
+    if (refType) where.refType = refType;
     if (reference) {
       where.reference = { contains: reference, mode: "insensitive" };
     }
@@ -168,6 +171,22 @@ export class StockService {
       if (!branch) throw new NotFoundException("Branch not found");
     }
 
+    // Resolve variantLabel utk denormalize ke stockMovement (display di UI).
+    let variantLabel: string | null = null;
+    if (dto.variantId) {
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: dto.variantId, productId: dto.productId },
+        include: {
+          options: { select: { option: { select: { name: true } } } },
+        },
+      });
+      if (!variant) {
+        throw new NotFoundException("Variant tidak ditemukan");
+      }
+      variantLabel =
+        variant.options.map((o) => o.option.name).join(" · ") || null;
+    }
+
     const delta = dto.type === "OUT" ? -dto.quantity : dto.quantity;
 
     const movement = await this.prisma.$transaction(async (tx) => {
@@ -194,6 +213,47 @@ export class StockService {
           select: { quantity: true },
         });
         balanceAfter = upserted.quantity;
+
+        // Sync ProductBranchSku per (productId, branchId, variantId, unitId).
+        // Tanpa ini, stok variant di matrix produk tidak ikut berubah.
+        const skuVariantId = dto.variantId ?? null;
+        const skuUnitId = dto.unitId ?? null;
+        const skuRow = await tx.productBranchSku.findFirst({
+          where: {
+            productId: dto.productId,
+            branchId,
+            variantId: skuVariantId,
+            unitId: skuUnitId,
+          },
+          select: { id: true, stock: true },
+        });
+        if (skuRow) {
+          if (dto.type === "OUT" && skuRow.stock < dto.quantity) {
+            throw new BadRequestException(
+              `Stok SKU tidak mencukupi (sisa: ${skuRow.stock})`,
+            );
+          }
+          await tx.productBranchSku.update({
+            where: { id: skuRow.id },
+            data: { stock: { increment: delta } },
+          });
+        } else if (dto.type !== "OUT") {
+          // Buat row baru kalau IN/ADJUSTMENT dgn delta positif & belum ada
+          // row utk SKU itu — hindari "ghost" stok di branchStock.
+          await tx.productBranchSku.create({
+            data: {
+              productId: dto.productId,
+              branchId,
+              unitId: skuUnitId,
+              variantId: skuVariantId,
+              sellingPrice: 0,
+              purchasePrice: 0,
+              stock: Math.max(delta, 0),
+              minStock: 5,
+              isActive: true,
+            },
+          });
+        }
       } else {
         if (dto.type === "OUT" && product.stock < dto.quantity) {
           throw new BadRequestException(
@@ -224,6 +284,8 @@ export class StockService {
         data: {
           productId: dto.productId,
           branchId,
+          variantId: dto.variantId ?? null,
+          variantLabel,
           companyId,
           type: granularType,
           quantity: dto.quantity,
@@ -279,7 +341,16 @@ export class StockService {
     companyId: string,
     query: StockCardQueryDto,
   ): Promise<StockCardResponse> {
-    const { productId, branchId, dateFrom, dateTo, type, page, perPage } = query;
+    const {
+      productId,
+      branchId,
+      variantId,
+      dateFrom,
+      dateTo,
+      type,
+      page,
+      perPage,
+    } = query;
 
     const product = await this.prisma.product.findFirst({
       where: { id: productId, companyId, deletedAt: null },
@@ -297,11 +368,27 @@ export class StockService {
       branchInfo = b;
     }
 
+    // Daftar varian produk untuk filter dropdown di UI.
+    const productVariants = await this.prisma.productVariant.findMany({
+      where: { productId },
+      select: {
+        id: true,
+        options: {
+          select: { option: { select: { name: true } } },
+        },
+      },
+    });
+    const variantOptions = productVariants.map((v) => ({
+      id: v.id,
+      label: v.options.map((o) => o.option.name).join(" · "),
+    }));
+
     const where: Prisma.StockMovementWhereInput = {
       productId,
       product: { companyId },
     };
     if (branchId) where.branchId = branchId;
+    if (variantId) where.variantId = variantId;
     if (type) where.type = type;
     if (dateFrom || dateTo) {
       where.createdAt = {};
@@ -311,6 +398,8 @@ export class StockService {
 
     // Opening balance: saldo akhir di branch_stock saat ini DIKURANGI net
     // movement DALAM/SETELAH periode. Lebih akurat dari recompute dari awal.
+    // Catatan: branch_stock belum di-track per varian — saat user filter
+    // varian, opening hanya akurat kalau periode mencakup semua mutasi.
     const currentStockResult = branchId
       ? await this.prisma.branchStock.findUnique({
           where: { branchId_productId: { branchId, productId } },
@@ -326,12 +415,12 @@ export class StockService {
           .quantity ?? 0;
 
     // Sum net IN/OUT dari awal periode sampai sekarang (untuk hitung opening).
-    // Pakai SQL aggregation supaya cepat di dataset besar.
     const sinceWhere: Prisma.StockMovementWhereInput = {
       productId,
       product: { companyId },
     };
     if (branchId) sinceWhere.branchId = branchId;
+    if (variantId) sinceWhere.variantId = variantId;
     if (dateFrom) {
       sinceWhere.createdAt = { gte: new Date(dateFrom) };
     }
@@ -371,6 +460,8 @@ export class StockService {
           note: true,
           createdBy: true,
           createdAt: true,
+          variantId: true,
+          variantLabel: true,
           branch: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "asc" },
@@ -392,8 +483,12 @@ export class StockService {
       else if (dir === "OUT") totalOut += m.quantity;
     }
 
+    const variantLabelMap = new Map(variantOptions.map((v) => [v.id, v.label]));
     const entries: StockCardEntry[] = rows.map((m) => {
       const dir = resolveDirection(m.type, m.direction);
+      const label =
+        m.variantLabel ??
+        (m.variantId ? variantLabelMap.get(m.variantId) ?? null : null);
       return {
         id: m.id,
         date: m.createdAt.toISOString(),
@@ -410,6 +505,8 @@ export class StockService {
         note: m.note,
         createdBy: m.createdBy,
         branch: m.branch,
+        variantId: m.variantId ?? null,
+        variantLabel: label,
       };
     });
 
@@ -421,6 +518,7 @@ export class StockService {
         unit: product.unit,
       },
       branch: branchInfo,
+      variants: variantOptions,
       summary: {
         openingBalance,
         totalIn,
@@ -480,6 +578,8 @@ function toMovementResponse(m: RawMovement): StockMovementResponse {
       : null,
     branchId: m.branchId,
     branch: m.branch ? { id: m.branch.id, name: m.branch.name } : null,
+    variantId: m.variantId ?? null,
+    variantLabel: m.variantLabel ?? null,
     type: m.type,
     quantity: m.quantity,
     note: m.note,

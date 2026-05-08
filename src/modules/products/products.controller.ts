@@ -60,6 +60,31 @@ export class ProductsController {
     return { data };
   }
 
+  // Generate barcode unik EAN-13 untuk pre-fill input saat user click tombol
+   // generate. Tidak menyimpan apapun — hanya return string. Dipakai di form
+   // produk & form satuan. Action: "generate_barcode" (di-grant ke role yang
+   // punya "update" via migration phase22).
+  @Get("generate-barcode")
+  @RequireAccess("products", "generate_barcode")
+  async generateBarcode(
+    @CurrentCompany() companyId: string,
+    @Query("prefix") prefix?: string,
+  ) {
+    const barcode = await this.products.generateUniqueBarcode(
+      companyId,
+      prefix,
+    );
+    return { data: { barcode } };
+  }
+
+  // Generate kode produk unik (preview hasil DB trigger sebelum INSERT).
+  @Get("generate-code")
+  @RequireAccess("products", "generate_code")
+  async generateCode(@CurrentCompany() companyId: string) {
+    const code = await this.products.generateUniqueProductCode(companyId);
+    return { data: { code } };
+  }
+
   @Get("top-selling")
   @RequireAccess("products", "view")
   async topSelling(
@@ -90,6 +115,20 @@ export class ProductsController {
     @Param("id") id: string,
   ) {
     const data = await this.products.findById(companyId, id);
+    return { data };
+  }
+
+  // Single-API GET untuk product form: return product + units + variants +
+  // branchSkus + tierPrices + modifierGroupIds dalam satu response. Frontend
+  // pakai ini untuk hindari race condition di multi-fetch flow.
+  @Get(":id/detail")
+  @RequireAccess("products", "view")
+  async findDetail(
+    @CurrentCompany() companyId: string,
+    @Param("id") id: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.products.findDetail(companyId, id, branchId);
     return { data };
   }
 

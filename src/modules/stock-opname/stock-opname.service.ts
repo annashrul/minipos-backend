@@ -14,6 +14,10 @@ import type {
   StockOpnameResponse,
   StockOpnameStatusDto,
 } from "@/contracts";
+import {
+  dayRange,
+  nextDocumentNumber,
+} from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 
 const OPNAME_ITEM_SELECT = {
@@ -107,7 +111,7 @@ export class StockOpnameService {
   ): Promise<StockOpnameDetailResponse> {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
-    const opnameNumber = generateOpnameNumber();
+    const opnameNumber = await this.nextOpnameNumber(companyId);
 
     try {
       const created = await this.prisma.stockOpname.create({
@@ -404,28 +408,25 @@ export class StockOpnameService {
     });
     if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
-}
 
-function pad(n: number): string {
-  return n.toString().padStart(2, "0");
-}
-
-function todayCompact(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-}
-
-function randomHex(length: number): string {
-  const chars = "0123456789ABCDEF";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
+  // OP-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
+  private async nextOpnameNumber(companyId: string): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "OP",
+      countToday: () =>
+        this.prisma.stockOpname.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.stockOpname.findFirst({
+          where: { companyId, opnameNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
   }
-  return out;
-}
-
-function generateOpnameNumber(): string {
-  return `OPN-${todayCompact()}-${randomHex(6)}`;
 }
 
 function isOpnameNumberConflict(err: unknown): boolean {

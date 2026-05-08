@@ -14,7 +14,6 @@ import { AiAssistantModule } from "./modules/ai-assistant/ai-assistant.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { AccountingPeriodsModule } from "./modules/accounting-periods/accounting-periods.module";
 import { AccountingReportsModule } from "./modules/accounting-reports/accounting-reports.module";
-import { ApprovalsModule } from "./modules/approvals/approvals.module";
 import { AuditLogsModule } from "./modules/audit-logs/audit-logs.module";
 import { BankReconciliationModule } from "./modules/bank-reconciliation/bank-reconciliation.module";
 import { BranchesModule } from "./modules/branches/branches.module";
@@ -43,7 +42,6 @@ import { PlatformSubscriptionsModule } from "./modules/platform-subscriptions/pl
 import { PointsModule } from "./modules/points/points.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { PosActivityModule } from "./modules/pos-activity/pos-activity.module";
-import { PriceSchedulesModule } from "./modules/price-schedules/price-schedules.module";
 import { ProductExtensionsModule } from "./modules/product-extensions/product-extensions.module";
 import { ProductsModule } from "./modules/products/products.module";
 import { ProfitDashboardModule } from "./modules/profit-dashboard/profit-dashboard.module";
@@ -57,9 +55,7 @@ import { ReturnsModule } from "./modules/returns/returns.module";
 import { RolesModule } from "./modules/roles/roles.module";
 import { SalesTargetsModule } from "./modules/sales-targets/sales-targets.module";
 import { SettingsModule } from "./modules/settings/settings.module";
-import { StoreCreditsModule } from "./modules/store-credits/store-credits.module";
 import { SubscriptionsModule } from "./modules/subscriptions/subscriptions.module";
-import { TaxConfigsModule } from "./modules/tax-configs/tax-configs.module";
 import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { ShiftsModule } from "./modules/shifts/shifts.module";
 import { StockModule } from "./modules/stock/stock.module";
@@ -96,7 +92,6 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     AnalyticsModule,
     AccountingPeriodsModule,
     AccountingReportsModule,
-    ApprovalsModule,
     AuditLogsModule,
     BankReconciliationModule,
     BranchesModule,
@@ -124,7 +119,6 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     PointsModule,
     PaymentsModule,
     PosActivityModule,
-    PriceSchedulesModule,
     ProductExtensionsModule,
     ProductsModule,
     ProfitDashboardModule,
@@ -142,12 +136,10 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     StockModule,
     StockOpnameModule,
     StockTransfersModule,
-    StoreCreditsModule,
     SubscriptionsModule,
     SuppliersModule,
     TablesModule,
     TableOrdersModule,
-    TaxConfigsModule,
     ModifiersModule,
     TransactionsModule,
     UploadsModule,

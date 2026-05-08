@@ -465,24 +465,6 @@ export class ReturnsService {
         });
       }
 
-      // Issue store credit kalau metode refund-nya store credit & nominal > 0.
-      if (
-        existing.refundMethod === "STORE_CREDIT" &&
-        existing.customerId &&
-        existing.totalRefund > 0
-      ) {
-        await tx.storeCredit.create({
-          data: {
-            customerId: existing.customerId,
-            code: generateStoreCreditCode(existing.returnNumber),
-            balance: existing.totalRefund,
-            initialAmount: existing.totalRefund,
-            isActive: true,
-            issuedBy: userId,
-          },
-        });
-      }
-
       const completed = await tx.returnExchange.update({
         where: { id },
         data: {
@@ -656,24 +638,6 @@ export class ReturnsService {
         await tx.returnExchangeItem.update({
           where: { id: item.id },
           data: { restocked: true },
-        });
-      }
-
-      // Issue store credit if applicable
-      if (
-        existing.refundMethod === "STORE_CREDIT" &&
-        existing.customerId &&
-        existing.totalRefund > 0
-      ) {
-        await tx.storeCredit.create({
-          data: {
-            customerId: existing.customerId,
-            code: generateStoreCreditCode(existing.returnNumber),
-            balance: existing.totalRefund,
-            initialAmount: existing.totalRefund,
-            isActive: true,
-            issuedBy: userId,
-          },
         });
       }
 
@@ -1045,11 +1009,6 @@ function generateReturnNumber(): string {
   )}`;
   const hex = randomBytes(3).toString("hex").toUpperCase();
   return `RET-${datePart}-${hex}`;
-}
-
-function generateStoreCreditCode(returnNumber: string): string {
-  const suffix = randomBytes(3).toString("hex").toUpperCase();
-  return `SC-${returnNumber.replace(/^RET-/, "")}-${suffix}`;
 }
 
 function isReturnNumberConflict(err: unknown): boolean {

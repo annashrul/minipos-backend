@@ -84,6 +84,10 @@ enum PaymentMethod {
   DEBIT
   CREDIT_CARD
   TERMIN
+  // Bukan metode konkret — penanda bahwa transaksi pakai Split Bill (banyak
+  // pembayar). Detail per orang ada di tabel Payment (lewat personLabel).
+  // Backend auto-set value ini saat ada payment row dengan personLabel.
+  SPLIT_BILL
 }
 
 enum MemberLevel {
@@ -160,7 +164,6 @@ model Company {
   promotions           Promotion[]
   accountCategories    AccountCategory[]
   subscriptionPayments SubscriptionPayment[]
-  taxConfigs           TaxConfig[]
   recurringTemplates   RecurringJournalTemplate[]
   bankReconciliations  BankReconciliation[]
   modifierGroups       ModifierGroup[]
@@ -196,9 +199,6 @@ model User {
   cashierShifts       CashierShift[]
   debtsCreated        Debt[]
   debtPayments        DebtPayment[]
-  approvalRequests    ApprovalRequest[]          @relation("ApprovalRequester")
-  approvalDecisions   ApprovalRequest[]          @relation("ApprovalApprover")
-  storeCreditsIssued  StoreCredit[]
   returnsProcessed    ReturnExchange[]           @relation("ReturnProcessedBy")
   giftCardsCreated    GiftCard[]                 @relation("GiftCardCreatedBy")
   salesTargets        SalesTarget[]
@@ -229,6 +229,10 @@ model AppMenu {
   name      String
   path      String               @unique
   group     String
+  // Sub-grouping di dalam `group` untuk visual hierarchy di sidebar
+  // (mis. Inventori → Purchase → [Purchase Order, Receiving]). Null = item
+  // langsung di-render di bawah header group tanpa sub-heading.
+  subgroup  String?
   sortOrder Int                  @default(0)
   isActive  Boolean              @default(true)
   // Daftar business unit yang bisa lihat menu ini (mis. ["BENGKEL"] berarti
@@ -322,11 +326,9 @@ model Branch {
   auditLogs          AuditLog[]
   settings           Setting[]
   debts              Debt[]
-  approvalRequests   ApprovalRequest[]
   returnExchanges    ReturnExchange[]
   giftCards          GiftCard[]
   salesTargets       SalesTarget[]
-  priceSchedules     PriceSchedule[]
   employeeSchedules  EmployeeSchedule[]
   orderQueues        OrderQueue[]
   accounts           Account[]
@@ -341,6 +343,7 @@ model Branch {
   tableOrders        TableOrder[]
   serviceOrders      ServiceOrder[]
   bookings           Booking[]
+  productBranchSkus  ProductBranchSku[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -465,20 +468,21 @@ model Product {
   deletedAt          DateTime?
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
-  barcodes           ProductBarcode[]
-  priceHistories     ProductPriceHistory[]
   transactionItems   TransactionItem[]
   stockMovements     StockMovement[]
   promotions         Promotion[]
+  promoTriggers      PromotionTriggerProduct[] @relation("ProductPromoTriggers")
+  promoRewards       PromotionGetProduct[]     @relation("ProductPromoRewards")
   purchaseOrderItems PurchaseOrderItem[]
   stockOpnameItems   StockOpnameItem[]
   branchPrices       BranchProductPrice[]
   branchStocks       BranchStock[]
   units              ProductUnit[]
+  variants           ProductVariant[]
+  branchSkus         ProductBranchSku[]
   tierPrices         ProductTierPrice[]
   returnItems        ReturnExchangeItem[]
   exchangeItems      ReturnExchangeItem[]   @relation("ExchangeProduct")
-  priceSchedules     PriceSchedule[]
   cashierFavorites   CashierFavorite[]
   bundleItems        ProductBundleItem[]
   modifierGroups     ProductModifierGroup[]
@@ -498,36 +502,6 @@ model Product {
   @@map("products")
 }
 
-model ProductBarcode {
-  id        String   @id @default(uuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  barcode   String   @unique
-  label     String?
-  createdAt DateTime @default(now())
-
-  @@index([barcode])
-  @@index([productId])
-  @@map("product_barcodes")
-}
-
-model ProductPriceHistory {
-  id           String   @id @default(uuid())
-  productId    String
-  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  oldBuyPrice  Float
-  newBuyPrice  Float
-  oldSellPrice Float
-  newSellPrice Float
-  changedBy    String?
-  reason       String?
-  createdAt    DateTime @default(now())
-
-  @@index([productId])
-  @@index([createdAt])
-  @@map("product_price_histories")
-}
-
 model ProductUnit {
   id            String   @id @default(uuid())
   productId     String
@@ -542,10 +516,90 @@ model ProductUnit {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  branchSkus     ProductBranchSku[]
+  purchaseItems  PurchaseOrderItem[]
+
   @@unique([productId, name])
   @@index([productId])
   @@index([barcode])
   @@map("product_units")
+}
+
+// ProductVariant — kombinasi modifier options dengan harga & stok sendiri.
+// Use case: baju Hitam-XL stok 3 harga 80rb, Putih-M stok 5 harga 75rb.
+// Lookup: cari variant dimana set ProductVariantOption.optionId sama persis
+// dengan kombinasi modifier yang dipilih customer di POS.
+// Kalau no variant match → fallback ke product.sellingPrice + product.stock.
+model ProductVariant {
+  id                    String                  @id @default(uuid())
+  productId             String
+  product               Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // Override harga jual. Null = pakai product.sellingPrice.
+  priceOverride         Float?
+  // Override harga beli (untuk HPP/COGS akurat per variant). Null = product.purchasePrice.
+  purchasePriceOverride Float?
+  stock                 Int                     @default(0)
+  barcode               String?                 @unique
+  isActive              Boolean                 @default(true)
+  options               ProductVariantOption[]
+  branchSkus            ProductBranchSku[]
+  stockMovements        StockMovement[]
+  purchaseItems         PurchaseOrderItem[]
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+// Single source of truth untuk inventory & harga di level "leaf cell":
+// (Cabang × Satuan × Varian). Tiap row = 1 SKU dengan harga + stok sendiri.
+// Kombinasi:
+//   - Produk simple: 1 row per cabang (unitId=null, variantId=null)
+//   - Produk multi-unit (rokok): N row per cabang × satuan (variantId=null)
+//   - Produk dengan varian (baju): N row per cabang × varian (unitId=null)
+//   - Full matrix (baju multi-pack): per cabang × satuan × varian
+// App-level enforce uniqueness (productId, branchId, unitId-or-null, variantId-or-null).
+model ProductBranchSku {
+  id            String          @id @default(uuid())
+  productId     String
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  // null = pakai satuan dasar (product.unit). Set kalau produk multi-unit.
+  unitId        String?
+  unit          ProductUnit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  // null = produk tanpa varian. Set kalau produk pakai modifier dependency.
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  sellingPrice  Float
+  purchasePrice Float
+  stock         Int             @default(0)
+  minStock      Int             @default(5)
+  barcode       String?         @unique
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([productId])
+  @@index([branchId])
+  @@index([productId, branchId])
+  @@index([barcode])
+  @@map("product_branch_skus")
+}
+
+// Junction: variant terdiri dari N modifier options. Kombinasi lengkap
+// = set optionIds yang membentuk SKU unik. Tidak bisa duplicate option per
+// variant (1 variant = 1 option per group).
+model ProductVariantOption {
+  variantId String
+  variant   ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  optionId  String
+  option    ModifierOption  @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@id([variantId, optionId])
+  @@index([optionId])
+  @@map("product_variant_options")
 }
 
 model ProductTierPrice {
@@ -624,7 +678,6 @@ model Customer {
   updatedAt      DateTime               @updatedAt
   transactions   Transaction[]
   pointHistories CustomerPointHistory[]
-  storeCredits   StoreCredit[]
   returns        ReturnExchange[]
   giftCards      GiftCard[]
   vehicles       Vehicle[]
@@ -734,6 +787,16 @@ model TransactionItem {
   discount      Float       @default(0)
   subtotal      Float
   promoId       String?
+  // Tag asal promo per item — disetel saat checkout supaya detail riwayat
+  // bisa render badge:
+  //   "GIFT"             — hadiah otomatis dari BUY_X_GET_Y
+  //   "TEBUS"            — produk tebus murah (BUNDLE)
+  //   "DISCOUNT_PERCENT" — kena diskon persen (manual atau promo)
+  //   "DISCOUNT_AMOUNT"  — kena diskon nominal Rp (manual atau promo)
+  //   "VOUCHER"          — kena potongan voucher
+  // NULL = tidak ada promo. Optional & murni untuk tampilan.
+  promoType     String?
+  promoName     String?
   // Selected modifier options snapshot:
   // [{ groupId, groupName, optionId, optionName, priceAdjustment }]
   modifiers     Json?
@@ -782,9 +845,33 @@ model ModifierOption {
   sortOrder       Int           @default(0)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  // Dependency m2m self-reference. Sebuah option bisa "diaktifkan" oleh
+  // satu/banyak parent option dari group LAIN. Contoh: option "XL" di group
+  // "Ukuran" di-enable oleh ["Hitam"] di group "Warna" — saat user pick
+  // Hitam, opsi XL muncul; saat pilih Putih, XL ke-hide.
+  // - `enables`: edges di mana option ini = parent (membuat option lain visible)
+  // - `enabledBy`: edges di mana option ini = dependent (visible kalau parent dipilih)
+  enables   ModifierOptionDependency[] @relation("EnablesOption")
+  enabledBy ModifierOptionDependency[] @relation("EnabledByOption")
+  variants  ProductVariantOption[]
 
   @@index([groupId])
   @@map("modifier_options")
+}
+
+// Conditional modifier: parent option selection mem-filter dependent options.
+// Tanpa entry → option tidak punya constraint (selalu visible).
+// Dengan entry → option visible HANYA kalau salah satu parentnya ke-pilih.
+model ModifierOptionDependency {
+  parentOptionId    String
+  parentOption      ModifierOption @relation("EnablesOption", fields: [parentOptionId], references: [id], onDelete: Cascade)
+  dependentOptionId String
+  dependentOption   ModifierOption @relation("EnabledByOption", fields: [dependentOptionId], references: [id], onDelete: Cascade)
+
+  @@id([parentOptionId, dependentOptionId])
+  @@index([parentOptionId])
+  @@index([dependentOptionId])
+  @@map("modifier_option_dependencies")
 }
 
 model ProductModifierGroup {
@@ -807,7 +894,13 @@ model Payment {
   transaction   Transaction   @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   method        PaymentMethod
   amount        Float
+  // Detail referensi (bank name, no rekening, ref code, dll) untuk metode
+  // non-tunai. Free-form karena formatnya beragam.
   reference     String?
+  // Identitas pembayar untuk Split Bill ("Orang 1", "Andi", dll). NULL untuk
+  // pembayaran multi-method oleh 1 orang. Detail modal pakai field ini untuk
+  // menampilkan header "Split Bill - N orang" dan group by person.
+  personLabel   String?
   createdAt     DateTime      @default(now())
 
   @@index([transactionId])
@@ -840,6 +933,15 @@ model StockMovement {
   product      Product           @relation(fields: [productId], references: [id])
   branchId     String?
   branch       Branch?           @relation(fields: [branchId], references: [id])
+  // Variant terkait pergerakan stok ini. Null = produk tanpa variant atau
+  // movement non-sale (PO, opname, transfer di level produk). Di-set di
+  // SALE / RECIPE_DEDUCT bila item POS punya pilihan modifier yang resolve
+  // ke ProductVariant.
+  variantId    String?
+  variant      ProductVariant?   @relation(fields: [variantId], references: [id])
+  // Denormalized label varian untuk display ("Putih · S"). Disimpan supaya
+  // kartu stok bisa render tanpa join ke modifier_options tiap row.
+  variantLabel String?
   companyId    String?
   type         StockMovementType
   // Magnitude positif. Direction encoded di `direction` agar query running
@@ -868,19 +970,22 @@ model StockMovement {
 
   @@index([productId])
   @@index([branchId])
+  @@index([variantId])
   @@index([type])
   @@index([createdAt])
   @@index([reference])
   @@index([branchId, createdAt])
   @@index([productId, createdAt])
   @@index([branchId, productId, createdAt])
+  @@index([productId, variantId, createdAt])
   @@index([refType, refId])
   @@map("stock_movements")
 }
 
 model StockOpname {
   id           String            @id @default(uuid())
-  opnameNumber String            @unique
+  // Unique scoped per company — sequence reset per company per hari.
+  opnameNumber String
   branchId     String?
   branch       Branch?           @relation(fields: [branchId], references: [id])
   companyId    String?
@@ -893,6 +998,7 @@ model StockOpname {
   updatedAt    DateTime          @updatedAt
   items        StockOpnameItem[]
 
+  @@unique([companyId, opnameNumber])
   @@index([status])
   @@index([branchId])
   @@map("stock_opnames")
@@ -917,7 +1023,8 @@ model StockOpnameItem {
 
 model StockTransfer {
   id             String              @id @default(uuid())
-  transferNumber String              @unique
+  // Unique scoped per company — sequence reset per company per hari.
+  transferNumber String
   fromBranchId   String
   fromBranch     Branch              @relation("TransferFrom", fields: [fromBranchId], references: [id])
   toBranchId     String
@@ -934,6 +1041,7 @@ model StockTransfer {
   updatedAt      DateTime            @updatedAt
   items          StockTransferItem[]
 
+  @@unique([companyId, transferNumber])
   @@index([fromBranchId])
   @@index([toBranchId])
   @@index([status])
@@ -960,7 +1068,14 @@ model StockTransferItem {
 
 model PurchaseOrder {
   id             String              @id @default(uuid())
-  orderNumber    String              @unique
+  // Unique scoped per company — sequence reset per company per hari.
+  orderNumber    String
+  // No transaksi pembelian (BL-YYYYMMDD-NNNN) — generated saat PO dibuat,
+  // sequence per hari per company. Format: BL-20260509-0001.
+  // Dipakai sebagai identifier utama di Laporan Pembelian.
+  // Unique scoped per company (multi-tenant), bukan global — karena
+  // sequence reset per company per hari.
+  purchaseTransactionNumber String
   supplierId     String
   supplier       Supplier            @relation(fields: [supplierId], references: [id])
   branchId       String?
@@ -981,7 +1096,10 @@ model PurchaseOrder {
   updatedAt      DateTime            @updatedAt
   items          PurchaseOrderItem[]
   goodsReceipts  GoodsReceipt[]
+  transactionLogs PurchaseTransactionLog[]
 
+  @@unique([companyId, purchaseTransactionNumber])
+  @@unique([companyId, orderNumber])
   @@index([supplierId])
   @@index([branchId])
   @@index([status])
@@ -989,29 +1107,72 @@ model PurchaseOrder {
   @@map("purchase_orders")
 }
 
+// Laporan Pembelian — catat tiap perubahan status PO sebagai 1 row.
+// `documentNumber` adaptif: PO number untuk stage PO, GR number untuk
+// stage receiving, PT number untuk completion.
+model PurchaseTransactionLog {
+  id              String        @id @default(uuid())
+  companyId       String
+  branchId        String?
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  // No. transaksi yang berlaku saat row ini dibuat. PO number, goods
+  // receipt number, atau purchase transaction number.
+  documentNumber  String
+  // "PO" | "GR" | "PT" — supaya UI bisa render badge tipe dokumen.
+  documentType    String
+  // Status PO setelah event: DRAFT | ORDERED | PARTIAL | RECEIVED |
+  // CLOSED | CANCELLED | COMPLETED.
+  status          String
+  // Total nilai relevan di event ini (PO total, receipt value, dst).
+  amount          Float?
+  note            String?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([purchaseOrderId, createdAt])
+  @@index([status])
+  @@index([documentType])
+  @@map("purchase_transaction_logs")
+}
+
 model PurchaseOrderItem {
-  id                String        @id @default(uuid())
+  id                String          @id @default(uuid())
   purchaseOrderId   String
-  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   productId         String
-  product           Product       @relation(fields: [productId], references: [id])
+  product           Product         @relation(fields: [productId], references: [id])
+  // Satuan + varian SKU yang di-PO (untuk produk multi-unit / multi-variant).
+  // Null untuk produk simple. Goods receipt nanti decrement stok di SKU ini.
+  unitId            String?
+  unit              ProductUnit?    @relation(fields: [unitId], references: [id])
+  variantId         String?
+  variant           ProductVariant? @relation(fields: [variantId], references: [id])
   quantity          Int
-  receivedQty       Int           @default(0)
+  receivedQty       Int             @default(0)
   unitPrice         Float
+  // Snapshot harga master sebelum receive pertama. Capture sekali saat receive
+  // pertama dipanggil utk item ini. Dipakai di laporan pembelian utk
+  // tampilkan perubahan harga beli tanpa JOIN ke goods receipts.
+  previousPurchasePrice Float?
   subtotal          Float
-  discrepancyQty    Int           @default(0)
+  discrepancyQty    Int             @default(0)
   discrepancyReason String?
   discrepancyNote   String?
-  createdAt         DateTime      @default(now())
+  createdAt         DateTime        @default(now())
 
   @@index([purchaseOrderId])
   @@index([productId])
+  @@index([unitId])
+  @@index([variantId])
   @@map("purchase_order_items")
 }
 
 model GoodsReceipt {
   id              String             @id @default(uuid())
-  receiptNumber   String             @unique
+  // Unique scoped per company — sequence reset per company per hari.
+  receiptNumber   String
   purchaseOrderId String
   purchaseOrder   PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
   companyId       String?
@@ -1024,6 +1185,7 @@ model GoodsReceipt {
   createdAt       DateTime           @default(now())
   items           GoodsReceiptItem[]
 
+  @@unique([companyId, receiptNumber])
   @@index([purchaseOrderId])
   @@index([companyId])
   @@index([branchId])
@@ -1038,6 +1200,11 @@ model GoodsReceiptItem {
   productName      String
   quantityOrdered  Int
   quantityReceived Int
+  // Snapshot harga di PO saat diterima (harga "baru" yang akan jadi master).
+  unitPrice              Float?
+  // Snapshot harga master sebelum sync (harga "lama"). Null = tidak diketahui
+  // / receipt lama sebelum fitur diaktifkan.
+  previousPurchasePrice  Float?
   notes            String?
   createdAt        DateTime     @default(now())
 
@@ -1183,6 +1350,16 @@ model Promotion {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   vouchers     Voucher[]
+  // Multi-trigger products (any-of). Saat di-set, engine cek kombinasi: customer
+  // beli SALAH SATU produk dari list ini sudah memenuhi syarat. Backward-compat
+  // dengan `productId` single-trigger — kalau triggerProducts kosong, engine
+  // fallback ke productId/categoryId lama.
+  triggerProducts PromotionTriggerProduct[] @relation("PromotionTriggers")
+  // Multi-reward products (Tebus Murah). Customer dapat memilih SALAH SATU dari
+  // produk-produk ini untuk ditebus. Engine generate 1 option per (promo,
+  // getProduct). Backward-compat dengan `getProductId` single — kalau list
+  // kosong, fallback ke kolom lama.
+  getProducts     PromotionGetProduct[]     @relation("PromotionRewards")
 
   @@index([companyId])
   @@index([branchId])
@@ -1192,6 +1369,33 @@ model Promotion {
   @@index([productId])
   @@index([categoryId])
   @@map("promotions")
+}
+
+// Join: 1 promo bisa punya banyak trigger product (any-of semantics).
+// Customer beli SALAH SATU produk dari list ini → memenuhi syarat promo.
+// Cocok untuk kasus tebus murah: "Beli A, B, C, atau D dapat tebus X".
+model PromotionTriggerProduct {
+  promoId   String
+  promotion Promotion @relation("PromotionTriggers", fields: [promoId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product   @relation("ProductPromoTriggers", fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promoId, productId])
+  @@index([productId])
+  @@map("promotion_trigger_products")
+}
+
+// Join: 1 promo bisa punya banyak produk tebus (multi-reward). Customer pilih
+// SALAH SATU dari list ini untuk ditebus. Engine generate 1 option per produk.
+model PromotionGetProduct {
+  promoId   String
+  promotion Promotion @relation("PromotionRewards", fields: [promoId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product   @relation("ProductPromoRewards", fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promoId, productId])
+  @@index([productId])
+  @@map("promotion_get_products")
 }
 
 model Voucher {
@@ -1397,7 +1601,8 @@ model Booking {
 
 model ServiceOrder {
   id              String              @id @default(uuid())
-  orderNumber     String              @unique @map("order_number")
+  // Unique scoped per company — sequence reset per company per hari.
+  orderNumber     String              @map("order_number")
   companyId       String              @map("company_id")
   branchId        String              @map("branch_id")
   branch          Branch              @relation(fields: [branchId], references: [id])
@@ -1438,6 +1643,7 @@ model ServiceOrder {
   updatedAt       DateTime            @updatedAt @map("updated_at")
   items           ServiceOrderItem[]
 
+  @@unique([companyId, orderNumber])
   @@index([companyId])
   @@index([branchId])
   @@index([vehicleId])
@@ -1623,72 +1829,6 @@ enum DebtStatus {
 }
 
 // ===========================
-// APPROVAL WORKFLOW
-// ===========================
-
-model ApprovalRequest {
-  id            String   @id @default(uuid())
-  type          String // "VOID", "REFUND", "LARGE_DISCOUNT", "PRICE_OVERRIDE"
-  status        String   @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
-  requestedBy   String
-  requester     User     @relation("ApprovalRequester", fields: [requestedBy], references: [id])
-  approvedBy    String?
-  approver      User?    @relation("ApprovalApprover", fields: [approvedBy], references: [id])
-  referenceId   String? // transaction ID, etc
-  details       String? // JSON with context data
-  reason        String?
-  rejectionNote String?
-  branchId      String?
-  branch        Branch?  @relation(fields: [branchId], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([status])
-  @@index([type])
-  @@index([requestedBy])
-  @@index([branchId])
-  @@index([branchId, status, createdAt])
-  @@map("approval_requests")
-}
-
-// ===========================
-// STORE CREDIT / GIFT CARD
-// ===========================
-
-model StoreCredit {
-  id            String             @id @default(uuid())
-  customerId    String
-  customer      Customer           @relation(fields: [customerId], references: [id])
-  code          String             @unique // gift card code
-  balance       Float              @default(0)
-  initialAmount Float
-  isActive      Boolean            @default(true)
-  expiryDate    DateTime?
-  issuedBy      String
-  issuer        User               @relation(fields: [issuedBy], references: [id])
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  usages        StoreCreditUsage[]
-
-  @@index([customerId])
-  @@index([code])
-  @@map("store_credits")
-}
-
-model StoreCreditUsage {
-  id            String      @id @default(uuid())
-  storeCreditId String
-  storeCredit   StoreCredit @relation(fields: [storeCreditId], references: [id])
-  amount        Float
-  transactionId String?
-  notes         String?
-  createdAt     DateTime    @default(now())
-
-  @@index([storeCreditId])
-  @@map("store_credit_usages")
-}
-
-// ===========================
 // RETURN & EXCHANGE
 // ===========================
 
@@ -1825,33 +1965,6 @@ model CashierBadge {
 }
 
 // ===========================
-// PRICE SCHEDULER
-// ===========================
-
-model PriceSchedule {
-  id            String    @id @default(uuid())
-  productId     String
-  product       Product   @relation(fields: [productId], references: [id])
-  branchId      String?
-  branch        Branch?   @relation(fields: [branchId], references: [id])
-  companyId     String?
-  newPrice      Float
-  originalPrice Float
-  startDate     DateTime
-  endDate       DateTime
-  reason        String?
-  isActive      Boolean   @default(true)
-  appliedAt     DateTime?
-  revertedAt    DateTime?
-  createdBy     String
-  createdAt     DateTime  @default(now())
-
-  @@index([productId])
-  @@index([startDate, endDate])
-  @@map("price_schedules")
-}
-
-// ===========================
 // EMPLOYEE SCHEDULER
 // ===========================
 
@@ -1971,7 +2084,6 @@ model Account {
   branch              Branch?                @relation(fields: [branchId], references: [id])
   openingBalance      Float                  @default(0)
   journalLines        JournalEntryLine[]
-  taxConfigs          TaxConfig[]
   recurringLines      RecurringJournalLine[]
   bankReconciliations BankReconciliation[]   @relation("BankReconAccount")
   createdAt           DateTime               @default(now())
@@ -2061,24 +2173,6 @@ model AccountingPeriod {
   @@index([status])
   @@index([companyId])
   @@map("accounting_periods")
-}
-
-model TaxConfig {
-  id        String   @id @default(uuid())
-  companyId String
-  company   Company  @relation(fields: [companyId], references: [id])
-  taxType   String // PPN, PPH21, PPH23, PPH_FINAL
-  name      String // "PPN 11%", "PPh 23 - 2%"
-  rate      Float // 0.11, 0.02
-  accountId String
-  account   Account  @relation(fields: [accountId], references: [id])
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([companyId, taxType])
-  @@index([companyId])
-  @@map("tax_configs")
 }
 
 model JournalChangeLog {

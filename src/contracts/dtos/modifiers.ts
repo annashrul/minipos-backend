@@ -23,6 +23,10 @@ export const ModifierOptionInputSchema = z.object({
   priceAdjustment: z.number().default(0),
   isActive: z.boolean().optional().default(true),
   sortOrder: z.number().int().optional().default(0),
+  // Conditional modifier: list parent option IDs yang men-trigger option ini
+  // jadi visible di POS picker. Empty/undefined = tanpa constraint (selalu
+  // visible). Parent harus dari group LAIN dalam product yang sama.
+  enabledByOptionIds: z.array(z.string()).optional(),
 });
 export type ModifierOptionInputDto = z.infer<typeof ModifierOptionInputSchema>;
 
@@ -54,6 +58,9 @@ export type ModifierOptionResponse = {
   priceAdjustment: number;
   isActive: boolean;
   sortOrder: number;
+  /** Parent option IDs yang harus dipilih agar option ini visible di POS.
+   *  Empty = tanpa constraint (selalu visible). */
+  enabledByOptionIds: string[];
 };
 
 export type ModifierGroupResponse = {

@@ -14,6 +14,10 @@ import type {
   StockTransferResponse,
   StockTransferStatusDto,
 } from "@/contracts";
+import {
+  dayRange,
+  nextDocumentNumber,
+} from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 
 const TRANSFER_ITEM_SELECT = {
@@ -141,7 +145,7 @@ export class StockTransfersService {
     }
     const nameMap = new Map(products.map((p) => [p.id, p.name]));
 
-    const transferNumber = generateTransferNumber();
+    const transferNumber = await this.nextTransferNumber(companyId);
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -518,28 +522,25 @@ export class StockTransfersService {
     });
     if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
-}
 
-function pad(n: number): string {
-  return n.toString().padStart(2, "0");
-}
-
-function todayCompact(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-}
-
-function randomHex(length: number): string {
-  const chars = "0123456789ABCDEF";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
+  // TR-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
+  private async nextTransferNumber(companyId: string): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "TR",
+      countToday: () =>
+        this.prisma.stockTransfer.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.stockTransfer.findFirst({
+          where: { companyId, transferNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
   }
-  return out;
-}
-
-function generateTransferNumber(): string {
-  return `TRF-${todayCompact()}-${randomHex(6)}`;
 }
 
 function isTransferNumberConflict(err: unknown): boolean {

@@ -1319,6 +1319,7 @@ function paymentMethodLabel(method: string): string {
     DEBIT: "Debit",
     CREDIT_CARD: "Kartu Kredit",
     TERMIN: "Termin",
+    SPLIT_BILL: "Split Bill",
   };
   return labels[method] || method;
 }

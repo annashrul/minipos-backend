@@ -63,6 +63,8 @@ const DETAIL_SELECT = {
       productName: true,
       quantityOrdered: true,
       quantityReceived: true,
+      unitPrice: true,
+      previousPurchasePrice: true,
       notes: true,
     },
     orderBy: { createdAt: "asc" },
@@ -297,6 +299,8 @@ function toDetailItemResponse(
     productName: it.productName,
     quantityOrdered: it.quantityOrdered,
     quantityReceived: it.quantityReceived,
+    unitPrice: it.unitPrice ?? null,
+    previousPurchasePrice: it.previousPurchasePrice ?? null,
     notes: it.notes,
   };
 }

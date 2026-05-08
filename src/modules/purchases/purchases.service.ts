@@ -10,6 +10,7 @@ import type {
   CreatePurchaseDto,
   GoodsReceiptItemResponse,
   GoodsReceiptResponse,
+  ListPurchaseTransactionLogQueryDto,
   ListPurchasesQueryDto,
   PurchaseListResponse,
   PurchaseOrderDetailResponse,
@@ -17,27 +18,48 @@ import type {
   PurchaseOrderResponse,
   PurchaseOrderStatusDto,
   PurchaseSummaryResponse,
+  PurchaseTransactionLogListResponse,
+  PurchaseTransactionLogResponse,
   ReceivePurchaseDto,
   ReceivePurchaseResponse,
   UpdatePurchaseDto,
   UpdatePurchaseStatusDto,
 } from "@/contracts";
+import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PO_ITEM_SELECT = {
   id: true,
   purchaseOrderId: true,
   productId: true,
-  product: { select: { id: true, code: true, name: true } },
+  product: {
+    select: { id: true, code: true, name: true, purchasePrice: true },
+  },
+  unitId: true,
+  unit: { select: { id: true, name: true, purchasePrice: true } },
+  variantId: true,
+  variant: {
+    select: {
+      id: true,
+      purchasePriceOverride: true,
+      options: {
+        select: {
+          option: { select: { name: true } },
+        },
+      },
+    },
+  },
   quantity: true,
   receivedQty: true,
   unitPrice: true,
+  previousPurchasePrice: true,
   subtotal: true,
 } satisfies Prisma.PurchaseOrderItemSelect;
 
 const PO_SELECT = {
   id: true,
   orderNumber: true,
+  purchaseTransactionNumber: true,
   supplierId: true,
   supplier: { select: { id: true, name: true, companyId: true } },
   branchId: true,
@@ -65,6 +87,8 @@ const RECEIPT_ITEM_SELECT = {
   productName: true,
   quantityOrdered: true,
   quantityReceived: true,
+  unitPrice: true,
+  previousPurchasePrice: true,
   notes: true,
 } satisfies Prisma.GoodsReceiptItemSelect;
 
@@ -188,13 +212,16 @@ export class PurchasesService {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
     const totalAmount = dto.items.reduce((sum, it) => sum + it.subtotal, 0);
-    const orderNumber = generateOrderNumber();
+    const orderNumber = await this.nextOrderNumber(companyId);
+    const purchaseTransactionNumber =
+      await this.nextPurchaseTransactionNumber(companyId);
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
         const po = await tx.purchaseOrder.create({
           data: {
             orderNumber,
+            purchaseTransactionNumber,
             supplierId: dto.supplierId,
             branchId: dto.branchId ?? null,
             companyId,
@@ -206,6 +233,8 @@ export class PurchasesService {
             items: {
               create: dto.items.map((it) => ({
                 productId: it.productId,
+                unitId: it.unitId ?? null,
+                variantId: it.variantId ?? null,
                 quantity: it.quantity,
                 unitPrice: it.unitPrice,
                 subtotal: it.subtotal,
@@ -213,6 +242,20 @@ export class PurchasesService {
             },
           },
           select: { id: true },
+        });
+
+        // Log row pertama: status DRAFT dengan no transaksi = BL number.
+        await tx.purchaseTransactionLog.create({
+          data: {
+            companyId,
+            branchId: dto.branchId ?? null,
+            purchaseOrderId: po.id,
+            documentNumber: purchaseTransactionNumber,
+            documentType: "BL",
+            status: "DRAFT",
+            amount: totalAmount,
+            createdBy: userId,
+          },
         });
 
         return tx.purchaseOrder.findUniqueOrThrow({
@@ -230,6 +273,66 @@ export class PurchasesService {
     }
   }
 
+  // Generate BL-YYYYMMDD-NNNN — pakai utility shared `nextDocumentNumber`
+  // yang reusable lintas module (INV/GR/OP/TR/dll cuma beda prefix).
+  private async nextPurchaseTransactionNumber(
+    companyId: string,
+  ): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "BL",
+      countToday: () =>
+        this.prisma.purchaseOrder.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.purchaseOrder.findFirst({
+          where: { companyId, purchaseTransactionNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
+  }
+
+  // PO order number — sama format XX-YYYYMMDD-NNNN, prefix PO.
+  private async nextOrderNumber(companyId: string): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "PO",
+      countToday: () =>
+        this.prisma.purchaseOrder.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.purchaseOrder.findFirst({
+          where: { companyId, orderNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
+  }
+
+  // GR receipt number — prefix GR. Count berdasarkan goods_receipts table.
+  private async nextReceiptNumber(companyId: string): Promise<string> {
+    const { start, end } = dayRange();
+    return nextDocumentNumber({
+      prefix: "GR",
+      countToday: () =>
+        this.prisma.goodsReceipt.count({
+          where: { companyId, createdAt: { gte: start, lt: end } },
+        }),
+      exists: async (candidate) => {
+        const found = await this.prisma.goodsReceipt.findFirst({
+          where: { companyId, receiptNumber: candidate },
+          select: { id: true },
+        });
+        return !!found;
+      },
+    });
+  }
+
   async update(
     companyId: string,
     id: string,
@@ -239,7 +342,8 @@ export class PurchasesService {
       where: { id, ...this.tenantWhere(companyId) },
       select: { id: true, status: true },
     });
-    if (!existing) throw new NotFoundException("Purchase order tidak ditemukan");
+    if (!existing)
+      throw new NotFoundException("Purchase order tidak ditemukan");
     if (existing.status !== "DRAFT" && existing.status !== "ORDERED") {
       throw new BadRequestException(
         "Purchase order hanya bisa diubah saat status DRAFT atau ORDERED",
@@ -276,6 +380,8 @@ export class PurchasesService {
           data: dto.items.map((it) => ({
             purchaseOrderId: id,
             productId: it.productId,
+            unitId: it.unitId ?? null,
+            variantId: it.variantId ?? null,
             quantity: it.quantity,
             unitPrice: it.unitPrice,
             subtotal: it.subtotal,
@@ -296,14 +402,22 @@ export class PurchasesService {
 
   async updateStatus(
     companyId: string,
+    userId: string,
     id: string,
     dto: UpdatePurchaseStatusDto,
   ): Promise<PurchaseOrderDetailResponse> {
     const existing = await this.prisma.purchaseOrder.findFirst({
       where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true, status: true },
+      select: {
+        id: true,
+        status: true,
+        orderNumber: true,
+        branchId: true,
+        totalAmount: true,
+      },
     });
-    if (!existing) throw new NotFoundException("Purchase order tidak ditemukan");
+    if (!existing)
+      throw new NotFoundException("Purchase order tidak ditemukan");
 
     const current = existing.status as PurchaseOrderStatusDto;
     const next = dto.status;
@@ -321,7 +435,23 @@ export class PurchasesService {
     if (next === "RECEIVED") data.receivedDate = new Date();
     if (next === "CLOSED") data.closedDate = new Date();
 
-    await this.prisma.purchaseOrder.update({ where: { id }, data });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.purchaseOrder.update({ where: { id }, data });
+      // Log perubahan status: docNumber tetap PO number untuk transisi
+      // status biasa (ORDERED/CANCELLED).
+      await tx.purchaseTransactionLog.create({
+        data: {
+          companyId,
+          branchId: existing.branchId,
+          purchaseOrderId: id,
+          documentNumber: existing.orderNumber,
+          documentType: "PO",
+          status: next,
+          amount: existing.totalAmount,
+          createdBy: userId,
+        },
+      });
+    });
 
     const refreshed = await this.prisma.purchaseOrder.findUniqueOrThrow({
       where: { id },
@@ -347,6 +477,7 @@ export class PurchasesService {
       select: {
         id: true,
         orderNumber: true,
+        purchaseTransactionNumber: true,
         status: true,
         branchId: true,
         supplierId: true,
@@ -356,10 +487,24 @@ export class PurchasesService {
           select: {
             id: true,
             productId: true,
+            unitId: true,
+            unit: {
+              select: { id: true, isDefault: true, conversionQty: true },
+            },
+            variantId: true,
             quantity: true,
             receivedQty: true,
             unitPrice: true,
+            previousPurchasePrice: true,
             product: { select: { id: true, name: true } },
+            variant: {
+              select: {
+                id: true,
+                options: {
+                  select: { option: { select: { name: true } } },
+                },
+              },
+            },
           },
         },
       },
@@ -374,24 +519,91 @@ export class PurchasesService {
     const targetBranchId = dto.branchId ?? po.branchId ?? null;
     if (targetBranchId) await this.assertBranch(companyId, targetBranchId);
 
-    // Validate every product exists in PO and total received doesn't exceed ordered
-    const itemMap = new Map(po.items.map((it) => [it.productId, it]));
+    // Build item maps. Untuk PO multi-varian (1 productId punya N item dgn
+    // variantId berbeda), match WAJIB pakai purchaseOrderItemId. Fallback
+    // ke productId hanya kalau cuma ada 1 item utk product itu (back-compat).
+    const itemById = new Map(po.items.map((it) => [it.id, it]));
+    const itemsByProductId = new Map<string, typeof po.items>();
+    for (const it of po.items) {
+      const arr = itemsByProductId.get(it.productId) ?? [];
+      arr.push(it);
+      itemsByProductId.set(it.productId, arr);
+    }
+    // Resolve PO item per receive line. Stamp `_resolvedPoItemId` ke input
+    // supaya looping berikutnya tidak perlu lookup ulang.
+    type ResolvedInput = (typeof dto.items)[number] & {
+      _resolvedPoItemId: string;
+    };
+    const resolvedInputs: ResolvedInput[] = [];
     for (const input of dto.items) {
-      const poItem = itemMap.get(input.productId);
-      if (!poItem) {
+      let poItem: (typeof po.items)[number] | undefined;
+      if (input.purchaseOrderItemId) {
+        poItem = itemById.get(input.purchaseOrderItemId);
+        if (!poItem) {
+          throw new BadRequestException(
+            `Item PO ${input.purchaseOrderItemId} tidak ditemukan`,
+          );
+        }
+      } else if (input.productId) {
+        const candidates = itemsByProductId.get(input.productId) ?? [];
+        if (candidates.length === 0) {
+          throw new BadRequestException(
+            `Produk ${input.productId} tidak terdapat pada purchase order`,
+          );
+        }
+        if (candidates.length > 1) {
+          throw new BadRequestException(
+            `Produk ${candidates[0]?.product?.name ?? input.productId} punya beberapa item PO (varian/satuan berbeda) — frontend wajib kirim purchaseOrderItemId`,
+          );
+        }
+        poItem = candidates[0]!;
+      } else {
         throw new BadRequestException(
-          `Produk ${input.productId} tidak terdapat pada purchase order`,
+          "purchaseOrderItemId atau productId wajib diisi",
         );
       }
       const remaining = poItem.quantity - poItem.receivedQty;
       if (input.quantityReceived > remaining) {
         throw new BadRequestException(
-          `Jumlah diterima untuk produk ${poItem.product?.name ?? input.productId} melebihi sisa pesanan (sisa: ${remaining})`,
+          `Jumlah diterima untuk produk ${poItem.product?.name ?? poItem.productId} melebihi sisa pesanan (sisa: ${remaining})`,
         );
       }
+      resolvedInputs.push({ ...input, _resolvedPoItemId: poItem.id });
     }
 
-    const receiptNumber = generateReceiptNumber();
+    const receiptNumber = await this.nextReceiptNumber(companyId);
+
+    // Pre-pass: snapshot harga master sebelum di-sync. Map keyed by resolved
+    // PO item id supaya bisa di-lookup saat create GR item + saat compare.
+    const oldPriceByPoItemId = new Map<string, number | null>();
+    for (const input of resolvedInputs) {
+      const poItem = itemById.get(input._resolvedPoItemId)!;
+      let oldPrice: number | null = null;
+      if (poItem.unitId) {
+        const u = await this.prisma.productUnit.findUnique({
+          where: { id: poItem.unitId },
+          select: { purchasePrice: true },
+        });
+        oldPrice = u?.purchasePrice ?? null;
+      } else if (poItem.variantId) {
+        const v = await this.prisma.productVariant.findUnique({
+          where: { id: poItem.variantId },
+          select: {
+            purchasePriceOverride: true,
+            product: { select: { purchasePrice: true } },
+          },
+        });
+        oldPrice =
+          v?.purchasePriceOverride ?? v?.product?.purchasePrice ?? null;
+      } else {
+        const p = await this.prisma.product.findUnique({
+          where: { id: poItem.productId },
+          select: { purchasePrice: true },
+        });
+        oldPrice = p?.purchasePrice ?? null;
+      }
+      oldPriceByPoItemId.set(input._resolvedPoItemId, oldPrice);
+    }
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
@@ -405,13 +617,16 @@ export class PurchasesService {
             receivedByName: userName,
             notes: dto.notes ?? null,
             items: {
-              create: dto.items.map((input) => {
-                const poItem = itemMap.get(input.productId);
+              create: resolvedInputs.map((input) => {
+                const poItem = itemById.get(input._resolvedPoItemId)!;
                 return {
-                  productId: input.productId,
-                  productName: poItem?.product?.name ?? "",
-                  quantityOrdered: poItem?.quantity ?? 0,
+                  productId: poItem.productId,
+                  productName: poItem.product?.name ?? "",
+                  quantityOrdered: poItem.quantity,
                   quantityReceived: input.quantityReceived,
+                  unitPrice: poItem.unitPrice ?? null,
+                  previousPurchasePrice:
+                    oldPriceByPoItemId.get(input._resolvedPoItemId) ?? null,
                   notes: input.notes ?? null,
                 };
               }),
@@ -420,22 +635,38 @@ export class PurchasesService {
           select: { id: true },
         });
 
-        // Update PurchaseOrderItem.receivedQty
-        for (const input of dto.items) {
-          const poItem = itemMap.get(input.productId);
-          if (!poItem) continue;
+        // Update PurchaseOrderItem.receivedQty per PO item id (variant-aware).
+        // Capture previousPurchasePrice sekali pada receive pertama (kalau
+        // masih null) supaya laporan pembelian punya snapshot harga lama.
+        for (const input of resolvedInputs) {
+          const poItem = itemById.get(input._resolvedPoItemId)!;
+          const oldPrice = oldPriceByPoItemId.get(input._resolvedPoItemId);
+          const shouldCaptureOldPrice =
+            (poItem as unknown as { previousPurchasePrice?: number | null })
+              .previousPurchasePrice == null && oldPrice != null;
           await tx.purchaseOrderItem.update({
-            where: { id: poItem.id },
-            data: { receivedQty: { increment: input.quantityReceived } },
+            where: { id: input._resolvedPoItemId },
+            data: {
+              receivedQty: { increment: input.quantityReceived },
+              ...(shouldCaptureOldPrice
+                ? { previousPurchasePrice: oldPrice }
+                : {}),
+            },
           });
         }
 
-        // Update stock + create stock movement (ledger fields lengkap)
-        for (const input of dto.items) {
-          // Lookup unit cost dari PO item supaya HPP per movement ter-isi
-          // (foundation untuk Average/FIFO costing).
-          const poItem = itemMap.get(input.productId);
-          const unitCost = poItem?.unitPrice ?? 0;
+        // Update stock + create stock movement (ledger fields lengkap).
+        // Loop per resolved PO item supaya variant + unit info ke-pakai utk
+        // increment ProductBranchSku yg tepat (per varian).
+        for (const input of resolvedInputs) {
+          const poItem = itemById.get(input._resolvedPoItemId)!;
+          const productId = poItem.productId;
+          const variantId = poItem.variantId ?? null;
+          const variantLabel = poItem.variant
+            ? poItem.variant.options.map((o) => o.option.name).join(" · ") ||
+              null
+            : null;
+          const unitCost = poItem.unitPrice ?? 0;
 
           let balanceAfter: number | null = null;
           if (targetBranchId) {
@@ -443,12 +674,12 @@ export class PurchasesService {
               where: {
                 branchId_productId: {
                   branchId: targetBranchId,
-                  productId: input.productId,
+                  productId,
                 },
               },
               create: {
                 branchId: targetBranchId,
-                productId: input.productId,
+                productId,
                 quantity: input.quantityReceived,
               },
               update: {
@@ -457,19 +688,117 @@ export class PurchasesService {
               select: { quantity: true },
             });
             balanceAfter = updated.quantity;
+
+            // Sync ProductBranchSku per varian. Match EXACT (productId,
+            // branchId, variantId, unitId) supaya target SKU row tepat —
+            // Postgres `ORDER BY unitId ASC` default `NULLS LAST` jadi
+            // tidak bisa diandalkan utk pick base-unit row.
+            const skuUnitId = poItem.unitId ?? null;
+            const skuRow = await tx.productBranchSku.findFirst({
+              where: {
+                productId,
+                branchId: targetBranchId,
+                variantId,
+                unitId: skuUnitId,
+              },
+              select: { id: true },
+            });
+            if (skuRow) {
+              await tx.productBranchSku.update({
+                where: { id: skuRow.id },
+                data: {
+                  stock: { increment: input.quantityReceived },
+                  // Sync harga beli SKU per cabang ke harga PO terakhir.
+                  ...(unitCost > 0 ? { purchasePrice: unitCost } : {}),
+                },
+              });
+            } else {
+              // Fallback: kalau row belum ada (edge case data lama), buat
+              // row baru dengan harga dari PO + stok awal = qty diterima.
+              await tx.productBranchSku.create({
+                data: {
+                  productId,
+                  branchId: targetBranchId,
+                  unitId: skuUnitId,
+                  variantId,
+                  sellingPrice: 0,
+                  purchasePrice: poItem.unitPrice,
+                  stock: input.quantityReceived,
+                  minStock: 5,
+                  isActive: true,
+                },
+              });
+            }
           } else {
             const updated = await tx.product.update({
-              where: { id: input.productId },
+              where: { id: productId },
               data: { stock: { increment: input.quantityReceived } },
               select: { stock: true },
             });
             balanceAfter = updated.stock;
           }
 
+          // Sync master harga beli ke harga PO terbaru. Skip kalau unitCost<=0
+          // (mungkin data salah / belum input harga).
+          if (unitCost > 0) {
+            if (poItem.unitId) {
+              // Item pakai satuan turunan → update ProductUnit.purchasePrice.
+              await tx.productUnit.update({
+                where: { id: poItem.unitId },
+                data: { purchasePrice: unitCost },
+              });
+            }
+            // Update Product.purchasePrice (master di list produk) kalau:
+            // - PO tanpa unit (base unit) ATAU
+            // - PO pakai unit yang merupakan default / conversionQty=1
+            // Skip kalau ada variant (variant override jadi sumber harga).
+            const isBaseUnit =
+              !poItem.unitId ||
+              poItem.unit?.isDefault === true ||
+              poItem.unit?.conversionQty === 1;
+            if (!variantId && isBaseUnit) {
+              await tx.product.update({
+                where: { id: productId },
+                data: { purchasePrice: unitCost },
+              });
+            }
+            if (variantId) {
+              // Sync override harga beli per varian.
+              await tx.productVariant.update({
+                where: { id: variantId },
+                data: { purchasePriceOverride: unitCost },
+              });
+            }
+            // Legacy BranchProductPrice — view vw_product_branch (dipakai list
+            // produk dgn filter cabang) baca harga dari sini lewat COALESCE.
+            // Kalau row legacy ada, harga master ke-overlay dgn nilai lama
+            // selama row legacy belum ke-update. Upsert harga PO terbaru ke
+            // sini supaya overlay konsisten dgn master.
+            if (targetBranchId && !variantId && isBaseUnit) {
+              await tx.branchProductPrice.upsert({
+                where: {
+                  branchId_productId: {
+                    branchId: targetBranchId,
+                    productId,
+                  },
+                },
+                create: {
+                  branchId: targetBranchId,
+                  productId,
+                  sellingPrice: 0,
+                  purchasePrice: unitCost,
+                },
+                update: { purchasePrice: unitCost },
+              });
+            }
+          }
+
           await tx.stockMovement.create({
             data: {
-              productId: input.productId,
+              productId,
               branchId: targetBranchId,
+              variantId,
+              variantLabel,
               companyId,
               type: "PURCHASE_RECEIVE",
               quantity: input.quantityReceived,
@@ -479,8 +808,7 @@ export class PurchasesService {
                 ? {
                     unitCost,
                     totalCost:
-                      Math.round(unitCost * input.quantityReceived * 100) /
-                      100,
+                      Math.round(unitCost * input.quantityReceived * 100) / 100,
                   }
                 : {}),
               refType: "purchase_order",
@@ -507,8 +835,8 @@ export class PurchasesService {
         );
 
         // Compute incoming-receipt's grandTotal (use ordered unitPrice).
-        const grandTotalReceipt = dto.items.reduce((sum, input) => {
-          const poItem = itemMap.get(input.productId);
+        const grandTotalReceipt = resolvedInputs.reduce((sum, input) => {
+          const poItem = itemById.get(input._resolvedPoItemId);
           if (!poItem) return sum;
           return sum + input.quantityReceived * poItem.unitPrice;
         }, 0);
@@ -534,7 +862,7 @@ export class PurchasesService {
               partyType: "SUPPLIER",
               partyId: po.supplierId,
               partyName: po.supplier?.name ?? "Supplier",
-              description: `Hutang penerimaan ${receiptNumber} (PO ${po.orderNumber})`,
+              description: `Hutang penerimaan ${receiptNumber} (${po.orderNumber})`,
               totalAmount: debtRemaining,
               paidAmount: 0,
               remainingAmount: debtRemaining,
@@ -549,14 +877,47 @@ export class PurchasesService {
           createdDebtId = debt.id;
         }
 
+        const newStatus = allReceived ? "RECEIVED" : "PARTIAL";
         await tx.purchaseOrder.update({
           where: { id },
           data: {
-            status: allReceived ? "RECEIVED" : "PARTIAL",
+            status: newStatus,
             receivedDate: allReceived ? new Date() : undefined,
             receivedAmount: newReceivedAmount,
           },
         });
+
+        // Log: status PARTIAL/RECEIVED dgn docNumber = GR (receipt number).
+        await tx.purchaseTransactionLog.create({
+          data: {
+            companyId,
+            branchId: targetBranchId,
+            purchaseOrderId: id,
+            documentNumber: receiptNumber,
+            documentType: "GR",
+            status: newStatus,
+            amount: grandTotalReceipt,
+            note: dto.notes ?? null,
+            createdBy: userId,
+          },
+        });
+
+        // Kalau selesai → log row tambahan COMPLETED pakai BL number
+        // (purchaseTransactionNumber yg sudah generated saat create PO).
+        if (allReceived) {
+          await tx.purchaseTransactionLog.create({
+            data: {
+              companyId,
+              branchId: targetBranchId,
+              purchaseOrderId: id,
+              documentNumber: po.purchaseTransactionNumber,
+              documentType: "BL",
+              status: "COMPLETED",
+              amount: newReceivedAmount,
+              createdBy: userId,
+            },
+          });
+        }
 
         const refreshedReceipt = await tx.goodsReceipt.findUniqueOrThrow({
           where: { id: receipt.id },
@@ -591,6 +952,7 @@ export class PurchasesService {
 
   async close(
     companyId: string,
+    userId: string,
     id: string,
     dto: ClosePurchaseDto,
   ): Promise<ClosePurchaseResponse> {
@@ -599,10 +961,12 @@ export class PurchasesService {
       select: {
         id: true,
         orderNumber: true,
+        purchaseTransactionNumber: true,
         status: true,
         totalAmount: true,
         receivedAmount: true,
         paidAmount: true,
+        branchId: true,
         notes: true,
       },
     });
@@ -646,10 +1010,7 @@ export class PurchasesService {
       if (dto.adjustDebt && debts.length > 0) {
         // Total receivable adjustment = totalAmount - receivedAmount.
         // Distribute the reduction across open debts (newest first).
-        let pendingReduction = Math.max(
-          po.totalAmount - po.receivedAmount,
-          0,
-        );
+        let pendingReduction = Math.max(po.totalAmount - po.receivedAmount, 0);
 
         for (const d of debts) {
           if (pendingReduction <= 0) break;
@@ -689,6 +1050,34 @@ export class PurchasesService {
         },
       });
 
+      // Log: status CLOSED dgn docNumber tetap PO number.
+      await tx.purchaseTransactionLog.create({
+        data: {
+          companyId,
+          branchId: po.branchId,
+          purchaseOrderId: id,
+          documentNumber: po.orderNumber,
+          documentType: "PO",
+          status: "CLOSED",
+          amount: po.receivedAmount,
+          ...(closingNote ? { note: closingNote } : {}),
+          createdBy: userId,
+        },
+      });
+      // Log: COMPLETED dgn BL number (purchaseTransactionNumber dari create).
+      await tx.purchaseTransactionLog.create({
+        data: {
+          companyId,
+          branchId: po.branchId,
+          purchaseOrderId: id,
+          documentNumber: po.purchaseTransactionNumber,
+          documentType: "BL",
+          status: "COMPLETED",
+          amount: po.receivedAmount,
+          createdBy: userId,
+        },
+      });
+
       const refreshed = await tx.purchaseOrder.findUniqueOrThrow({
         where: { id },
         select: PO_DETAIL_SELECT,
@@ -712,6 +1101,123 @@ export class PurchasesService {
     };
   }
 
+  async listTransactionLog(
+    companyId: string,
+    query: ListPurchaseTransactionLogQueryDto,
+  ): Promise<PurchaseTransactionLogListResponse> {
+    const where: Prisma.PurchaseTransactionLogWhereInput = { companyId };
+    if (query.branchId) where.branchId = query.branchId;
+    if (query.status) where.status = query.status;
+    if (query.documentType) where.documentType = query.documentType;
+    if (query.purchaseOrderId) where.purchaseOrderId = query.purchaseOrderId;
+    if (query.search) {
+      where.OR = [
+        { documentNumber: { contains: query.search, mode: "insensitive" } },
+        {
+          purchaseOrder: {
+            orderNumber: { contains: query.search, mode: "insensitive" },
+          },
+        },
+        {
+          purchaseOrder: {
+            supplier: {
+              name: { contains: query.search, mode: "insensitive" },
+            },
+          },
+        },
+      ];
+    }
+    if (query.from || query.to) {
+      where.createdAt = {};
+      if (query.from) where.createdAt.gte = new Date(query.from);
+      if (query.to) where.createdAt.lte = new Date(query.to);
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.purchaseTransactionLog.findMany({
+        where,
+        select: {
+          id: true,
+          purchaseOrderId: true,
+          purchaseOrder: {
+            select: {
+              id: true,
+              orderNumber: true,
+              purchaseTransactionNumber: true,
+              supplier: { select: { id: true, name: true } },
+            },
+          },
+          branchId: true,
+          documentNumber: true,
+          documentType: true,
+          status: true,
+          amount: true,
+          note: true,
+          createdBy: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (query.page - 1) * query.perPage,
+        take: query.perPage,
+      }),
+      this.prisma.purchaseTransactionLog.count({ where }),
+    ]);
+
+    // Enrich branch + user.
+    const branchIds = Array.from(
+      new Set(rows.map((r) => r.branchId).filter((b): b is string => !!b)),
+    );
+    const userIds = Array.from(
+      new Set(rows.map((r) => r.createdBy).filter((u): u is string => !!u)),
+    );
+    const [branches, users] = await Promise.all([
+      branchIds.length > 0
+        ? this.prisma.branch.findMany({
+            where: { id: { in: branchIds }, companyId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as { id: string; name: string }[]),
+      userIds.length > 0
+        ? this.prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as { id: string; name: string }[]),
+    ]);
+    const branchMap = new Map(branches.map((b) => [b.id, b]));
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    const logs: PurchaseTransactionLogResponse[] = rows.map((r) => ({
+      id: r.id,
+      purchaseOrderId: r.purchaseOrderId,
+      purchaseOrder: r.purchaseOrder
+        ? {
+            id: r.purchaseOrder.id,
+            orderNumber: r.purchaseOrder.orderNumber,
+            purchaseTransactionNumber:
+              r.purchaseOrder.purchaseTransactionNumber ?? null,
+          }
+        : null,
+      branchId: r.branchId,
+      branch: r.branchId ? (branchMap.get(r.branchId) ?? null) : null,
+      documentNumber: r.documentNumber,
+      documentType: r.documentType,
+      status: r.status,
+      amount: r.amount,
+      note: r.note,
+      createdBy: r.createdBy,
+      createdByUser: r.createdBy ? (userMap.get(r.createdBy) ?? null) : null,
+      supplier: r.purchaseOrder?.supplier ?? null,
+      createdAt: r.createdAt.toISOString(),
+    }));
+
+    return {
+      logs,
+      total,
+      totalPages: Math.ceil(total / query.perPage),
+    };
+  }
+
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.purchaseOrder.findFirst({
       where: { id, ...this.tenantWhere(companyId) },
@@ -721,7 +1227,8 @@ export class PurchasesService {
         _count: { select: { goodsReceipts: true } },
       },
     });
-    if (!existing) throw new NotFoundException("Purchase order tidak ditemukan");
+    if (!existing)
+      throw new NotFoundException("Purchase order tidak ditemukan");
     if (existing.status !== "DRAFT") {
       throw new BadRequestException(
         "Hanya purchase order dengan status DRAFT yang bisa dihapus",
@@ -790,39 +1297,20 @@ export class PurchasesService {
   }
 }
 
-function pad(n: number): string {
-  return n.toString().padStart(2, "0");
-}
-
-function todayCompact(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-}
-
-function randomHex(length: number): string {
-  const chars = "0123456789ABCDEF";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
-}
-
-function generateOrderNumber(): string {
-  return `PO-${todayCompact()}-${randomHex(6)}`;
-}
-
-function generateReceiptNumber(): string {
-  return `GR-${todayCompact()}-${randomHex(6)}`;
-}
-
 function isOrderNumberConflict(err: unknown): boolean {
   if (
     err instanceof Prisma.PrismaClientKnownRequestError &&
     err.code === "P2002"
   ) {
     const target = err.meta?.target;
-    if (Array.isArray(target) && target.includes("orderNumber")) return true;
+    if (Array.isArray(target)) {
+      if (
+        target.includes("orderNumber") ||
+        target.includes("purchaseTransactionNumber")
+      ) {
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -841,6 +1329,19 @@ function isReceiptNumberConflict(err: unknown): boolean {
 function toPOItemResponse(
   it: RawPO["items"][number],
 ): PurchaseOrderItemResponse {
+  const variantLabel = it.variant
+    ? it.variant.options.map((o) => o.option.name).join(" · ")
+    : null;
+  // Resolve harga master saat ini sesuai konteks item (paling spesifik dulu).
+  let currentMasterPrice: number | null = null;
+  if (it.unitId) {
+    currentMasterPrice = it.unit?.purchasePrice ?? null;
+  } else if (it.variantId) {
+    currentMasterPrice =
+      it.variant?.purchasePriceOverride ?? it.product?.purchasePrice ?? null;
+  } else {
+    currentMasterPrice = it.product?.purchasePrice ?? null;
+  }
   return {
     id: it.id,
     purchaseOrderId: it.purchaseOrderId,
@@ -848,10 +1349,18 @@ function toPOItemResponse(
     product: it.product
       ? { id: it.product.id, code: it.product.code, name: it.product.name }
       : null,
+    unitId: it.unitId ?? null,
+    unitName: it.unit?.name ?? null,
+    variantId: it.variantId ?? null,
+    variantLabel: variantLabel || null,
     quantity: it.quantity,
     receivedQty: it.receivedQty,
     unitPrice: it.unitPrice,
     subtotal: it.subtotal,
+    currentMasterPrice,
+    previousPurchasePrice:
+      (it as unknown as { previousPurchasePrice?: number | null })
+        .previousPurchasePrice ?? null,
   };
 }
 
@@ -859,6 +1368,7 @@ function toPurchaseResponse(po: RawPO): PurchaseOrderResponse {
   return {
     id: po.id,
     orderNumber: po.orderNumber,
+    purchaseTransactionNumber: po.purchaseTransactionNumber,
     supplierId: po.supplierId,
     supplier: po.supplier
       ? { id: po.supplier.id, name: po.supplier.name }
@@ -900,6 +1410,8 @@ function toReceiptItemResponse(
     productName: it.productName,
     quantityOrdered: it.quantityOrdered,
     quantityReceived: it.quantityReceived,
+    unitPrice: it.unitPrice ?? null,
+    previousPurchasePrice: it.previousPurchasePrice ?? null,
     notes: it.notes,
   };
 }

@@ -11,7 +11,7 @@ export const ReturnStatusSchema = z.enum([
 ]);
 export type ReturnStatusDto = z.infer<typeof ReturnStatusSchema>;
 
-export const RefundMethodSchema = z.enum(["CASH", "TRANSFER", "STORE_CREDIT"]);
+export const RefundMethodSchema = z.enum(["CASH", "TRANSFER"]);
 export type RefundMethodDto = z.infer<typeof RefundMethodSchema>;
 
 export const ListReturnsQuerySchema = z.object({

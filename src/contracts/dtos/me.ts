@@ -23,6 +23,7 @@ export type AccessMenuDto = {
   name: string;
   path: string;
   group: string;
+  subgroup: string | null;
   sortOrder: number;
   isActive: boolean;
   permissions: Record<string, boolean>;

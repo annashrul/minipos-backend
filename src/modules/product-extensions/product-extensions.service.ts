@@ -19,6 +19,12 @@ import type {
   UpdateBranchPriceDto,
   UpdateProductUnitDto,
   UpdateTierPriceDto,
+  ProductVariantResponse,
+  ProductVariantListResponse,
+  ReplaceProductVariantsDto,
+  ProductBranchSkuResponse,
+  ProductBranchSkuListResponse,
+  ReplaceProductBranchSkusDto,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -487,6 +493,397 @@ export class ProductExtensionsService {
   }
 
   // ============================================================
+  // PRODUCT VARIANTS (matrix SKU per modifier combination)
+  // ============================================================
+
+  async listVariants(
+    companyId: string,
+    productId: string,
+  ): Promise<ProductVariantListResponse> {
+    await this.assertProduct(companyId, productId);
+    const rows = await this.prisma.productVariant.findMany({
+      where: { productId },
+      include: { options: { select: { optionId: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+      variants: rows.map((v) => ({
+        id: v.id,
+        productId: v.productId,
+        priceOverride: v.priceOverride,
+        purchasePriceOverride: v.purchasePriceOverride,
+        stock: v.stock,
+        barcode: v.barcode,
+        isActive: v.isActive,
+        optionIds: v.options.map((o) => o.optionId),
+        createdAt: v.createdAt.toISOString(),
+        updatedAt: v.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  async replaceVariants(
+    companyId: string,
+    productId: string,
+    dto: ReplaceProductVariantsDto,
+  ): Promise<ProductVariantListResponse> {
+    await this.assertProduct(companyId, productId);
+    for (const v of dto.items) {
+      if (new Set(v.optionIds).size !== v.optionIds.length) {
+        throw new BadRequestException(
+          "Tiap variant tidak boleh punya option duplicate",
+        );
+      }
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const incomingIds = dto.items
+        .map((v) => v.id)
+        .filter((id): id is string => Boolean(id));
+      await tx.productVariant.deleteMany({
+        where: {
+          productId,
+          id: { notIn: incomingIds.length ? incomingIds : ["__none__"] },
+        },
+      });
+      for (const item of dto.items) {
+        if (item.id) {
+          await tx.productVariant.update({
+            where: { id: item.id },
+            data: {
+              priceOverride: item.priceOverride ?? null,
+              purchasePriceOverride: item.purchasePriceOverride ?? null,
+              stock: item.stock ?? 0,
+              barcode: item.barcode ?? null,
+              isActive: item.isActive ?? true,
+            },
+          });
+          await tx.productVariantOption.deleteMany({
+            where: { variantId: item.id },
+          });
+          await tx.productVariantOption.createMany({
+            data: item.optionIds.map((optionId) => ({
+              variantId: item.id!,
+              optionId,
+            })),
+            skipDuplicates: true,
+          });
+        } else {
+          const created = await tx.productVariant.create({
+            data: {
+              productId,
+              priceOverride: item.priceOverride ?? null,
+              purchasePriceOverride: item.purchasePriceOverride ?? null,
+              stock: item.stock ?? 0,
+              barcode: item.barcode ?? null,
+              isActive: item.isActive ?? true,
+            },
+          });
+          await tx.productVariantOption.createMany({
+            data: item.optionIds.map((optionId) => ({
+              variantId: created.id,
+              optionId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+    });
+    return this.listVariants(companyId, productId);
+  }
+
+  // Lookup variant by exact set of optionIds.
+  async findVariantByOptions(
+    companyId: string,
+    productId: string,
+    optionIds: string[],
+  ) {
+    if (optionIds.length === 0) return null;
+    await this.assertProduct(companyId, productId);
+    const candidates = await this.prisma.productVariant.findMany({
+      where: { productId, isActive: true },
+      include: { options: { select: { optionId: true } } },
+    });
+    const incoming = new Set(optionIds);
+    const match = candidates.find((v) => {
+      if (v.options.length !== incoming.size) return false;
+      return v.options.every((o) => incoming.has(o.optionId));
+    });
+    if (!match) return null;
+    return {
+      id: match.id,
+      productId: match.productId,
+      priceOverride: match.priceOverride,
+      purchasePriceOverride: match.purchasePriceOverride,
+      stock: match.stock,
+      barcode: match.barcode,
+      isActive: match.isActive,
+      optionIds: match.options.map((o) => o.optionId),
+      createdAt: match.createdAt.toISOString(),
+      updatedAt: match.updatedAt.toISOString(),
+    };
+  }
+
+  // ============================================================
+  // PRODUCT BRANCH SKU (Cabang × Satuan × Varian — single source of truth)
+  // ============================================================
+
+  async listBranchSkus(
+    companyId: string,
+    productId: string,
+  ): Promise<ProductBranchSkuListResponse> {
+    await this.assertProduct(companyId, productId);
+    const rows = await this.prisma.productBranchSku.findMany({
+      where: { productId },
+      orderBy: [{ branchId: "asc" }, { unitId: "asc" }, { variantId: "asc" }],
+    });
+    return {
+      skus: rows.map((s) => ({
+        id: s.id,
+        productId: s.productId,
+        branchId: s.branchId,
+        unitId: s.unitId,
+        variantId: s.variantId,
+        sellingPrice: s.sellingPrice,
+        purchasePrice: s.purchasePrice,
+        stock: s.stock,
+        minStock: s.minStock,
+        barcode: s.barcode,
+        isActive: s.isActive,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  // Replace strategy: hapus SKU lama yang tidak ada di payload, update by id,
+  // create new tanpa id. Validasi uniqueness per (branchId, unitId, variantId).
+  async replaceBranchSkus(
+    companyId: string,
+    productId: string,
+    dto: ReplaceProductBranchSkusDto,
+  ): Promise<ProductBranchSkuListResponse> {
+    await this.assertProduct(companyId, productId);
+
+    // Resolve variantId per item — kalau optionIds di-pass tapi variantId belum,
+    // find-or-create ProductVariant untuk kombinasi tersebut. Ini menghilangkan
+    // kebutuhan tab Varian terpisah — variant otomatis di-upsert saat save SKU.
+    const resolvedItems = await this.prisma.$transaction(async (tx) => {
+      const out: typeof dto.items = [];
+      for (const item of dto.items) {
+        let variantId = item.variantId ?? null;
+        if (!variantId && item.optionIds && item.optionIds.length > 0) {
+          const sortedIncoming = [...item.optionIds].sort().join("|");
+          const candidates = await tx.productVariant.findMany({
+            where: { productId },
+            include: { options: { select: { optionId: true } } },
+          });
+          const matched = candidates.find(
+            (v) => v.options.map((o) => o.optionId).sort().join("|") === sortedIncoming,
+          );
+          if (matched) {
+            variantId = matched.id;
+          } else {
+            const created = await tx.productVariant.create({
+              data: {
+                productId,
+                isActive: true,
+                options: {
+                  create: item.optionIds.map((oid) => ({ optionId: oid })),
+                },
+              },
+            });
+            variantId = created.id;
+          }
+        }
+        out.push({ ...item, variantId });
+      }
+      return out;
+    });
+
+    // Validasi: tidak boleh duplikat (branch, unit, variant) dalam payload.
+    const seenKeys = new Set<string>();
+    for (const item of resolvedItems) {
+      const key = `${item.branchId}|${item.unitId ?? ""}|${item.variantId ?? ""}`;
+      if (seenKeys.has(key)) {
+        throw new BadRequestException(
+          "Duplikat: kombinasi cabang/satuan/varian tidak boleh sama",
+        );
+      }
+      seenKeys.add(key);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const incomingIds = resolvedItems
+        .map((v) => v.id)
+        .filter((id): id is string => Boolean(id));
+      await tx.productBranchSku.deleteMany({
+        where: {
+          productId,
+          id: { notIn: incomingIds.length ? incomingIds : ["__none__"] },
+        },
+      });
+      for (const item of resolvedItems) {
+        if (item.id) {
+          await tx.productBranchSku.update({
+            where: { id: item.id },
+            data: {
+              branchId: item.branchId,
+              unitId: item.unitId ?? null,
+              variantId: item.variantId ?? null,
+              sellingPrice: item.sellingPrice,
+              purchasePrice: item.purchasePrice,
+              stock: item.stock ?? 0,
+              minStock: item.minStock ?? 5,
+              barcode: item.barcode ?? null,
+              isActive: item.isActive ?? true,
+            },
+          });
+        } else {
+          await tx.productBranchSku.create({
+            data: {
+              productId,
+              branchId: item.branchId,
+              unitId: item.unitId ?? null,
+              variantId: item.variantId ?? null,
+              sellingPrice: item.sellingPrice,
+              purchasePrice: item.purchasePrice,
+              stock: item.stock ?? 0,
+              minStock: item.minStock ?? 5,
+              barcode: item.barcode ?? null,
+              isActive: item.isActive ?? true,
+            },
+          });
+        }
+      }
+
+      // Sync ke tabel legacy (BranchStock + BranchProductPrice) supaya
+      // vw_product_branch & list endpoint reflect harga/stok terbaru.
+      // Pakai cell base-unit (unitId = unit dengan conversionQty terkecil
+      // utk produk multi-unit, atau unitId=null kalau no multi-unit) sebagai
+      // representative per branch — sumber tunggal kebenaran ada di matrix.
+      const productUnits = await tx.productUnit.findMany({
+        where: { productId },
+        select: { id: true, conversionQty: true },
+        orderBy: { conversionQty: "asc" },
+      });
+      const baseUnitId = productUnits[0]?.id ?? null;
+
+      const perBranch = new Map<
+        string,
+        { sellingPrice: number; purchasePrice: number; stock: number; minStock: number }
+      >();
+      for (const item of resolvedItems) {
+        // Pilih hanya cell base-unit (atau cell tanpa unit kalau produk
+        // single-unit). Kalau produk multi-unit dan cell bukan base, skip.
+        const isBase = baseUnitId
+          ? item.unitId === baseUnitId
+          : !item.unitId;
+        if (!isBase) continue;
+        // Pilih variant pertama yang ditemui per branch — single value per
+        // branch di tabel legacy (tidak punya breakdown per varian).
+        if (perBranch.has(item.branchId)) continue;
+        perBranch.set(item.branchId, {
+          sellingPrice: item.sellingPrice,
+          purchasePrice: item.purchasePrice,
+          stock: item.stock ?? 0,
+          minStock: item.minStock ?? 5,
+        });
+      }
+
+      for (const [branchId, vals] of perBranch.entries()) {
+        await tx.branchProductPrice.upsert({
+          where: { branchId_productId: { branchId, productId } },
+          create: {
+            branchId,
+            productId,
+            sellingPrice: vals.sellingPrice,
+            purchasePrice: vals.purchasePrice,
+          },
+          update: {
+            sellingPrice: vals.sellingPrice,
+            purchasePrice: vals.purchasePrice,
+          },
+        });
+        await tx.branchStock.upsert({
+          where: { branchId_productId: { branchId, productId } },
+          create: {
+            branchId,
+            productId,
+            quantity: vals.stock,
+            minStock: vals.minStock,
+          },
+          update: {
+            quantity: vals.stock,
+            minStock: vals.minStock,
+          },
+        });
+      }
+
+      // Sync Product.stock juga = total quantity dari semua BranchStock
+      // (avoid double-count antar satuan). Ini yang dipakai list endpoint
+      // global view.
+      const totalStock = [...perBranch.values()].reduce(
+        (sum, v) => sum + v.stock,
+        0,
+      );
+      // Pilih rep cell pertama untuk Product.{purchasePrice,sellingPrice}.
+      const repCell = [...perBranch.values()][0];
+      await tx.product.update({
+        where: { id: productId },
+        data: {
+          stock: totalStock,
+          ...(repCell
+            ? {
+                purchasePrice: repCell.purchasePrice,
+                sellingPrice: repCell.sellingPrice,
+                minStock: repCell.minStock,
+              }
+            : {}),
+        },
+      });
+    });
+
+    return this.listBranchSkus(companyId, productId);
+  }
+
+  // Lookup SKU exact match. Dipakai POS untuk resolve harga & stok saat
+  // customer memilih (cabang, satuan, varian).
+  async findBranchSku(
+    companyId: string,
+    productId: string,
+    branchId: string,
+    unitId: string | null,
+    variantId: string | null,
+  ): Promise<ProductBranchSkuResponse | null> {
+    await this.assertProduct(companyId, productId);
+    const sku = await this.prisma.productBranchSku.findFirst({
+      where: {
+        productId,
+        branchId,
+        unitId: unitId ?? null,
+        variantId: variantId ?? null,
+        isActive: true,
+      },
+    });
+    if (!sku) return null;
+    return {
+      id: sku.id,
+      productId: sku.productId,
+      branchId: sku.branchId,
+      unitId: sku.unitId,
+      variantId: sku.variantId,
+      sellingPrice: sku.sellingPrice,
+      purchasePrice: sku.purchasePrice,
+      stock: sku.stock,
+      minStock: sku.minStock,
+      barcode: sku.barcode,
+      isActive: sku.isActive,
+      createdAt: sku.createdAt.toISOString(),
+      updatedAt: sku.updatedAt.toISOString(),
+    };
+  }
+
+  // ============================================================
   // HELPERS
   // ============================================================
 
@@ -596,3 +993,4 @@ function throwOnBranchPriceDup(err: unknown): void {
     );
   }
 }
+

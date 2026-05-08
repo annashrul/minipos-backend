@@ -27,6 +27,9 @@ export const ListStockMovementsQuerySchema = z.object({
   productId: z.string().optional(),
   branchId: z.string().optional(),
   type: StockMovementTypeSchema.optional(),
+  // Filter ke movement origin spesifik (mis. "manual_adjustment" untuk
+  // halaman Stok Adjustment, "transaction" untuk POS sales).
+  refType: z.string().optional(),
   reference: z.string().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
@@ -43,6 +46,9 @@ export type StockMovementResponse = {
   product: { id: string; name: string; code: string } | null;
   branchId: string | null;
   branch: { id: string; name: string } | null;
+  /** Varian terkait pergerakan (Putih · S). Null untuk produk non-variant. */
+  variantId: string | null;
+  variantLabel: string | null;
   type: string;
   quantity: number;
   note: string | null;
@@ -60,6 +66,10 @@ export type StockMovementListResponse = {
 export const AdjustStockSchema = z.object({
   productId: z.string().min(1),
   branchId: z.string().nullable().optional(),
+  // Optional — di-set kalau user pick SKU spesifik (multi-satuan/varian).
+  // Kalau null, adjust stok di base SKU row (unitId=null, variantId=null).
+  unitId: z.string().nullable().optional(),
+  variantId: z.string().nullable().optional(),
   type: z.enum(["IN", "OUT", "ADJUSTMENT"]),
   quantity: z.number().int().min(1),
   note: z.string().nullable().optional(),
@@ -99,6 +109,9 @@ export type BranchStockListResponse = {
 export const StockCardQuerySchema = z.object({
   productId: z.string().min(1),
   branchId: z.string().optional(),
+  // Filter row movement ke 1 varian saja. Kalau kosong, tampilkan semua
+  // varian (movement non-variant + tiap varian) — UI bisa group sendiri.
+  variantId: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   type: StockMovementTypeSchema.optional(),
@@ -123,6 +136,15 @@ export type StockCardEntry = {
   note: string | null;
   createdBy: string | null;
   branch: { id: string; name: string } | null;
+  /** Varian terkait pergerakan (Putih · S). Null untuk produk non-variant
+   *  atau row legacy sebelum migrasi variant. */
+  variantId: string | null;
+  variantLabel: string | null;
+};
+
+export type StockCardVariantOption = {
+  id: string;
+  label: string;
 };
 
 export type StockCardSummary = {
@@ -136,6 +158,8 @@ export type StockCardSummary = {
 export type StockCardResponse = {
   product: { id: string; name: string; code: string; unit: string } | null;
   branch: { id: string; name: string } | null;
+  /** Daftar varian yang dimiliki produk — UI pakai untuk filter dropdown. */
+  variants: StockCardVariantOption[];
   summary: StockCardSummary;
   entries: StockCardEntry[];
   total: number;

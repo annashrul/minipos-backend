@@ -15,7 +15,15 @@ import type {
 } from "@/contracts";
 
 const GROUP_INCLUDE = {
-  options: { orderBy: { sortOrder: "asc" } as const },
+  options: {
+    orderBy: { sortOrder: "asc" } as const,
+    include: {
+      // Edges di mana option ini = dependent. Frontend pakai parentOptionId
+      // untuk filter visibility — option ini ditampilkan kalau ANY parent
+      // ke-pilih, atau list ini kosong (tanpa constraint).
+      enabledBy: { select: { parentOptionId: true } },
+    },
+  },
 } satisfies Prisma.ModifierGroupInclude;
 
 function toGroupResponse(
@@ -35,6 +43,7 @@ function toGroupResponse(
       priceAdjustment: o.priceAdjustment,
       isActive: o.isActive,
       sortOrder: o.sortOrder,
+      enabledByOptionIds: o.enabledBy.map((e) => e.parentOptionId),
     })),
     createdAt: g.createdAt.toISOString(),
     updatedAt: g.updatedAt.toISOString(),
@@ -116,7 +125,7 @@ export class ModifiersService {
         isActive: dto.isActive ?? true,
         options: dto.options?.length
           ? {
-              create: dto.options.map((o: { name: string; priceAdjustment?: number; isActive?: boolean; sortOrder?: number }, idx: number) => ({
+              create: dto.options.map((o, idx) => ({
                 name: o.name,
                 priceAdjustment: o.priceAdjustment ?? 0,
                 isActive: o.isActive ?? true,
@@ -127,7 +136,29 @@ export class ModifiersService {
       },
       include: GROUP_INCLUDE,
     });
-    return toGroupResponse(created);
+
+    // Persist dependencies (parent ada di group lain — biasanya sudah ada).
+    // Match by name karena option baru belum punya id sebelum create.
+    if (dto.options?.length) {
+      const optionByName = new Map(
+        created.options.map((o) => [o.name, o.id]),
+      );
+      const deps: { parentOptionId: string; dependentOptionId: string }[] = [];
+      for (const o of dto.options) {
+        const dependentId = optionByName.get(o.name);
+        if (!dependentId || !o.enabledByOptionIds?.length) continue;
+        for (const parentId of o.enabledByOptionIds) {
+          deps.push({ parentOptionId: parentId, dependentOptionId: dependentId });
+        }
+      }
+      if (deps.length) {
+        await this.prisma.modifierOptionDependency.createMany({
+          data: deps,
+          skipDuplicates: true,
+        });
+      }
+    }
+    return this.findById(companyId, created.id);
   }
 
   async update(
@@ -170,6 +201,8 @@ export class ModifiersService {
         await tx.modifierOption.deleteMany({
           where: { groupId: id, id: { notIn: incomingIds.length ? incomingIds : ["__none__"] } },
         });
+        // Track final id per dto.options entry (untuk persist deps di bawah).
+        const finalIds: string[] = [];
         for (let idx = 0; idx < dto.options.length; idx++) {
           const opt = dto.options[idx]!;
           if (opt.id) {
@@ -182,8 +215,9 @@ export class ModifiersService {
                 sortOrder: opt.sortOrder ?? idx,
               },
             });
+            finalIds.push(opt.id);
           } else {
-            await tx.modifierOption.create({
+            const created = await tx.modifierOption.create({
               data: {
                 groupId: id,
                 name: opt.name,
@@ -192,7 +226,29 @@ export class ModifiersService {
                 sortOrder: opt.sortOrder ?? idx,
               },
             });
+            finalIds.push(created.id);
           }
+        }
+
+        // Replace strategy untuk dependencies: hapus semua deps yang option
+        // dependent-nya berada di group ini, lalu re-create dari payload.
+        await tx.modifierOptionDependency.deleteMany({
+          where: { dependentOption: { groupId: id } },
+        });
+        const newDeps: { parentOptionId: string; dependentOptionId: string }[] = [];
+        for (let idx = 0; idx < dto.options.length; idx++) {
+          const opt = dto.options[idx]!;
+          const dependentId = finalIds[idx]!;
+          if (!opt.enabledByOptionIds?.length) continue;
+          for (const parentId of opt.enabledByOptionIds) {
+            newDeps.push({ parentOptionId: parentId, dependentOptionId: dependentId });
+          }
+        }
+        if (newDeps.length) {
+          await tx.modifierOptionDependency.createMany({
+            data: newDeps,
+            skipDuplicates: true,
+          });
         }
       }
     });

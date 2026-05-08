@@ -29,6 +29,10 @@ export const PurchaseOrderItemInputSchema = z.object({
   quantity: z.number().int().positive(),
   unitPrice: z.number().nonnegative(),
   subtotal: z.number().nonnegative(),
+  // Optional — di-set saat user pilih SKU spesifik dari ProductSkuChooser
+  // (produk multi-satuan / multi-varian). Backend simpan ke kolom item.
+  unitId: z.string().nullable().optional(),
+  variantId: z.string().nullable().optional(),
 });
 export type PurchaseOrderItemInputDto = z.infer<
   typeof PurchaseOrderItemInputSchema
@@ -60,10 +64,17 @@ export type UpdatePurchaseStatusDto = z.infer<
 >;
 
 export const ReceivePurchaseItemSchema = z.object({
-  productId: z.string().min(1),
+  // Identifikasi item PO yg sedang diterima. Pakai purchaseOrderItemId
+  // wajib supaya untuk produk multi-varian (1 productId = N PO items),
+  // backend bisa nge-match ke PO item yg tepat (variantId+unitId).
+  // productId masih diterima sebagai fallback untuk PO lama.
+  purchaseOrderItemId: z.string().min(1).optional(),
+  productId: z.string().min(1).optional(),
   quantityReceived: z.number().int().positive(),
   unitCost: z.number().nonnegative().optional(),
   notes: z.string().nullable().optional(),
+}).refine((v) => !!v.purchaseOrderItemId || !!v.productId, {
+  message: "purchaseOrderItemId atau productId wajib diisi",
 });
 export type ReceivePurchaseItemDto = z.infer<typeof ReceivePurchaseItemSchema>;
 
@@ -103,6 +114,50 @@ export type ClosePurchaseResponse = {
   debtRemainingAfter: number | null;
 };
 
+// ===== Purchase Transaction Log (Laporan Pembelian) =====
+export const ListPurchaseTransactionLogQuerySchema = z.object({
+  search: z.string().optional(),
+  status: z.string().optional(),
+  documentType: z.string().optional(),
+  branchId: z.string().optional(),
+  // Filter ke PO spesifik — dipakai untuk modal history pergerakan.
+  purchaseOrderId: z.string().optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ListPurchaseTransactionLogQueryDto = z.infer<
+  typeof ListPurchaseTransactionLogQuerySchema
+>;
+
+export type PurchaseTransactionLogResponse = {
+  id: string;
+  purchaseOrderId: string;
+  purchaseOrder: {
+    id: string;
+    orderNumber: string;
+    purchaseTransactionNumber: string | null;
+  } | null;
+  branchId: string | null;
+  branch: { id: string; name: string } | null;
+  documentNumber: string;
+  documentType: string;
+  status: string;
+  amount: number | null;
+  note: string | null;
+  createdBy: string | null;
+  createdByUser: { id: string; name: string } | null;
+  supplier: { id: string; name: string } | null;
+  createdAt: string;
+};
+
+export type PurchaseTransactionLogListResponse = {
+  logs: PurchaseTransactionLogResponse[];
+  total: number;
+  totalPages: number;
+};
+
 export type ReceivePurchaseResponse = {
   receipt: GoodsReceiptResponse;
   purchaseOrder: PurchaseOrderDetailResponse;
@@ -115,10 +170,21 @@ export type PurchaseOrderItemResponse = {
   purchaseOrderId: string;
   productId: string;
   product: { id: string; code: string; name: string } | null;
+  unitId: string | null;
+  unitName: string | null;
+  variantId: string | null;
+  variantLabel: string | null;
   quantity: number;
   receivedQty: number;
   unitPrice: number;
   subtotal: number;
+  // Harga beli master saat ini (diturunkan sesuai konteks: variant override >
+  // unit > product). Frontend pakai utk preview perbandingan harga di dialog
+  // terima.
+  currentMasterPrice: number | null;
+  // Snapshot harga master sebelum receive pertama. Null kalau belum pernah
+  // diterima atau receipt lama sebelum fitur snapshot.
+  previousPurchasePrice: number | null;
 };
 
 export type GoodsReceiptItemResponse = {
@@ -128,6 +194,8 @@ export type GoodsReceiptItemResponse = {
   productName: string;
   quantityOrdered: number;
   quantityReceived: number;
+  unitPrice: number | null;
+  previousPurchasePrice: number | null;
   notes: string | null;
 };
 
@@ -148,6 +216,7 @@ export type GoodsReceiptResponse = {
 export type PurchaseOrderResponse = {
   id: string;
   orderNumber: string;
+  purchaseTransactionNumber: string;
   supplierId: string;
   supplier: { id: string; name: string } | null;
   branchId: string | null;
