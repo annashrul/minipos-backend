@@ -303,38 +303,35 @@ export class DashboardService {
     const now = new Date();
     const expiryCutoff = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    const [expiringCount, overdueDebtCount, pendingApprovalCount, candidates] =
-      await Promise.all([
-        this.prisma.product.count({
-          where: {
-            companyId,
-            isActive: true,
-            deletedAt: null,
-            expiryDate: { gt: now, lte: expiryCutoff },
-          },
-        }),
-        this.prisma.debt.count({
-          where: {
-            companyId,
-            type: "RECEIVABLE",
-            status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
-            dueDate: { lt: now },
-          },
-        }),
-        this.prisma.approvalRequest.count({
-          where: {
-            status: "PENDING",
-            branch: { companyId },
-          },
-        }),
-        this.prisma.product.findMany({
-          where: { companyId, isActive: true, deletedAt: null },
-          select: { stock: true, minStock: true },
-        }),
-      ]);
+    // Note: ApprovalRequest model belum ada di schema Prisma — pendingApproval
+    // selalu 0 sampai modul approval di-implement. Hapus dari Promise.all
+    // supaya build tidak gagal.
+    const [expiringCount, overdueDebtCount, candidates] = await Promise.all([
+      this.prisma.product.count({
+        where: {
+          companyId,
+          isActive: true,
+          deletedAt: null,
+          expiryDate: { gt: now, lte: expiryCutoff },
+        },
+      }),
+      this.prisma.debt.count({
+        where: {
+          companyId,
+          type: "RECEIVABLE",
+          status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
+          dueDate: { lt: now },
+        },
+      }),
+      this.prisma.product.findMany({
+        where: { companyId, isActive: true, deletedAt: null },
+        select: { stock: true, minStock: true },
+      }),
+    ]);
+    const pendingApprovalCount = 0;
 
     const lowStockCount = candidates.filter(
-      (p) => p.stock <= p.minStock,
+      (p: { stock: number; minStock: number }) => p.stock <= p.minStock,
     ).length;
 
     return {
