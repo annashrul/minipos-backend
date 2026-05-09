@@ -32,6 +32,13 @@ export class AccessGuard implements CanActivate {
     const user = req.user;
     if (!user) throw new UnauthorizedException();
 
+    // SUPER_ADMIN & PLATFORM_OWNER selalu di-allow untuk semua aksi —
+    // mencegah lockout kalau action belum di-seed di DB / permission belum
+    // di-grant. Role administratif tidak boleh terjebak oleh konfigurasi.
+    if (user.role === "SUPER_ADMIN" || user.role === "PLATFORM_OWNER") {
+      return true;
+    }
+
     const allowed = await this.hasAccess(user.role, meta.menuKey, meta.actionKey);
     if (!allowed) {
       throw new ForbiddenException("Anda tidak memiliki hak akses untuk aksi ini");
@@ -40,6 +47,10 @@ export class AccessGuard implements CanActivate {
   }
 
   private async hasAccess(role: string, menuKey: string, actionKey: string): Promise<boolean> {
+    // Defensive: kalau dipanggil langsung dari service lain, tetap bypass
+    // role administratif.
+    if (role === "SUPER_ADMIN" || role === "PLATFORM_OWNER") return true;
+
     const cacheKey = `access:${role}:${menuKey}:${actionKey}`;
     const cached = await this.redis.get(cacheKey);
     if (cached !== null) return cached === "1";

@@ -702,16 +702,25 @@ export class TransactionsService {
       // Auto-kirim struk via WhatsApp ke nomor customer kalau ada.
       // Fire-and-forget — jangan block checkout response, jangan gagalkan
       // transaksi kalau WA belum konek / nomor invalid.
+      // Gated by setting `pos.autoSendWhatsappReceipt` (per-cabang dengan
+      // fallback ke company-level). Default true.
       if (dto.customerId) {
-        this.logger.log(
-          `[wa-receipt] dispatch invoice=${created.invoiceNumber} customerId=${dto.customerId}`,
-        );
-        void this.dispatchWhatsappReceipt(
-          companyId,
-          dto.customerId,
-          created.id,
-          created.invoiceNumber,
-        );
+        const autoSendEnabled = await this.shouldAutoSendWhatsapp(branchId);
+        if (autoSendEnabled) {
+          this.logger.log(
+            `[wa-receipt] dispatch invoice=${created.invoiceNumber} customerId=${dto.customerId}`,
+          );
+          void this.dispatchWhatsappReceipt(
+            companyId,
+            dto.customerId,
+            created.id,
+            created.invoiceNumber,
+          );
+        } else {
+          this.logger.log(
+            `[wa-receipt] skip invoice=${created.invoiceNumber} reason=auto-send-disabled`,
+          );
+        }
       } else {
         this.logger.log(
           `[wa-receipt] skip invoice=${created.invoiceNumber} reason=no-customerId`,
@@ -1325,6 +1334,24 @@ export class TransactionsService {
           where: { key: "pos.validateStock", branchId: null },
         });
     const value = (setting ?? fallback)?.value;
+    return value !== "false";
+  }
+
+  private async shouldAutoSendWhatsapp(
+    branchId: string | null,
+  ): Promise<boolean> {
+    const setting = branchId
+      ? await this.prisma.setting.findFirst({
+          where: { key: "pos.autoSendWhatsappReceipt", branchId },
+        })
+      : null;
+    const fallback = setting
+      ? null
+      : await this.prisma.setting.findFirst({
+          where: { key: "pos.autoSendWhatsappReceipt", branchId: null },
+        });
+    const value = (setting ?? fallback)?.value;
+    // Default true (preserve existing behavior). Hanya off kalau eksplisit "false".
     return value !== "false";
   }
 }
