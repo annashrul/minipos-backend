@@ -61,6 +61,7 @@ enum StockMovementType {
 }
 
 enum TransactionStatus {
+  DRAFT
   COMPLETED
   PENDING
   HELD

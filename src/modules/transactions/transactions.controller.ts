@@ -1,6 +1,7 @@
 ﻿import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -90,6 +91,38 @@ export class TransactionsController {
       id,
       body.reason,
     );
+    return { data };
+  }
+
+  @Post(":id/duplicate")
+  @RequireAccess("pos", "create")
+  async duplicate(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+  ) {
+    const data = await this.transactions.duplicate(companyId, user.id, id);
+    return { data };
+  }
+
+  @Post("draft")
+  @RequireAccess("pos", "create")
+  async createDraft(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(CheckoutSchema)) body: CheckoutDto,
+  ) {
+    const data = await this.transactions.createDraft(companyId, user.id, body);
+    return { data };
+  }
+
+  @Delete("draft/:id")
+  @RequireAccess("pos", "create")
+  async deleteDraft(
+    @CurrentCompany() companyId: string,
+    @Param("id") id: string,
+  ) {
+    const data = await this.transactions.deleteDraft(companyId, id);
     return { data };
   }
 

@@ -84,7 +84,7 @@ export type TransactionResponse = {
   branchId: string | null;
   branch: { id: string; name: string } | null;
   customerId: string | null;
-  customer: { id: string; name: string } | null;
+  customer: { id: string; name: string; phone: string | null } | null;
   subtotal: number;
   discountAmount: number;
   taxAmount: number;
@@ -202,6 +202,9 @@ export const CheckoutSchema = z
     notes: z.string().nullable().optional(),
     terminConfig: TerminConfigSchema.nullable().optional(),
     redeemPoints: z.number().int().min(0).optional(),
+    // Edit-mode: kalau di-set, transaksi sumber akan di-void otomatis setelah
+    // checkout sukses (stok sumber di-restore, user-facing seperti "diedit").
+    replaceTransactionId: z.string().nullable().optional(),
   })
   .refine(
     (v) => {

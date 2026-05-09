@@ -32,7 +32,7 @@ const TX_SELECT = {
   branchId: true,
   branch: { select: { id: true, name: true } },
   customerId: true,
-  customer: { select: { id: true, name: true } },
+  customer: { select: { id: true, name: true, phone: true } },
   subtotal: true,
   discountAmount: true,
   taxAmount: true,
@@ -718,6 +718,39 @@ export class TransactionsService {
         );
       }
 
+      // Edit-mode: kalau ada replaceTransactionId, source di-handle setelah
+      // create new sukses (di luar prisma.$transaction utama). Behavior beda
+      // berdasarkan status source:
+      //   - DRAFT     → cukup delete (stok belum dipotong, ledger belum kena)
+      //   - COMPLETED → void supaya stok di-restore (existing flow)
+      // Kalau gagal, log warning saja — transaksi baru sudah jadi.
+      if (dto.replaceTransactionId) {
+        try {
+          const src = await this.prisma.transaction.findFirst({
+            where: { id: dto.replaceTransactionId, user: { companyId } },
+            select: { id: true, status: true },
+          });
+          if (!src) {
+            this.logger.warn(
+              `[edit-tx] source ${dto.replaceTransactionId} tidak ditemukan`,
+            );
+          } else if (src.status === "DRAFT") {
+            await this.prisma.transaction.delete({ where: { id: src.id } });
+          } else {
+            await this.voidTransaction(
+              companyId,
+              userId,
+              dto.replaceTransactionId,
+              `Diedit → diganti dengan ${created.invoiceDisplayNumber ?? created.invoiceNumber}`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[edit-tx] gagal proses source ${dto.replaceTransactionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       return {
         id: created.id,
         invoiceNumber: created.invoiceNumber,
@@ -818,6 +851,252 @@ export class TransactionsService {
       reason,
       "REFUNDED",
     ) as Promise<RefundTransactionResponse>;
+  }
+
+  /**
+   * Simpan transaksi sebagai DRAFT — TANPA potong stok, TANPA bikin payment,
+   * TANPA bikin StockMovement. Cocok untuk kasir yang ingin "tahan" cart
+   * lalu lanjutin nanti / di-edit dulu sebelum bayar. Draft akan muncul di
+   * list transaksi dengan status=DRAFT, bisa di-edit (load ke POS) atau
+   * di-batalkan.
+   */
+  async createDraft(
+    companyId: string,
+    userId: string,
+    dto: CheckoutDto,
+  ): Promise<{
+    id: string;
+    invoiceNumber: string;
+    invoiceDisplayNumber: string | null;
+  }> {
+    if (dto.items.length === 0) {
+      throw new BadRequestException("Cart kosong, tidak bisa simpan draft");
+    }
+    const branchId = dto.branchId ?? null;
+    if (branchId) await this.assertBranch(companyId, branchId);
+    if (dto.customerId) await this.assertCustomer(companyId, dto.customerId);
+    const [company, branch] = await Promise.all([
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { slug: true, name: true },
+      }),
+      branchId
+        ? this.prisma.branch.findUnique({
+            where: { id: branchId },
+            select: { code: true, name: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    const invoiceNumber = `${normalizeCodePart(
+      company?.slug ?? company?.name,
+      "COMPANY",
+    )}-${normalizeCodePart(branch?.code ?? branch?.name, "MAIN")}-${randomInvoicePart(8)}`;
+    const invoiceDisplayNumber = await this.generateDisplayInvoiceNumber(
+      companyId,
+      new Date(),
+    );
+
+    const tx = await this.prisma.transaction.create({
+      data: {
+        invoiceNumber,
+        invoiceDisplayNumber,
+        userId,
+        branchId,
+        customerId: dto.customerId ?? null,
+        status: "DRAFT",
+        subtotal: dto.subtotal,
+        discountAmount: dto.discountAmount ?? 0,
+        taxAmount: dto.taxAmount ?? 0,
+        grandTotal: dto.grandTotal,
+        paymentMethod: dto.paymentMethod,
+        // Draft belum ada pembayaran nyata
+        paymentAmount: 0,
+        changeAmount: 0,
+        notes: dto.notes ?? null,
+        promoApplied: dto.promoApplied ?? null,
+        items: {
+          create: dto.items.map((it) => ({
+            productId: it.productId,
+            productName: it.productName,
+            productCode: it.productCode,
+            quantity: it.quantity,
+            unitName: it.unitName ?? null,
+            conversionQty: it.conversionQty ?? null,
+            unitPrice: it.unitPrice,
+            discount: it.discount ?? 0,
+            subtotal: it.subtotal,
+            ...(Array.isArray(it.modifiers) && it.modifiers.length > 0
+              ? { modifiers: it.modifiers as unknown as Prisma.InputJsonValue }
+              : {}),
+            notes: it.notes ?? null,
+            promoType: it.promoType ?? null,
+            promoName: it.promoName ?? null,
+          })),
+        },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        invoiceDisplayNumber: true,
+      },
+    });
+    return {
+      id: tx.id,
+      invoiceNumber: tx.invoiceNumber,
+      invoiceDisplayNumber: tx.invoiceDisplayNumber ?? null,
+    };
+  }
+
+  /**
+   * Hapus draft transaksi. Hanya boleh untuk status=DRAFT (transaksi
+   * COMPLETED tidak bisa di-delete, harus void/refund).
+   */
+  async deleteDraft(companyId: string, id: string): Promise<{ id: string }> {
+    const tx = await this.prisma.transaction.findFirst({
+      where: { id, user: { companyId } },
+      select: { id: true, status: true },
+    });
+    if (!tx) throw new NotFoundException("Draft tidak ditemukan");
+    if (tx.status !== "DRAFT") {
+      throw new BadRequestException(
+        "Hanya draft yang bisa dihapus. Pakai void/refund untuk transaksi selesai.",
+      );
+    }
+    await this.prisma.transaction.delete({ where: { id } });
+    return { id };
+  }
+
+  /**
+   * Duplikat transaksi: load source → build CheckoutDto → call checkout().
+   * Hasil: transaksi baru dengan invoice number baru, items + payment + harga
+   * sama persis, tapi promo & redeem points di-skip (kontekstual ke transaksi
+   * lama). Stok divalidasi ulang oleh checkout() — kalau habis, error 400.
+   */
+  async duplicate(
+    companyId: string,
+    userId: string,
+    sourceId: string,
+  ): Promise<CheckoutResponse> {
+    const source = await this.prisma.transaction.findFirst({
+      where: { id: sourceId, user: { companyId } },
+      include: {
+        items: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            productId: true,
+            productName: true,
+            productCode: true,
+            quantity: true,
+            unitName: true,
+            conversionQty: true,
+            unitPrice: true,
+            discount: true,
+            subtotal: true,
+            modifiers: true,
+            notes: true,
+            promoType: true,
+          },
+        },
+        payments: {
+          select: {
+            method: true,
+            amount: true,
+            reference: true,
+            personLabel: true,
+          },
+        },
+      },
+    });
+    if (!source)
+      throw new NotFoundException("Transaksi sumber tidak ditemukan");
+    if (source.status !== "COMPLETED") {
+      throw new BadRequestException(
+        "Hanya transaksi COMPLETED yang bisa di-duplikat",
+      );
+    }
+    // Filter item promo (gift, tebus murah) — promo bersifat kontekstual,
+    // harus di-trigger ulang. Item DISCOUNT_PERCENT/AMOUNT di-keep karena
+    // discount sudah ke-snapshot di field `discount` dan `subtotal`.
+    const cleanItems = source.items.filter(
+      (it) => it.promoType !== "GIFT" && it.promoType !== "TEBUS",
+    );
+    if (cleanItems.length === 0) {
+      throw new BadRequestException("Tidak ada item yang bisa di-duplikat");
+    }
+    // Recompute totals supaya konsisten setelah filter promo items.
+    const subtotal = cleanItems.reduce(
+      (sum, it) => sum + it.unitPrice * it.quantity,
+      0,
+    );
+    const discountAmount = cleanItems.reduce(
+      (sum, it) => sum + (it.discount ?? 0),
+      0,
+    );
+    const grandTotal = subtotal - discountAmount + (source.taxAmount ?? 0);
+    const dto: CheckoutDto = {
+      items: cleanItems.map((it) => ({
+        productId: it.productId,
+        productName: it.productName,
+        productCode: it.productCode,
+        quantity: it.quantity,
+        unitName: it.unitName ?? "PCS",
+        conversionQty: it.conversionQty ?? 1,
+        unitPrice: it.unitPrice,
+        discount: it.discount ?? 0,
+        subtotal: it.subtotal,
+        ...(Array.isArray(it.modifiers) && it.modifiers.length > 0
+          ? {
+              modifiers: it.modifiers as unknown as CheckoutDto["items"][number]["modifiers"],
+            }
+          : {}),
+        ...(it.notes ? { notes: it.notes } : {}),
+      })),
+      subtotal,
+      discountAmount,
+      taxAmount: source.taxAmount ?? 0,
+      grandTotal,
+      paymentMethod: source.paymentMethod as CheckoutDto["paymentMethod"],
+      // Bayar = grandTotal supaya tidak buat utang piutang baru. Kalau memang
+      // mau cicilan ulang, user bisa ubah lewat POS biasa, bukan duplikat.
+      paymentAmount: grandTotal,
+      changeAmount: 0,
+      // Kalau source pakai split bill / multi payment, salin sesuai porsi
+      // yang sama tapi clamp totalnya = grandTotal yg baru.
+      ...(source.payments.length > 0
+        ? {
+            payments: source.payments.map((p, idx) => ({
+              method: p.method as CheckoutDto["paymentMethod"],
+              // Split rata kalau totalnya berbeda — fallback adil utk simple case.
+              amount:
+                idx === source.payments.length - 1
+                  ? grandTotal -
+                    source.payments
+                      .slice(0, -1)
+                      .reduce(
+                        (s, x) =>
+                          s +
+                          Math.round(
+                            (x.amount / (source.grandTotal || 1)) * grandTotal,
+                          ),
+                        0,
+                      )
+                  : Math.round(
+                      (p.amount / (source.grandTotal || 1)) * grandTotal,
+                    ),
+              reference: p.reference ?? null,
+              personLabel: p.personLabel ?? null,
+            })),
+          }
+        : {}),
+      ...(source.customerId ? { customerId: source.customerId } : {}),
+      ...(source.branchId ? { branchId: source.branchId } : {}),
+      // Skip promo & redeem points — kontekstual.
+      promoApplied: null,
+      promoIds: [],
+      redeemPoints: 0,
+      notes: `Duplikat dari ${source.invoiceDisplayNumber ?? source.invoiceNumber}`,
+    };
+    return this.checkout(companyId, userId, dto);
   }
 
   private async changeStatusWithRestore(
@@ -1060,7 +1339,7 @@ function toTransactionResponse(t: RawTx): TransactionResponse {
     branchId: t.branchId,
     branch: t.branch ? { id: t.branch.id, name: t.branch.name } : null,
     customerId: t.customerId,
-    customer: t.customer ? { id: t.customer.id, name: t.customer.name } : null,
+    customer: t.customer ? { id: t.customer.id, name: t.customer.name, phone: t.customer.phone } : null,
     subtotal: t.subtotal,
     discountAmount: t.discountAmount,
     taxAmount: t.taxAmount,
