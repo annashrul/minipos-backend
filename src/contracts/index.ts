@@ -52,6 +52,7 @@ export * from "./dtos/notifications";
 export * from "./dtos/pos-activity";
 export * from "./dtos/register";
 export * from "./dtos/whatsapp-receipt";
+export * from "./dtos/whatsapp-bot";
 export * from "./dtos/inventory-forecast";
 export * from "./dtos/installments";
 export * from "./dtos/me";

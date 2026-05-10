@@ -169,6 +169,7 @@ model Company {
   bankReconciliations  BankReconciliation[]
   modifierGroups       ModifierGroup[]
   whatsappSession      WhatsappSession?
+  whatsappBotConfig    WhatsappBotConfig?
 
   @@index([slug])
   @@map("companies")
@@ -1487,6 +1488,39 @@ model WhatsappMessageLog {
 
   @@index([sessionId, createdAt])
   @@map("whatsapp_message_logs")
+}
+
+// Konfigurasi chatbot WhatsApp per company. Bot punya 2 mode:
+// - CUSTOMER: balas FAQ harga/jam buka, cek booking pribadi, daftar layanan
+// - OWNER: cek stok produk, penjualan hari ini, booking hari ini, top product
+// Mode ditentukan dari `fromNumber`:
+// - cocok dengan salah satu `ownerPhones` → OWNER mode
+// - selain itu → CUSTOMER mode (anonymous walaupun belum tercatat di Customer)
+model WhatsappBotConfig {
+  id                   String   @id @default(uuid())
+  companyId            String   @unique @map("company_id")
+  company              Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  enabled              Boolean  @default(false)
+  // Daftar nomor (format normalized 62xxx) yang dianggap sebagai owner —
+  // boleh akses tool data internal (stok, omset, dll). Kosong = tidak ada
+  // owner mode, semua pengirim diperlakukan sebagai customer.
+  ownerPhones          String[] @default([]) @map("owner_phones")
+  // Pengetahuan bisnis bebas-format (jam buka, alamat, FAQ, kebijakan).
+  // Di-stuff ke system prompt customer mode supaya bot bisa jawab tanpa
+  // halusinasi. Kalau kosong, bot fallback minta admin manusia.
+  knowledge            String?  @db.Text
+  systemPromptCustomer String?  @db.Text @map("system_prompt_customer")
+  systemPromptOwner    String?  @db.Text @map("system_prompt_owner")
+  // Model Groq yang dipakai. Default ke versatile (terbaik) — bisa diganti
+  // ke "llama-3.1-8b-instant" untuk hemat rate-limit.
+  model                String   @default("llama-3.3-70b-versatile")
+  // Throttle balas: max 1 reply per nomor per N detik supaya tidak loop kalau
+  // ada bot lain di seberang juga auto-reply.
+  replyThrottleSec     Int      @default(3) @map("reply_throttle_sec")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("whatsapp_bot_configs")
 }
 
 // ===========================

@@ -26,6 +26,7 @@ import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
+import { Public } from "../auth/public.decorator";
 import { RequireAccess } from "../auth/require-access.decorator";
 import { ServiceOrdersService } from "./service-orders.service";
 import { ServiceOrderReminderService } from "./service-order-reminder.service";
@@ -55,6 +56,19 @@ export class ServiceOrdersController {
     query: ListServiceOrdersQueryDto,
   ) {
     const data = await this.svc.list(companyId, query);
+    return { data };
+  }
+
+  // Public endpoint untuk antrian display di TV ruang tunggu bengkel.
+  // No auth — pakai companyId + branchId dari URL. Data dibatasi: hanya field
+  // yang relevan untuk display (no email customer, no estimateAmount, dll).
+  @Get("queue/public/:companyId/:branchId")
+  @Public()
+  async publicQueue(
+    @Param("companyId") companyId: string,
+    @Param("branchId") branchId: string,
+  ) {
+    const data = await this.svc.publicQueue(companyId, branchId);
     return { data };
   }
 

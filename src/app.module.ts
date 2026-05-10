@@ -73,6 +73,7 @@ import { BookingsModule } from "./modules/bookings/bookings.module";
 import { PublicBookingsModule } from "./modules/public-bookings/public-bookings.module";
 import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
+import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatbot.module";
 
 @Module({
   imports: [
@@ -150,6 +151,7 @@ import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-recei
     PublicBookingsModule,
     VouchersModule,
     WhatsappReceiptModule,
+    WhatsappChatbotModule,
   ],
   providers: [
     {

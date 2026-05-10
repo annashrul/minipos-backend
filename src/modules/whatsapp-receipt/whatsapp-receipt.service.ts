@@ -26,8 +26,19 @@ import { waDebugLogSync } from "./wa-debug.logger";
  */
 type SessionStatus = "DISCONNECTED" | "CONNECTING" | "CONNECTED";
 
+/** Tahap detail proses connect WA — UI tampilkan progress stepper. */
+export type SessionStage =
+  | "IDLE" // belum start connect
+  | "PREPARING" // backend init Baileys runtime + fetch protocol version
+  | "QR_READY" // QR code sudah ada, tunggu user scan
+  | "SCANNED" // user sudah scan, WA verify device
+  | "SYNCING" // device verified, sync metadata (chats, contacts)
+  | "CONNECTED" // siap pakai
+  | "FAILED"; // error / disconnected
+
 type SessionView = {
   status: SessionStatus;
+  stage: SessionStage;
   phoneNumber: string | null;
   deviceName: string | null;
   qrCode: string | null;
@@ -93,18 +104,67 @@ function bufferReviver(_key: string, value: unknown): unknown {
   return value;
 }
 
+// Callback yang dipanggil setiap kali pesan inbound (bukan fromMe) sukses
+// di-persist. Dipakai oleh WhatsappChatbotService untuk auto-reply tanpa
+// bikin circular dependency antar module — chatbot module register handler
+// di onModuleInit.
+export type InboundMessageHandler = (params: {
+  companyId: string;
+  fromNumber: string | null;
+  remoteJid: string;
+  content: string | null;
+  fromMe: boolean;
+  isGroup: boolean;
+}) => void | Promise<void>;
+
 @Injectable()
 export class WhatsappReceiptService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(WhatsappReceiptService.name);
   private readonly sockets = new Map<string, WASocket>();
+  private readonly inboundHandlers: InboundMessageHandler[] = [];
+
+  /** Register handler dipanggil setiap inbound message. Idempotent — handler
+   * dipanggil after-persist supaya log sudah ada saat handler query DB. */
+  registerInboundHandler(h: InboundMessageHandler): void {
+    this.inboundHandlers.push(h);
+  }
+
+  // Stage progress tracker per company. In-memory karena event-driven —
+  // hilang saat backend restart tapi akan re-derive dari DB status.
+  private readonly stages = new Map<string, SessionStage>();
+  // Hitung consecutive close fail per company. Kalau mencapai threshold,
+  // creds di-bersihkan supaya user scan QR ulang (creds stale / device
+  // di-unlink dari WA).
+  private readonly consecutiveFailures = new Map<string, number>();
+  private static readonly MAX_FAILURES_BEFORE_CLEAR = 3;
   private baileysRuntime: BaileysRuntime | null = null;
+  // Cache WA version supaya tidak hit network call setiap connect.
+  // fetchLatestBaileysVersion() bisa 5-30 detik kalau network lambat — itu
+  // bottleneck utama saat user scan QR pertama kali. Cache 6 jam aman karena
+  // WA jarang naik versi protocol.
+  private cachedBaileysVersion: { version: number[]; cachedAt: number } | null = null;
+  private static readonly BAILEYS_VERSION_TTL_MS = 6 * 60 * 60 * 1000;
+  // Fallback hardcoded — dipakai kalau network call timeout/error.
+  // Sinkron dengan default di node_modules baileys 7.0.0-rc.9.
+  // Penting: versi yang TERLALU LAMA bikin WA reject device linking dengan
+  // pesan "perangkat tidak dapat ditautkan". Update saat upgrade Baileys.
+  private static readonly FALLBACK_BAILEYS_VERSION = [2, 3000, 1027934701];
+  // Timeout cukup longgar (8s) supaya kalau network OK tapi sedikit lambat,
+  // kita tetap dapat versi terbaru. Hanya fallback ke hardcoded saat real error.
+  private static readonly FETCH_VERSION_TIMEOUT_MS = 8_000;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
+
+  /** Set + emit stage progress connect — dipakai UI untuk tampilkan stepper. */
+  private setStage(companyId: string, stage: SessionStage) {
+    this.stages.set(companyId, stage);
+    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, { companyId, stage });
+  }
 
   /** Emit realtime event saat status sesi WA berubah supaya UI auto-refresh. */
   private emitSessionUpdate(
@@ -135,18 +195,35 @@ export class WhatsappReceiptService
   private async persistInboundMessages(
     sessionId: string,
     messages: Array<{
-      key: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null };
+      key: {
+        remoteJid?: string | null;
+        fromMe?: boolean | null;
+        id?: string | null;
+        // Baileys 7.x kasih `senderPn` (sender phone number) saat source-nya
+        // adalah LID — berisi JID `62XXX@s.whatsapp.net` real. Kita prefer
+        // ini supaya throttle, role detection, dan tool customer phone
+        // tetap bekerja walaupun JID utamanya `@lid`.
+        senderPn?: string | null;
+      };
       message?: Record<string, unknown> | null;
       messageTimestamp?: number | Long | null;
       pushName?: string | null;
     }>,
+    companyId?: string,
   ): Promise<void> {
     for (const m of messages) {
       if (m.key.fromMe) continue;
       const providerId = m.key.id ?? null;
       if (!providerId) continue;
       const remoteJid = m.key.remoteJid ?? "";
-      const fromNumber = remoteJid.split("@")[0] || null;
+      // Prefer senderPn kalau ada — itu phone real (`62XXX@s.whatsapp.net`).
+      // remoteJid bisa berisi LID anonim (`<random>@lid`) untuk kontak yang
+      // belum tersimpan; LID tidak bisa di-match ke customer.phone di DB.
+      const phoneJid = m.key.senderPn ?? null;
+      const fromNumber =
+        (phoneJid ? phoneJid.split("@")[0] : null) ||
+        remoteJid.split("@")[0] ||
+        null;
 
       // Idempotency: skip kalau sudah ada
       const existing = await this.prisma.whatsappMessageLog.findFirst({
@@ -168,6 +245,42 @@ export class WhatsappReceiptService
           providerMessageId: providerId,
         },
       });
+
+      // Notify handlers (chatbot dll). Group chat (`@g.us`) di-skip supaya
+      // bot tidak ikut nimbrung di group bisnis. Status broadcast juga skip.
+      if (companyId && this.inboundHandlers.length > 0) {
+        const isGroup = remoteJid.endsWith("@g.us");
+        const isStatus = remoteJid === "status@broadcast";
+        if (!isStatus) {
+          for (const h of this.inboundHandlers) {
+            try {
+              const r = h({
+                companyId,
+                fromNumber,
+                remoteJid,
+                content,
+                fromMe: false,
+                isGroup,
+              });
+              if (r instanceof Promise) {
+                r.catch((err: unknown) => {
+                  this.logger.warn(
+                    `[wa] inbound handler error: ${
+                      err instanceof Error ? err.message : "unknown"
+                    }`,
+                  );
+                });
+              }
+            } catch (err) {
+              this.logger.warn(
+                `[wa] inbound handler sync error: ${
+                  err instanceof Error ? err.message : "unknown"
+                }`,
+              );
+            }
+          }
+        }
+      }
     }
   }
 
@@ -260,6 +373,53 @@ export class WhatsappReceiptService
     return this.baileysRuntime;
   }
 
+  /**
+   * Resolve WA protocol version dengan strategi (urutan):
+   *   1. Cache memory kalau masih < TTL (6 jam)
+   *   2. Network fetch via fetchLatestBaileysVersion(), capped 3 detik
+   *   3. Fallback hardcoded version (mostly compatible)
+   *
+   * Sebelumnya: panggil fetchLatestBaileysVersion() langsung, bisa hang
+   * 5-30 detik kalau jaringan ke server Baileys lambat → user nunggu QR lama.
+   */
+  private async resolveBaileysVersion(
+    baileys: BaileysRuntime,
+  ): Promise<number[]> {
+    const now = Date.now();
+    if (
+      this.cachedBaileysVersion &&
+      now - this.cachedBaileysVersion.cachedAt <
+        WhatsappReceiptService.BAILEYS_VERSION_TTL_MS
+    ) {
+      return this.cachedBaileysVersion.version;
+    }
+    try {
+      const result = await Promise.race([
+        baileys.fetchLatestBaileysVersion(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("fetch-version-timeout")),
+            WhatsappReceiptService.FETCH_VERSION_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      const version = (result as { version: number[] }).version;
+      this.cachedBaileysVersion = { version, cachedAt: now };
+      return version;
+    } catch (err) {
+      this.logger.warn(
+        `[wa-receipt] fetchLatestBaileysVersion failed (${err instanceof Error ? err.message : String(err)}), pakai fallback ${WhatsappReceiptService.FALLBACK_BAILEYS_VERSION.join(".")}`,
+      );
+      // Cache fallback dengan TTL pendek (15 menit) supaya retry network call
+      // lebih cepat kalau jaringan sudah pulih.
+      this.cachedBaileysVersion = {
+        version: WhatsappReceiptService.FALLBACK_BAILEYS_VERSION,
+        cachedAt: now - WhatsappReceiptService.BAILEYS_VERSION_TTL_MS + 15 * 60 * 1000,
+      };
+      return WhatsappReceiptService.FALLBACK_BAILEYS_VERSION;
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     for (const [companyId, sock] of this.sockets.entries()) {
       try {
@@ -273,6 +433,8 @@ export class WhatsappReceiptService
 
   async getSession(companyId: string): Promise<SessionView> {
     const row = await this.ensureSession(companyId);
+    const sock = this.sockets.get(companyId);
+    const hasSocket = Boolean(sock);
     waDebugLogSync({
       event: "getSession",
       companyId,
@@ -282,7 +444,31 @@ export class WhatsappReceiptService
       phoneNumber: row.phoneNumber,
       lastError: row.lastError,
       hasCreds: row.authCreds !== null,
+      hasSocket,
     });
+
+    // Ghost CONNECTING recovery — kalau status di DB CONNECTING (sisa dari
+    // attempt sebelumnya yang hang) tapi tidak ada socket di memory dan
+    // ada creds, trigger reconnect background. Tanpa ini, user yang refresh
+    // browser saat window resume in-flight bakal lihat PreparingView terus
+    // tanpa progress (kalau realtime socket hilang, polling fallback tetap
+    // perlu data baru — yang baru ada setelah reconnect jalan).
+    if (
+      row.status === "CONNECTING" &&
+      !hasSocket &&
+      row.authCreds !== null &&
+      !row.qrCode
+    ) {
+      // Fire-and-forget — tidak block response getSession.
+      this.connect(companyId, false).catch((err) => {
+        this.logger.warn(
+          `[wa] ghost-recovery reconnect failed company=${companyId}: ${
+            err instanceof Error ? err.message : "unknown"
+          }`,
+        );
+      });
+    }
+
     return this.toSessionView(row);
   }
 
@@ -320,12 +506,17 @@ export class WhatsappReceiptService
     }
 
     const session = session0;
+    this.setStage(companyId, "PREPARING");
     const baileys = await this.getBaileysRuntime();
     const auth = await this.buildAuthState(
       session.id,
       session.authCreds as Record<string, unknown> | null,
     );
-    const { version } = await baileys.fetchLatestBaileysVersion();
+    const version = (await this.resolveBaileysVersion(baileys)) as [
+      number,
+      number,
+      number,
+    ];
     waDebugLogSync({
       event: "connect.makeSocket",
       companyId,
@@ -373,6 +564,7 @@ export class WhatsappReceiptService
       void this.persistInboundMessages(
         session.id,
         m.messages as unknown as Parameters<typeof this.persistInboundMessages>[1],
+        companyId,
       ).catch((err) => {
         waDebugLogSync({
           event: "messages.upsert.persist.error",
@@ -469,6 +661,7 @@ export class WhatsappReceiptService
             lastError: null,
           },
         });
+        this.setStage(companyId, "QR_READY");
         this.emitSessionUpdate(companyId, { status: "CONNECTING", hasQr: true });
         if (resolveFirstQr) {
           resolveFirstQr();
@@ -476,7 +669,32 @@ export class WhatsappReceiptService
         }
       }
 
+      // isNewLogin TRUE saat user baru saja scan QR — device verified, mulai
+      // handshake. Sebelum connection 'open', bisa beberapa detik.
+      if (isNewLogin) {
+        this.setStage(companyId, "SCANNED");
+      }
+
+      // receivedPendingNotifications: WA server kirim metadata sync setelah
+      // device verified. Kalau masih CONNECTING tapi sudah dapat ini, berarti
+      // tahap sync.
+      if (receivedPendingNotifications && connection !== "open") {
+        this.setStage(companyId, "SYNCING");
+      }
+
+      // 'connecting' setelah QR muncul tapi sebelum 'open' tanpa isNewLogin —
+      // implicit user sudah scan & WA sedang sync. Jangan overwrite SCANNED
+      // (lebih informatif untuk user — biarkan visible sebentar).
+      if (connection === "connecting" && !qr && !isNewLogin) {
+        const currentStage = this.stages.get(companyId);
+        if (currentStage === "QR_READY") {
+          this.setStage(companyId, "SYNCING");
+        }
+      }
+
       if (connection === "open") {
+        // Reset failure counter — koneksi sukses.
+        this.consecutiveFailures.delete(companyId);
         const phone = extractPhoneFromJid(sock.user?.id);
         waDebugLogSync({
           event: "scan.success",
@@ -496,6 +714,7 @@ export class WhatsappReceiptService
             lastError: null,
           },
         });
+        this.setStage(companyId, "CONNECTED");
         this.emitSessionUpdate(companyId, {
           status: "CONNECTED",
           hasQr: false,
@@ -517,15 +736,44 @@ export class WhatsappReceiptService
             0,
         );
         const loggedOut = statusCode === baileys.DisconnectReason.loggedOut;
+        const badSession = statusCode === baileys.DisconnectReason.badSession;
+        const multideviceMismatch =
+          statusCode === baileys.DisconnectReason.multideviceMismatch;
+        // "Connection Failure" generic error code 0 — bisa karena creds stale
+        // (device di-unlink dari WA app) atau transient network. Track via
+        // counter consecutive failure.
+        const isTerminal = loggedOut || badSession || multideviceMismatch;
+        const prevFailures = this.consecutiveFailures.get(companyId) ?? 0;
+        const newFailures = isTerminal ? prevFailures : prevFailures + 1;
+        this.consecutiveFailures.set(companyId, newFailures);
+        const exceededFailures =
+          newFailures >= WhatsappReceiptService.MAX_FAILURES_BEFORE_CLEAR;
+        // Bersihkan creds + STOP auto-reconnect kalau terminal atau exceeded
+        // — supaya user scan QR ulang, tidak stuck di loop.
+        const shouldClearCreds = isTerminal || exceededFailures;
         const reason = lastDisconnect?.error?.message || "Disconnected";
+        const friendlyReason = shouldClearCreds
+          ? loggedOut
+            ? "Sesi WhatsApp di-logout dari device. Scan QR ulang."
+            : badSession
+              ? "Sesi rusak. Scan QR ulang."
+              : multideviceMismatch
+                ? "Device tidak cocok. Scan QR ulang."
+                : `Koneksi gagal ${newFailures}x berturut. Sesi mungkin expired — scan QR ulang.`
+          : reason;
+        this.setStage(companyId, shouldClearCreds ? "IDLE" : "FAILED");
 
         waDebugLogSync({
           event: "connection.close",
           companyId,
           statusCode,
           loggedOut,
+          badSession,
+          multideviceMismatch,
+          consecutiveFailures: newFailures,
+          shouldClearCreds,
           reason,
-          willAutoReconnect: !loggedOut,
+          willAutoReconnect: !shouldClearCreds,
         });
 
         await this.prisma.whatsappSession.update({
@@ -534,13 +782,17 @@ export class WhatsappReceiptService
             status: "DISCONNECTED",
             qrCode: null,
             lastDisconnectedAt: new Date(),
-            lastError: reason,
+            lastError: friendlyReason,
+            ...(shouldClearCreds ? { authCreds: Prisma.JsonNull } : {}),
           },
         });
+        if (shouldClearCreds) {
+          this.consecutiveFailures.delete(companyId);
+        }
         this.emitSessionUpdate(companyId, {
           status: "DISCONNECTED",
           hasQr: false,
-          reason,
+          reason: friendlyReason,
         });
         this.sockets.delete(companyId);
         if (resolveFirstQr) {
@@ -548,7 +800,9 @@ export class WhatsappReceiptService
           resolveFirstQr = null;
         }
 
-        if (!loggedOut) {
+        if (!shouldClearCreds) {
+          // Backoff exponential: 2s, 4s, 8s.
+          const backoffMs = Math.min(8_000, 2_000 * Math.pow(2, newFailures - 1));
           setTimeout(() => {
             this.connect(companyId, false).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : "Unknown error";
@@ -556,7 +810,7 @@ export class WhatsappReceiptService
                 `Auto reconnect failed company=${companyId}: ${msg}`,
               );
             });
-          }, 2_000);
+          }, backoffMs);
         }
       }
     });
@@ -1016,6 +1270,133 @@ export class WhatsappReceiptService
     return this.sendText(companyId, phone, text);
   }
 
+  /**
+   * Kirim text ke JID lengkap apa adanya — dipakai oleh chatbot untuk balas
+   * inbound. Beda dengan `sendText` yang normalize phone ke
+   * `XXX@s.whatsapp.net`, method ini accept format apapun (mis. `@lid`,
+   * `@s.whatsapp.net`, `@g.us`) supaya kompatibel dengan kontak yang belum
+   * tersimpan (WA pakai LID anonymous untuk chat baru).
+   *
+   * Kalau input bukan JID (tidak ada `@`), fallback ke flow `sendText`
+   * normal supaya call site existing tidak rusak.
+   */
+  async sendTextToJid(
+    companyId: string,
+    jidOrPhone: string,
+    message: string,
+  ): Promise<{ success: true; messageId?: string }> {
+    if (!jidOrPhone.includes("@")) {
+      return this.sendText(companyId, jidOrPhone, message);
+    }
+
+    let session = await this.ensureSession(companyId);
+    let sock = this.sockets.get(companyId);
+
+    // Auto-reconnect kalau socket hilang dari memori (sama seperti sendText).
+    if (!sock && session.authCreds !== null) {
+      try {
+        await this.connect(companyId, false);
+      } catch (err) {
+        waDebugLogSync({
+          event: "sendTextToJid.autoReconnect.error",
+          companyId,
+          msg: err instanceof Error ? err.message : "unknown",
+        });
+      }
+      const deadline = Date.now() + 12_000;
+      while (Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 500));
+        sock = this.sockets.get(companyId);
+        session = await this.ensureSession(companyId);
+        if (sock && session.status === "CONNECTED") break;
+      }
+    }
+
+    if (!sock) {
+      throw new NotFoundException(
+        "Koneksi WhatsApp belum aktif. Silakan connect terlebih dahulu.",
+      );
+    }
+    if (session.status !== "CONNECTED") {
+      throw new BadRequestException(
+        `Sesi belum siap (status: ${session.status}). Tunggu hingga CONNECTED.`,
+      );
+    }
+
+    // Tolak group + status broadcast — bot tidak boleh nimbrung.
+    if (jidOrPhone.endsWith("@g.us") || jidOrPhone === "status@broadcast") {
+      throw new BadRequestException(
+        "Tidak bisa kirim ke group / status broadcast.",
+      );
+    }
+
+    waDebugLogSync({
+      event: "sendTextToJid.dispatch",
+      companyId,
+      jid: jidOrPhone,
+      messageLen: message.length,
+    });
+
+    const t0 = Date.now();
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () =>
+          reject(
+            new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
+          ),
+        30_000,
+      );
+    });
+    const sendPromise = sock.sendMessage(jidOrPhone, { text: message });
+
+    try {
+      const res = await Promise.race([sendPromise, timeoutPromise]);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      const messageId = res?.key?.id || undefined;
+      waDebugLogSync({
+        event: "sendTextToJid.success",
+        companyId,
+        elapsedMs: Date.now() - t0,
+        messageId,
+        toJid: res?.key?.remoteJid ?? null,
+      });
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: jidOrPhone.split("@")[0] ?? null,
+          messageType: "text",
+          content: message,
+          status: "SENT",
+          providerMessageId: messageId ?? null,
+        },
+      });
+      return { success: true, messageId };
+    } catch (err) {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
+      waDebugLogSync({
+        event: "sendTextToJid.error",
+        companyId,
+        elapsedMs: Date.now() - t0,
+        errorMsg,
+      });
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: jidOrPhone.split("@")[0] ?? null,
+          messageType: "text",
+          content: message,
+          status: "FAILED",
+          errorMessage: errorMsg,
+        },
+      });
+      throw err;
+    }
+  }
+
   async generateReceiptText(
     companyId: string,
     transactionId: string,
@@ -1177,8 +1558,42 @@ export class WhatsappReceiptService
   private toSessionView(
     row: Awaited<ReturnType<WhatsappReceiptService["ensureSession"]>>,
   ): SessionView {
+    const status = (row.status as SessionStatus) ?? "DISCONNECTED";
+    // Combine: memory tracker (real-time, lebih advance kalau ada) + derive
+    // dari DB row (selalu konsisten, tapi terbatas info). Pilih yang stage-nya
+    // paling tinggi supaya stepper tidak mundur kalau memory hilang/stale.
+    const memStage = this.stages.get(row.companyId) ?? null;
+    const derivedStage: SessionStage = (() => {
+      if (status === "CONNECTED") return "CONNECTED";
+      if (status === "CONNECTING" && row.qrCode) return "QR_READY";
+      if (status === "CONNECTING") return "PREPARING";
+      return "IDLE";
+    })();
+    const stageOrder: Record<SessionStage, number> = {
+      IDLE: 0,
+      PREPARING: 1,
+      QR_READY: 2,
+      SCANNED: 3,
+      SYNCING: 4,
+      CONNECTED: 5,
+      FAILED: -1,
+    };
+    let stage: SessionStage;
+    if (memStage && memStage !== "FAILED") {
+      // Memory ada → ambil yang paling advance antara mem & derived.
+      stage =
+        stageOrder[memStage] >= stageOrder[derivedStage]
+          ? memStage
+          : derivedStage;
+    } else if (memStage === "FAILED") {
+      // Kalau gagal, prefer derived kalau status bukan DISCONNECTED.
+      stage = status === "DISCONNECTED" ? "FAILED" : derivedStage;
+    } else {
+      stage = derivedStage;
+    }
     return {
-      status: (row.status as SessionStatus) ?? "DISCONNECTED",
+      status,
+      stage,
       phoneNumber: row.phoneNumber ?? null,
       deviceName: row.deviceName ?? null,
       qrCode: row.qrCode ?? null,

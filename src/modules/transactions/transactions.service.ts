@@ -732,26 +732,71 @@ export class TransactionsService {
       // berdasarkan status source:
       //   - DRAFT     → cukup delete (stok belum dipotong, ledger belum kena)
       //   - COMPLETED → void supaya stok di-restore (existing flow)
-      // Kalau gagal, log warning saja — transaksi baru sudah jadi.
+      // Setelah source disposed, transfer invoiceNumber + createdAt source ke
+      // tx baru supaya secara user-facing seperti "edit in-place" (no/tanggal
+      // tidak berubah). Source yg di-void di-rename invoice-nya supaya tidak
+      // bentrok dgn unique constraint.
+      // Kalau gagal, log warning — transaksi baru sudah jadi.
+      let finalInvoiceNumber = created.invoiceNumber;
+      let finalInvoiceDisplayNumber = created.invoiceDisplayNumber;
       if (dto.replaceTransactionId) {
         try {
           const src = await this.prisma.transaction.findFirst({
             where: { id: dto.replaceTransactionId, user: { companyId } },
-            select: { id: true, status: true },
+            select: {
+              id: true,
+              status: true,
+              invoiceNumber: true,
+              invoiceDisplayNumber: true,
+              createdAt: true,
+            },
           });
           if (!src) {
             this.logger.warn(
               `[edit-tx] source ${dto.replaceTransactionId} tidak ditemukan`,
             );
-          } else if (src.status === "DRAFT") {
-            await this.prisma.transaction.delete({ where: { id: src.id } });
           } else {
-            await this.voidTransaction(
-              companyId,
-              userId,
-              dto.replaceTransactionId,
-              `Diedit → diganti dengan ${created.invoiceDisplayNumber ?? created.invoiceNumber}`,
-            );
+            // Capture identitas source utk transfer ke tx baru.
+            const preserveInvoice = src.invoiceNumber;
+            const preserveDisplay = src.invoiceDisplayNumber;
+            const preserveCreatedAt = src.createdAt;
+
+            if (src.status === "DRAFT") {
+              // Draft → langsung delete (free up invoice + tidak ada ledger).
+              await this.prisma.transaction.delete({ where: { id: src.id } });
+            } else {
+              // COMPLETED → rename invoice source dulu (supaya unique
+              // constraint tidak collide), lalu void.
+              const renamedInvoice = `${src.invoiceNumber}-EDIT-${Date.now()}`;
+              const renamedDisplay = src.invoiceDisplayNumber
+                ? `${src.invoiceDisplayNumber}-EDIT`
+                : null;
+              await this.prisma.transaction.update({
+                where: { id: src.id },
+                data: {
+                  invoiceNumber: renamedInvoice,
+                  invoiceDisplayNumber: renamedDisplay,
+                },
+              });
+              await this.voidTransaction(
+                companyId,
+                userId,
+                src.id,
+                `Diedit → diganti dengan ${preserveDisplay ?? preserveInvoice}`,
+              );
+            }
+
+            // Transfer identitas source ke tx baru.
+            await this.prisma.transaction.update({
+              where: { id: created.id },
+              data: {
+                invoiceNumber: preserveInvoice,
+                invoiceDisplayNumber: preserveDisplay,
+                createdAt: preserveCreatedAt,
+              },
+            });
+            finalInvoiceNumber = preserveInvoice;
+            finalInvoiceDisplayNumber = preserveDisplay;
           }
         } catch (err) {
           this.logger.warn(
@@ -762,8 +807,8 @@ export class TransactionsService {
 
       return {
         id: created.id,
-        invoiceNumber: created.invoiceNumber,
-        invoiceDisplayNumber: created.invoiceDisplayNumber ?? null,
+        invoiceNumber: finalInvoiceNumber,
+        invoiceDisplayNumber: finalInvoiceDisplayNumber ?? null,
         pointsEarned: created.pointsEarned,
         pointsRedeemed: created.pointsRedeemed,
       };

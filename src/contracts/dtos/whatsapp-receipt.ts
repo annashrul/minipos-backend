@@ -55,8 +55,19 @@ export type WhatsAppBaileysSendReceiptBodyDto = z.infer<
   typeof WhatsAppBaileysSendReceiptBodySchema
 >;
 
+/** Tahap detail proses connect WA — UI tampilkan progress stepper. */
+export type WhatsAppBaileysStage =
+  | "IDLE"
+  | "PREPARING"
+  | "QR_READY"
+  | "SCANNED"
+  | "SYNCING"
+  | "CONNECTED"
+  | "FAILED";
+
 export type WhatsAppBaileysSessionResponse = {
   status: "DISCONNECTED" | "CONNECTING" | "CONNECTED";
+  stage: WhatsAppBaileysStage;
   phoneNumber: string | null;
   deviceName: string | null;
   qrCode: string | null;

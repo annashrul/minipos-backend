@@ -84,6 +84,54 @@ export class ServiceOrdersService {
     private readonly realtime: RealtimeService,
   ) {}
 
+  /**
+   * Public list untuk queue display di TV bengkel. No auth — caller pass
+   * companyId + branchId di URL. Return field minimum yang relevan untuk
+   * display: tidak ada estimateAmount, finalAmount, mileage, dll. Termasuk
+   * status DIBAYAR yang baru lewat 30 menit (recent pickup).
+   */
+  async publicQueue(companyId: string, branchId: string) {
+    const RECENTLY_DONE_MS = 30 * 60 * 1000;
+    const recentCutoff = new Date(Date.now() - RECENTLY_DONE_MS);
+    const items = await this.prisma.serviceOrder.findMany({
+      where: {
+        companyId,
+        branchId,
+        OR: [
+          {
+            status: {
+              in: ["ANTRIAN", "DIAGNOSA", "MENUNGGU_APPROVAL", "DIKERJAKAN", "SELESAI"],
+            },
+          },
+          { status: "DIBAYAR", paidAt: { gte: recentCutoff } },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        complaint: true,
+        createdAt: true,
+        startedAt: true,
+        completedAt: true,
+        vehicle: {
+          select: {
+            plateNumber: true,
+            type: true,
+            // Brand & model relations — pakai name field-nya saja.
+            brand: { select: { name: true } },
+            modelRef: { select: { name: true } },
+          },
+        },
+        customer: { select: { name: true } },
+        mechanic: { select: { name: true } },
+      },
+    });
+    return { items };
+  }
+
   async list(
     companyId: string,
     query: ListServiceOrdersQueryDto,
@@ -203,6 +251,12 @@ export class ServiceOrdersService {
       id: created.id,
       orderNumber: created.orderNumber,
     });
+    this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
+      id: created.id,
+      orderNumber: created.orderNumber,
+      status: created.status,
+      branchId: created.branchId ?? null,
+    });
 
     return toResponse(created);
   }
@@ -269,6 +323,12 @@ export class ServiceOrdersService {
       data,
       include: SO_INCLUDE,
     });
+    this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
+      id: updated.id,
+      orderNumber: updated.orderNumber,
+      status: updated.status,
+      branchId: updated.branchId ?? null,
+    });
     return toResponse(updated);
   }
 
@@ -320,6 +380,12 @@ export class ServiceOrdersService {
       where: { id },
       data,
       include: SO_INCLUDE,
+    });
+    this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
+      id: updated.id,
+      orderNumber: updated.orderNumber,
+      status: updated.status,
+      branchId: updated.branchId ?? null,
     });
     return toResponse(updated);
   }
@@ -443,6 +509,12 @@ export class ServiceOrdersService {
       type: "service-order-finalize",
       id: result.id,
       transactionId: result.transactionId,
+    });
+    this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
+      id: result.id,
+      orderNumber: result.orderNumber,
+      status: result.status,
+      branchId: result.branchId ?? null,
     });
 
     return toResponse(result);

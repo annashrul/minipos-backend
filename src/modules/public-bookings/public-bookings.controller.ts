@@ -44,13 +44,26 @@ export const PublicCreateBookingSchema = z.object({
   serviceType: z.string().trim().min(1, "Jenis service wajib diisi"),
   complaint: z.string().trim().nullable().optional(),
   // Token bukti nomor sudah verified via OTP. Diperoleh dari endpoint
-  // /otp/verify dan TTL 30 menit.
-  verifiedToken: z.string().min(1, "Verifikasi nomor WhatsApp dulu"),
+  // /otp/verify dan TTL 30 menit. OPSIONAL: kalau customer existing
+  // (existingCustomerId di-set), backend akan trust phone match → skip OTP.
+  verifiedToken: z.string().optional(),
+  // Kalau customer sudah terdaftar (lookup endpoint return found), pass
+  // customerId sini supaya backend skip OTP (trusted: phone match record).
+  existingCustomerId: z.string().optional(),
 });
 
 export type PublicCreateBookingDto = z.infer<typeof PublicCreateBookingSchema>;
 
 export const PublicOtpRequestSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .min(8, "Nomor HP minimal 8 digit")
+    .max(20, "Nomor HP maksimal 20 digit"),
+});
+
+// Lookup customer by phone — supaya FE bisa skip OTP kalau customer existing.
+export const PublicLookupSchema = z.object({
   phone: z
     .string()
     .trim()
@@ -129,6 +142,82 @@ export class PublicBookingsController {
           phone: company.phone,
         },
         branches,
+      },
+    };
+  }
+
+  /**
+   * POST /public/bookings/:slug/lookup — cek apakah nomor HP sudah ada di
+   * database customer company tsb. Kalau ada, FE skip OTP step + auto-fill
+   * nama + tampilkan kendaraan customer.
+   */
+  @Public()
+  @Post(":slug/lookup")
+  async lookupCustomer(
+    @Param("slug") slug: string,
+    @Body(new ZodValidationPipe(PublicLookupSchema))
+    body: { phone: string },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { slug },
+      select: { id: true, businessUnit: true },
+    });
+    if (!company || company.businessUnit !== "BENGKEL") {
+      throw new NotFoundException("Bengkel tidak ditemukan");
+    }
+    const phone = normalizePhone(body.phone);
+    // Customer phone di DB bisa stored dalam format inkonsisten (kasir input
+    // "0857..." atau "+62857..." atau "62857..."). Match multi-format supaya
+    // lookup robust.
+    const phoneVariants = Array.from(
+      new Set([
+        phone, // normalized 62-prefix
+        body.phone.trim(), // raw user input
+        phone.startsWith("62") ? "0" + phone.slice(2) : phone, // 0-prefix
+        phone.startsWith("62") ? "+" + phone : phone, // +62 prefix
+      ]),
+    );
+    const customer = await this.prisma.customer.findFirst({
+      where: {
+        companyId: company.id,
+        phone: { in: phoneVariants },
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        vehicles: {
+          where: { isActive: true },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: {
+            id: true,
+            plateNumber: true,
+            type: true,
+            brand: { select: { name: true } },
+            modelRef: { select: { name: true } },
+          },
+        },
+      },
+    });
+    if (!customer) {
+      return { data: { found: false } };
+    }
+    return {
+      data: {
+        found: true,
+        customer: {
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+        },
+        vehicles: customer.vehicles.map((v) => ({
+          id: v.id,
+          plateNumber: v.plateNumber,
+          type: v.type,
+          brand: v.brand?.name ?? null,
+          model: v.modelRef?.name ?? null,
+        })),
       },
     };
   }
@@ -266,20 +355,52 @@ export class PublicBookingsController {
       );
     }
 
-    // Validasi verifiedToken — cek di Redis bahwa token cocok dengan
-    // nomor yang ada di body.
     const phone = normalizePhone(body.customerPhone);
-    const tokenKey = `pb:otp:token:${slug}:${body.verifiedToken}`;
-    const tokenPhone = await this.redis.get(tokenKey);
-    if (!tokenPhone) {
-      throw new BadRequestException(
-        "Token verifikasi tidak valid / kadaluarsa. Verifikasi ulang nomor WA.",
+
+    // Customer existing flow: kalau body bawa existingCustomerId, verify
+    // di DB bahwa customer itu memang punya phone yang sama → skip OTP.
+    // Kalau tidak match, fallback ke OTP flow.
+    let skipOtp = false;
+    if (body.existingCustomerId) {
+      const phoneVariants = Array.from(
+        new Set([
+          phone,
+          body.customerPhone.trim(),
+          phone.startsWith("62") ? "0" + phone.slice(2) : phone,
+          phone.startsWith("62") ? "+" + phone : phone,
+        ]),
       );
+      const existing = await this.prisma.customer.findFirst({
+        where: {
+          id: body.existingCustomerId,
+          companyId: company.id,
+          phone: { in: phoneVariants },
+        },
+        select: { id: true },
+      });
+      if (existing) skipOtp = true;
     }
-    if (tokenPhone !== phone) {
-      throw new BadRequestException(
-        "Nomor WA tidak sama dengan yang di-verifikasi.",
-      );
+
+    if (!skipOtp) {
+      // Validasi verifiedToken — cek di Redis bahwa token cocok dengan
+      // nomor yang ada di body.
+      if (!body.verifiedToken) {
+        throw new BadRequestException(
+          "Verifikasi nomor WhatsApp dulu (kirim OTP).",
+        );
+      }
+      const tokenKey = `pb:otp:token:${slug}:${body.verifiedToken}`;
+      const tokenPhone = await this.redis.get(tokenKey);
+      if (!tokenPhone) {
+        throw new BadRequestException(
+          "Token verifikasi tidak valid / kadaluarsa. Verifikasi ulang nomor WA.",
+        );
+      }
+      if (tokenPhone !== phone) {
+        throw new BadRequestException(
+          "Nomor WA tidak sama dengan yang di-verifikasi.",
+        );
+      }
     }
 
     // Susun notes terstruktur — vehicle info + complaint masuk ke notes
@@ -311,7 +432,9 @@ export class PublicBookingsController {
     );
 
     // Token sekali pakai — hapus supaya tidak bisa di-replay.
-    await this.redis.del(tokenKey);
+    if (!skipOtp && body.verifiedToken) {
+      await this.redis.del(`pb:otp:token:${slug}:${body.verifiedToken}`);
+    }
 
     // Emit realtime supaya staff dashboard dapat notifikasi instant.
     // Backend stamp branchId di payload — frontend bisa filter per branch

@@ -411,11 +411,30 @@ export class BookingsService {
       }
     }
 
-    // Susun complaint: gabung serviceType + keluhan dari notes booking.
-    const complaintParts: string[] = [];
-    if (booking.serviceType) complaintParts.push(booking.serviceType);
-    if (parsedComplaint) complaintParts.push(parsedComplaint);
-    const complaint = complaintParts.join(" — ") || null;
+    // Susun complaint: hanya keluhan parsed (jangan dobel dengan serviceType
+    // — serviceType sudah jadi items di bawah, kalau di-stuff ke complaint
+    // juga akan duplikat informasi).
+    const complaint = parsedComplaint || null;
+
+    // Parse serviceType (mis. "Ganti Oli · Tune Up") jadi list of service
+    // items. Public booking join multi-service dengan " · " (U+00B7), tapi
+    // toleransi juga `,` dan newline. Tiap item jadi ServiceOrderItem
+    // dengan itemType=SERVICE, qty=1, harga=0 (admin isi nanti saat edit SO).
+    const serviceItems = (booking.serviceType ?? "")
+      .split(/\s*[··]\s*|\s*,\s*|\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((name) => ({
+        itemType: "SERVICE" as const,
+        name,
+        quantity: 1,
+        unitPrice: 0,
+        discount: 0,
+        subtotal: 0,
+        commissionPct: 0,
+        commissionAmount: 0,
+        mechanicId: booking.mechanicId ?? null,
+      }));
 
     // Generate orderNumber sama format dengan ServiceOrdersService.
     const d = new Date();
@@ -436,6 +455,9 @@ export class BookingsService {
         complaint,
         notes: `Auto-created dari booking ${booking.id.slice(0, 8).toUpperCase()}`,
         status: "ANTRIAN",
+        ...(serviceItems.length > 0
+          ? { items: { create: serviceItems } }
+          : {}),
       },
       select: { id: true, orderNumber: true },
     });
