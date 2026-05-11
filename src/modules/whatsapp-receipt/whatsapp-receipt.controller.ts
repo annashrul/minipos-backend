@@ -13,6 +13,7 @@ import {
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { WhatsappCompany } from "../auth/current-company.decorator";
+import { RequireAccess } from "../auth/require-access.decorator";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 
 @Controller("whatsapp-receipt")
@@ -65,6 +66,7 @@ export class WhatsappReceiptController {
   }
 
   @Post("baileys/send-receipt")
+  @RequireAccess("transactions", "send_whatsapp")
   async sendReceipt(
     @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysSendReceiptBodySchema))

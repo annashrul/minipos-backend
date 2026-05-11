@@ -74,6 +74,7 @@ import { PublicBookingsModule } from "./modules/public-bookings/public-bookings.
 import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatbot.module";
+import { MarketplaceShopeeModule } from "./modules/marketplace-shopee/marketplace-shopee.module";
 
 @Module({
   imports: [
@@ -152,6 +153,7 @@ import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatb
     VouchersModule,
     WhatsappReceiptModule,
     WhatsappChatbotModule,
+    MarketplaceShopeeModule,
   ],
   providers: [
     {

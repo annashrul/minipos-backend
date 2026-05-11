@@ -95,7 +95,7 @@ export class TransactionsController {
   }
 
   @Post(":id/duplicate")
-  @RequireAccess("pos", "create")
+  @RequireAccess("transactions", "duplicate")
   async duplicate(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -106,7 +106,7 @@ export class TransactionsController {
   }
 
   @Post("draft")
-  @RequireAccess("pos", "create")
+  @RequireAccess("pos", "save_draft")
   async createDraft(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -117,7 +117,7 @@ export class TransactionsController {
   }
 
   @Delete("draft/:id")
-  @RequireAccess("pos", "create")
+  @RequireAccess("pos", "save_draft")
   async deleteDraft(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

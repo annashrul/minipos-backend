@@ -73,7 +73,9 @@ const SESSION_SELECT = {
 } satisfies Prisma.TableSessionSelect;
 
 type RawOrder = Prisma.TableOrderGetPayload<{ select: typeof ORDER_SELECT }>;
-type RawSession = Prisma.TableSessionGetPayload<{ select: typeof SESSION_SELECT }>;
+type RawSession = Prisma.TableSessionGetPayload<{
+  select: typeof SESSION_SELECT;
+}>;
 
 @Injectable()
 export class TableOrdersService {
@@ -85,7 +87,9 @@ export class TableOrdersService {
   // ────────────────────────────────────────────────────────────
   // PUBLIC (tablet) — looked up by qrToken
   // ────────────────────────────────────────────────────────────
-  async getPublicTableInfo(qrToken: string): Promise<PublicTableInfoResponseDto> {
+  async getPublicTableInfo(
+    qrToken: string,
+  ): Promise<PublicTableInfoResponseDto> {
     const table = await this.findTableByToken(qrToken);
     if (!table.branch) {
       throw new BadRequestException("Meja belum di-assign ke cabang");
@@ -168,9 +172,7 @@ export class TableOrdersService {
       },
       orderBy: { id: "asc" },
       take: limit + 1, // peek one ahead to know if more exist
-      ...(query.cursor
-        ? { cursor: { id: query.cursor }, skip: 1 }
-        : {}),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
 
     const hasMore = rows.length > limit;
@@ -285,10 +287,15 @@ export class TableOrdersService {
   }
 
   /** Get the active session for a table (or null if none). */
-  async getPublicActiveSession(qrToken: string): Promise<TableSessionResponse | null> {
+  async getPublicActiveSession(
+    qrToken: string,
+  ): Promise<TableSessionResponse | null> {
     const table = await this.findTableByToken(qrToken);
     const session = await this.prisma.tableSession.findFirst({
-      where: { tableId: table.id, status: { in: ["OPEN", "AWAITING_PAYMENT"] } },
+      where: {
+        tableId: table.id,
+        status: { in: ["OPEN", "AWAITING_PAYMENT"] },
+      },
       select: SESSION_SELECT,
       orderBy: { openedAt: "desc" },
     });
@@ -310,14 +317,24 @@ export class TableOrdersService {
     // Pull units + modifierGroups too so we can validate selections + compute price.
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
     const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, isActive: true, deletedAt: null },
+      where: {
+        id: { in: productIds },
+        companyId,
+        isActive: true,
+        deletedAt: null,
+      },
       select: {
         id: true,
         name: true,
         sellingPrice: true,
         unit: true,
         units: {
-          select: { id: true, name: true, conversionQty: true, sellingPrice: true },
+          select: {
+            id: true,
+            name: true,
+            conversionQty: true,
+            sellingPrice: true,
+          },
         },
         modifierGroups: {
           include: {
@@ -330,7 +347,9 @@ export class TableOrdersService {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
     if (productMap.size !== productIds.length) {
-      throw new BadRequestException("Beberapa produk tidak ditemukan / tidak aktif");
+      throw new BadRequestException(
+        "Beberapa produk tidak ditemukan / tidak aktif",
+      );
     }
 
     let total = 0;
@@ -343,7 +362,9 @@ export class TableOrdersService {
       if (i.unitId) {
         const unit = p.units.find((u) => u.id === i.unitId);
         if (!unit) {
-          throw new BadRequestException(`Satuan tidak valid untuk produk ${p.name}`);
+          throw new BadRequestException(
+            `Satuan tidak valid untuk produk ${p.name}`,
+          );
         }
         unitName = unit.name;
         unitPrice = unit.sellingPrice;
@@ -360,12 +381,18 @@ export class TableOrdersService {
       }> = [];
       const sel = i.modifiers ?? [];
       if (sel.length > 0) {
-        const linkedGroupIds = new Set(p.modifierGroups.map((l) => l.modifierGroupId));
+        const linkedGroupIds = new Set(
+          p.modifierGroups.map((l) => l.modifierGroupId),
+        );
         for (const s of sel) {
           if (!linkedGroupIds.has(s.groupId)) {
-            throw new BadRequestException(`Modifier tidak valid untuk produk ${p.name}`);
+            throw new BadRequestException(
+              `Modifier tidak valid untuk produk ${p.name}`,
+            );
           }
-          const link = p.modifierGroups.find((l) => l.modifierGroupId === s.groupId);
+          const link = p.modifierGroups.find(
+            (l) => l.modifierGroupId === s.groupId,
+          );
           const group = link?.modifierGroup;
           const opt = group?.options.find((o) => o.id === s.optionId);
           if (!group || !opt) {
@@ -382,22 +409,30 @@ export class TableOrdersService {
         }
         // Validate min/max per group
         const grouped = new Map<string, number>();
-        for (const m of sel) grouped.set(m.groupId, (grouped.get(m.groupId) ?? 0) + 1);
+        for (const m of sel)
+          grouped.set(m.groupId, (grouped.get(m.groupId) ?? 0) + 1);
         for (const link of p.modifierGroups) {
           const g = link.modifierGroup;
           const count = grouped.get(g.id) ?? 0;
-          const min = g.required ? Math.max(1, g.minSelect ?? 0) : g.minSelect ?? 0;
+          const min = g.required
+            ? Math.max(1, g.minSelect ?? 0)
+            : (g.minSelect ?? 0);
           if (count < min) {
-            throw new BadRequestException(`Modifier "${g.name}" minimal ${min} pilihan`);
+            throw new BadRequestException(
+              `Modifier "${g.name}" minimal ${min} pilihan`,
+            );
           }
           if (g.maxSelect && count > g.maxSelect) {
-            throw new BadRequestException(`Modifier "${g.name}" maksimal ${g.maxSelect} pilihan`);
+            throw new BadRequestException(
+              `Modifier "${g.name}" maksimal ${g.maxSelect} pilihan`,
+            );
           }
         }
       } else {
         // Required group present but not selected
         const requiredMissing = p.modifierGroups.find(
-          (l) => l.modifierGroup.required && (l.modifierGroup.minSelect ?? 1) > 0,
+          (l) =>
+            l.modifierGroup.required && (l.modifierGroup.minSelect ?? 1) > 0,
         );
         if (requiredMissing) {
           throw new BadRequestException(
@@ -411,9 +446,10 @@ export class TableOrdersService {
       total += subtotal;
 
       // Compose name + note: include modifier summary in productName for kitchen
-      const modifierLabel = modifierSnapshot.length > 0
-        ? ` (${modifierSnapshot.map((m) => m.optionName).join(", ")})`
-        : "";
+      const modifierLabel =
+        modifierSnapshot.length > 0
+          ? ` (${modifierSnapshot.map((m) => m.optionName).join(", ")})`
+          : "";
       const productNameSnap = i.unitId
         ? `${p.name} - ${unitName}${modifierLabel}`
         : `${p.name}${modifierLabel}`;
@@ -431,8 +467,17 @@ export class TableOrdersService {
     const result = await this.prisma.$transaction(async (tx) => {
       // Find or create open session
       let session = await tx.tableSession.findFirst({
-        where: { tableId: table.id, status: { in: ["OPEN", "AWAITING_PAYMENT"] } },
-        select: { id: true, status: true, subtotal: true, customerName: true, customerPhone: true },
+        where: {
+          tableId: table.id,
+          status: { in: ["OPEN", "AWAITING_PAYMENT"] },
+        },
+        select: {
+          id: true,
+          status: true,
+          subtotal: true,
+          customerName: true,
+          customerPhone: true,
+        },
         orderBy: { openedAt: "desc" },
       });
       if (!session) {
@@ -444,7 +489,13 @@ export class TableOrdersService {
             customerName: dto.customerName ?? null,
             customerPhone: dto.customerPhone ?? null,
           },
-          select: { id: true, status: true, subtotal: true, customerName: true, customerPhone: true },
+          select: {
+            id: true,
+            status: true,
+            subtotal: true,
+            customerName: true,
+            customerPhone: true,
+          },
         });
       } else if (session.status === "AWAITING_PAYMENT") {
         throw new BadRequestException(
@@ -498,7 +549,12 @@ export class TableOrdersService {
     const resp = toOrderResponse(result);
     this.realtime.emit(
       EVENTS.TABLE_ORDER_CREATED,
-      { orderId: resp.id, sessionId: resp.sessionId, tableId: resp.tableId, total: resp.total },
+      {
+        orderId: resp.id,
+        sessionId: resp.sessionId,
+        tableId: resp.tableId,
+        total: resp.total,
+      },
       table.branch.id,
     );
     return resp;
@@ -674,7 +730,12 @@ export class TableOrdersService {
     const resp = toOrderResponse(updated);
     this.realtime.emit(
       EVENTS.TABLE_ORDER_REJECTED,
-      { orderId: resp.id, sessionId: resp.sessionId, tableId: resp.tableId, reason },
+      {
+        orderId: resp.id,
+        sessionId: resp.sessionId,
+        tableId: resp.tableId,
+        reason,
+      },
       order.branchId,
     );
     return resp;
@@ -729,7 +790,10 @@ export class TableOrdersService {
       throw new BadRequestException("Pembayaran kurang dari total tagihan");
     }
 
-    const invoiceNumber = await nextInvoiceNumber(this.prisma, session.branchId);
+    const invoiceNumber = await nextInvoiceNumber(
+      this.prisma,
+      session.branchId,
+    );
     const invoiceDisplayNumber = await nextInvoiceDisplayNumber(
       this.prisma,
       companyId,
@@ -782,7 +846,10 @@ export class TableOrdersService {
 
       // Mark all approved orders as SERVED
       await tx.tableOrder.updateMany({
-        where: { sessionId: session.id, status: { in: ["APPROVED", "SENT_TO_KITCHEN", "READY"] } },
+        where: {
+          sessionId: session.id,
+          status: { in: ["APPROVED", "SENT_TO_KITCHEN", "READY"] },
+        },
         data: { status: "SERVED" },
       });
 
@@ -798,7 +865,11 @@ export class TableOrdersService {
     const resp = toSessionResponse(updated);
     this.realtime.emit(
       EVENTS.TABLE_SESSION_CLOSED,
-      { sessionId: resp.id, tableId: resp.tableId, transactionId: resp.transactionId },
+      {
+        sessionId: resp.id,
+        tableId: resp.tableId,
+        transactionId: resp.transactionId,
+      },
       session.branchId,
     );
     return resp;

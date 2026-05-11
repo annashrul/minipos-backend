@@ -1,11 +1,13 @@
-﻿import { Body, Controller, Get, Patch, Query } from "@nestjs/common";
+﻿import { Body, Controller, Get, Patch, Post, Query } from "@nestjs/common";
 import { z } from "zod";
 import {
   MeAccessMatrixQuerySchema,
+  VerifyAuthorizationSchema,
   type AuthUser,
   type MeAccessMatrixQueryDto,
   type MeAccessMatrixResponse,
   type MeMenusResponse,
+  type VerifyAuthorizationDto,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 
@@ -16,10 +18,14 @@ type UpdateBusinessUnitDto = z.infer<typeof UpdateBusinessUnitSchema>;
 import { CurrentCompany } from "../auth/current-company.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { MeService } from "./me.service";
+import { UsersService } from "../users/users.service";
 
 @Controller("me")
 export class MeController {
-  constructor(private readonly meService: MeService) {}
+  constructor(
+    private readonly meService: MeService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Get()
   me(@CurrentUser() user: AuthUser) {
@@ -78,5 +84,24 @@ export class MeController {
       body.businessUnit,
     );
     return { data };
+  }
+
+  /**
+   * Verify password otorisasi user yang sedang login. Dipanggil oleh
+   * frontend sebelum eksekusi aksi sensitif (void, refund, hapus transaksi).
+   * Return ok:true → frontend lanjut. ok:false dengan notSet:true → user
+   * belum set password otorisasi, suruh ke profile.
+   */
+  @Post("verify-authorization")
+  async verifyAuthorization(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(VerifyAuthorizationSchema))
+    body: VerifyAuthorizationDto,
+  ) {
+    const result = await this.usersService.verifyAuthorization(
+      user.id,
+      body.authorizationPassword,
+    );
+    return { data: result };
   }
 }

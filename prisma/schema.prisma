@@ -170,6 +170,7 @@ model Company {
   modifierGroups       ModifierGroup[]
   whatsappSession      WhatsappSession?
   whatsappBotConfig    WhatsappBotConfig?
+  shopeeAccounts       ShopeeAccount[]
 
   @@index([slug])
   @@map("companies")
@@ -181,6 +182,10 @@ model User {
   email               String                     @unique
   phone               String?
   password            String
+  // Password otorisasi untuk aksi sensitif (void/refund/hapus transaksi, dll).
+  // Berbeda dari `password` (login). Nullable untuk backward-compat — user lama
+  // bisa set lewat profile. Hashed sama seperti password login (bcrypt).
+  authorizationPassword String?                  @map("authorization_password")
   role                String                     @default("CASHIER")
   // Bengkel: User dengan flag ini bisa di-assign sebagai mekanik di
   // ServiceOrder & ServiceOrderItem (untuk komisi/payroll).
@@ -189,6 +194,10 @@ model User {
   company             Company?                   @relation(fields: [companyId], references: [id])
   branchId            String?
   branch              Branch?                    @relation(fields: [branchId], references: [id])
+  // Multi-branch — user bisa di-assign ke beberapa cabang sekaligus. `branchId`
+  // tetap dipakai sebagai primary/default branch (utk POS context default).
+  // `branches` (M2M) untuk authorization "user X boleh akses cabang Y?".
+  branches            UserBranch[]
   isActive            Boolean                    @default(true)
   emailVerified       Boolean                    @default(false)
   phoneVerified       Boolean                    @default(false)
@@ -301,6 +310,24 @@ model RoleActionPermission {
   @@map("role_action_permissions")
 }
 
+/// Junction table User ↔ Branch — implementasi multi-branch assignment.
+/// User.branchId masih dipakai sebagai "primary" branch (default context POS).
+/// UserBranch dipakai untuk authorization & filter (cek apakah user X boleh
+/// switch ke branch Y).
+model UserBranch {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId  String   @map("branch_id")
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, branchId])
+  @@index([userId])
+  @@index([branchId])
+  @@map("user_branches")
+}
+
 model Branch {
   id                 String                     @id @default(uuid())
   name               String
@@ -315,6 +342,7 @@ model Branch {
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
   users              User[]
+  userBranches       UserBranch[]
   stockTransfersFrom StockTransfer[]            @relation("TransferFrom")
   stockTransfersTo   StockTransfer[]            @relation("TransferTo")
   stockOpnames       StockOpname[]
@@ -491,6 +519,7 @@ model Product {
   tableOrderItems    TableOrderItem[]
   recipe             Recipe?
   usedInRecipes      RecipeIngredient[]     @relation("RecipeIngredient")
+  marketplaceMappings ProductMarketplaceMapping[]
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -1521,6 +1550,90 @@ model WhatsappBotConfig {
   updatedAt            DateTime @updatedAt @map("updated_at")
 
   @@map("whatsapp_bot_configs")
+}
+
+// ===========================
+// MARKETPLACE INTEGRATION
+// ===========================
+
+/// Akun marketplace Shopee yang sudah ter-connect ke company. 1 company bisa
+/// punya beberapa Shopee shop (mis. shop utama + shop branch). Token simpan
+/// di sini, di-refresh otomatis tiap < 1 jam expire.
+///
+/// Auth flow: OAuth via Shopee Open Platform. App redirect seller ke Shopee
+/// login → user authorize → callback dengan code → exchange code → dapat
+/// access_token (4 jam) + refresh_token (30 hari).
+model ShopeeAccount {
+  id           String   @id @default(uuid())
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shopId       String   @map("shop_id") // Shopee shop ID (numeric string)
+  shopName     String?  @map("shop_name") // Cached display name dari Shopee
+  region       String   @default("ID") // ID/MY/SG/TH/VN/PH/TW/BR
+  // Mode koneksi: OAUTH (resmi, butuh shop ≥30 order atau Mall) atau
+  // COOKIE (PoC, paste cookie session dari browser seller).
+  connectionMode String @default("OAUTH") @map("connection_mode")
+  // ─── OAuth fields (mode=OAUTH) ─────────────────────────────────
+  accessToken  String?  @map("access_token") @db.Text
+  refreshToken String?  @map("refresh_token") @db.Text
+  expiresAt    DateTime? @map("expires_at") // access_token expiry (~4 jam)
+  refreshExpiresAt DateTime? @map("refresh_expires_at")
+  // ─── Cookie fields (mode=COOKIE) ───────────────────────────────
+  // Cookie string lengkap dari header Cookie request browser seller Shopee.
+  // Format: "k1=v1; k2=v2; ...". Berisi token session yang valid 24-72 jam.
+  // User wajib paste ulang saat expired.
+  sellerCookie String? @map("seller_cookie") @db.Text
+  // User-agent yang dipakai saat dapat cookie ini — beberapa cookie
+  // ke-bind ke fingerprint browser, jadi disimpan untuk konsisten.
+  cookieUserAgent String? @map("cookie_user_agent") @db.Text
+  // ─── Common ────────────────────────────────────────────────────
+  isActive     Boolean  @default(true)
+  lastSyncedAt DateTime? @map("last_synced_at")
+  lastError    String?  @map("last_error") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  productMappings ProductMarketplaceMapping[]
+
+  @@unique([companyId, shopId])
+  @@index([companyId])
+  @@map("shopee_accounts")
+}
+
+/// (RESERVED — belum dipakai). Mapping Product internal kita ↔ item di
+/// marketplace. Belum implemented karena MVP cuma fetch-display, belum link
+/// ke local Product. Tetap di-keep di schema supaya extension future
+/// (mis. import Shopee item → buat Product baru di kita, atau sync stok)
+/// tinggal pakai model ini tanpa migrasi schema.
+model ProductMarketplaceMapping {
+  id              String   @id @default(uuid())
+  productId       String   @map("product_id")
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // SHOPEE / TOKOPEDIA / LAZADA / TIKTOK_SHOP — pakai string supaya mudah
+  // extend tanpa migrasi enum.
+  marketplace     String
+  // External item ID (Shopee item_id, Tokopedia product_id, dst).
+  externalItemId  String   @map("external_item_id")
+  // Variant level mapping (kalau product punya varian, masing-masing variant
+  // di-link ke model_id Shopee). NULL = product-level mapping.
+  externalModelId String?  @map("external_model_id")
+  externalSku     String?  @map("external_sku")
+  // Reference balik ke akun yang punya item ini (untuk Shopee).
+  shopeeAccountId String?  @map("shopee_account_id")
+  shopeeAccount   ShopeeAccount? @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
+  // Sinkronisasi status — last sync timestamp + last known stock di marketplace
+  // (untuk reconciliation kalau ada discrepancy dengan stok kita).
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  lastMarketplaceStock Int?  @map("last_marketplace_stock")
+  syncEnabled     Boolean  @default(true) @map("sync_enabled")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([marketplace, externalItemId, externalModelId])
+  @@index([productId])
+  @@index([shopeeAccountId])
+  @@index([marketplace])
+  @@map("product_marketplace_mappings")
 }
 
 // ===========================
