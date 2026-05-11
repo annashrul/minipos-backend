@@ -1,4 +1,5 @@
 import type Groq from "groq-sdk";
+import type { Prisma } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 
 // ─── Tool catalog ────────────────────────────────────────────────────
@@ -235,6 +236,139 @@ export const OWNER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
         },
         required: ["query"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_shift_status",
+      description:
+        "Status shift kasir hari ini: yang masih buka (active), yang sudah tutup, kas awal, kas akhir, deteksi selisih kas. Pakai untuk 'kasir mana yang masih buka', 'ada selisih kas?', 'shift hari ini berapa'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: PERIOD_ENUM, description: "Periode (default today)" },
+          from: { type: "string", description: "Tanggal mulai ISO" },
+          to: { type: "string", description: "Tanggal akhir ISO" },
+          status: {
+            type: "string",
+            enum: ["OPEN", "CLOSED", "ALL"],
+            description: "Filter status shift (default ALL)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_recent_transactions",
+      description:
+        "Daftar transaksi terbaru (paling baru duluan). Pakai untuk 'transaksi terakhir', 'invoice baru', 'cek transaksi yang baru masuk'.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Jumlah transaksi (default 5)" },
+          status: {
+            type: "string",
+            enum: ["COMPLETED", "VOID", "REFUNDED", "ALL"],
+            description: "Filter status (default COMPLETED)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_transaction",
+      description:
+        "Cari transaksi berdasarkan nomor invoice. Return detail lengkap: kasir, customer, items, total, payment method.",
+      parameters: {
+        type: "object",
+        properties: {
+          invoiceNumber: {
+            type: "string",
+            description:
+              "Nomor invoice (full atau parsial, mis. 'INV-11052026-00012')",
+          },
+        },
+        required: ["invoiceNumber"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_payment_breakdown",
+      description:
+        "Breakdown omset per metode pembayaran (CASH, QRIS, transfer bank, e-wallet, debit, kartu kredit, termin). Pakai untuk 'paling banyak pakai metode apa', 'breakdown pembayaran'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: PERIOD_ENUM, description: "Periode (default today)" },
+          from: { type: "string", description: "Tanggal mulai ISO" },
+          to: { type: "string", description: "Tanggal akhir ISO" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_service_orders_summary",
+      description:
+        "Ringkasan service order (bengkel): jumlah per status (ANTRIAN, DIAGNOSA, DIKERJAKAN, SELESAI, DIBAYAR, DIBATALKAN). Pakai untuk 'SO yang lagi dikerjakan', 'antrian service ada berapa'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: PERIOD_ENUM, description: "Periode (default last_30_days)" },
+          from: { type: "string", description: "Tanggal mulai ISO" },
+          to: { type: "string", description: "Tanggal akhir ISO" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_refunds_summary",
+      description:
+        "Total refund/void transaction per periode. Pakai untuk 'berapa refund', 'transaksi yang di-void hari ini'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: PERIOD_ENUM, description: "Periode (default this_month)" },
+          from: { type: "string", description: "Tanggal mulai ISO" },
+          to: { type: "string", description: "Tanggal akhir ISO" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_purchase_orders_summary",
+      description:
+        "Ringkasan purchase order (PO) ke supplier: jumlah per status (DRAFT, ORDERED, RECEIVED, CLOSED, CANCELLED), total outstanding. Pakai untuk 'PO yang belum diterima', 'pembelian bulan ini'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: PERIOD_ENUM, description: "Periode (default this_month)" },
+          from: { type: "string", description: "Tanggal mulai ISO" },
+          to: { type: "string", description: "Tanggal akhir ISO" },
+          status: { type: "string", description: "Filter status PO" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_business_overview",
+      description:
+        "Overview comprehensive bisnis hari ini: total omset, transaksi count, top 3 produk, stok menipis, shift aktif, booking hari ini. Pakai untuk pertanyaan general seperti 'bagaimana bisnis hari ini?', 'kondisi toko hari ini gimana?', 'summary hari ini'.",
+      parameters: { type: "object", properties: {} },
     },
   },
 ];
@@ -860,6 +994,384 @@ export async function executeOwnerTool(
         totalAmount: fmtRp(total),
         totalRecords: expenses.length,
         byCategory: categories,
+      };
+    }
+
+    case "get_shift_status": {
+      const { start, end, label } = resolvePeriod(
+        args.period ?? "today",
+        args.from,
+        args.to,
+      );
+      const statusArg =
+        typeof args.status === "string" ? args.status.toUpperCase() : "ALL";
+      const shifts = await prisma.cashierShift.findMany({
+        where: {
+          user: { companyId },
+          ...(start && end ? { openedAt: { gte: start, lte: end } } : {}),
+          ...(statusArg === "OPEN"
+            ? { isOpen: true }
+            : statusArg === "CLOSED"
+              ? { isOpen: false }
+              : {}),
+        },
+        select: {
+          openedAt: true,
+          closedAt: true,
+          openingCash: true,
+          closingCash: true,
+          expectedCash: true,
+          cashDifference: true,
+          totalSales: true,
+          totalTransactions: true,
+          isOpen: true,
+          user: { select: { name: true } },
+          branch: { select: { name: true } },
+        },
+        orderBy: { openedAt: "desc" },
+        take: 30,
+      });
+      return {
+        period: label,
+        count: shifts.length,
+        items: shifts.map((s) => ({
+          kasir: s.user.name,
+          cabang: s.branch?.name ?? "—",
+          openedAt: s.openedAt.toISOString(),
+          closedAt: s.closedAt?.toISOString() ?? null,
+          status: s.isOpen ? "OPEN" : "CLOSED",
+          openingCash: fmtRp(s.openingCash),
+          closingCash: s.closingCash != null ? fmtRp(s.closingCash) : null,
+          totalSales: s.totalSales != null ? fmtRp(s.totalSales) : null,
+          totalTransactions: s.totalTransactions ?? null,
+          selisih:
+            s.cashDifference != null && s.cashDifference !== 0
+              ? `${s.cashDifference > 0 ? "+" : ""}${fmtRp(s.cashDifference)}`
+              : null,
+        })),
+      };
+    }
+
+    case "get_recent_transactions": {
+      const limit = Math.max(1, Math.min(20, Number(args.limit) || 5));
+      const statusArg =
+        typeof args.status === "string" ? args.status.toUpperCase() : "COMPLETED";
+      const where: Prisma.TransactionWhereInput = { companyId };
+      if (statusArg !== "ALL") {
+        // TransactionStatus enum di Prisma generated client.
+        (where as { status?: unknown }).status = statusArg;
+      }
+      const txs = await prisma.transaction.findMany({
+        where,
+        include: {
+          user: { select: { name: true } },
+          customer: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      });
+      return {
+        count: txs.length,
+        items: txs.map((t) => ({
+          invoice: t.invoiceDisplayNumber ?? t.invoiceNumber,
+          total: fmtRp(t.grandTotal),
+          paymentMethod: t.paymentMethod,
+          status: t.status,
+          customer: t.customer?.name ?? "Walk-in",
+          kasir: t.user.name,
+          createdAt: t.createdAt.toISOString(),
+        })),
+      };
+    }
+
+    case "search_transaction": {
+      const query = String(args.invoiceNumber || "").trim();
+      if (!query) return { error: "Nomor invoice kosong" };
+      const tx = await prisma.transaction.findFirst({
+        where: {
+          companyId,
+          OR: [
+            { invoiceDisplayNumber: { contains: query, mode: "insensitive" } },
+            { invoiceNumber: { contains: query, mode: "insensitive" } },
+          ],
+        },
+        select: {
+          invoiceDisplayNumber: true,
+          invoiceNumber: true,
+          subtotal: true,
+          discountAmount: true,
+          taxAmount: true,
+          grandTotal: true,
+          paymentMethod: true,
+          paymentAmount: true,
+          changeAmount: true,
+          status: true,
+          createdAt: true,
+          user: { select: { name: true } },
+          customer: { select: { name: true, phone: true } },
+          branch: { select: { name: true } },
+          items: {
+            select: {
+              name: true,
+              quantity: true,
+              unitPrice: true,
+              subtotal: true,
+            },
+          },
+        },
+      });
+      if (!tx) return { found: false, query };
+      return {
+        found: true,
+        invoice: tx.invoiceDisplayNumber ?? tx.invoiceNumber,
+        subtotal: fmtRp(tx.subtotal),
+        discount: fmtRp(tx.discountAmount),
+        tax: fmtRp(tx.taxAmount),
+        grandTotal: fmtRp(tx.grandTotal),
+        paymentMethod: tx.paymentMethod,
+        paid: fmtRp(tx.paymentAmount),
+        change: fmtRp(tx.changeAmount),
+        status: tx.status,
+        kasir: tx.user.name,
+        customer: tx.customer?.name ?? "Walk-in",
+        customerPhone: tx.customer?.phone ?? null,
+        cabang: tx.branch?.name ?? "—",
+        createdAt: tx.createdAt.toISOString(),
+        items: tx.items.map((it) => ({
+          name: it.name,
+          qty: it.quantity,
+          price: fmtRp(it.unitPrice),
+          subtotal: fmtRp(it.subtotal),
+        })),
+      };
+    }
+
+    case "get_payment_breakdown": {
+      const { start, end, label } = resolvePeriod(
+        args.period ?? "today",
+        args.from,
+        args.to,
+      );
+      const txs = await prisma.transaction.findMany({
+        where: {
+          companyId,
+          status: "COMPLETED",
+          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
+        },
+        select: { paymentMethod: true, grandTotal: true },
+      });
+      const map = new Map<string, { total: number; count: number }>();
+      for (const t of txs) {
+        const key = t.paymentMethod || "OTHER";
+        const e = map.get(key) ?? { total: 0, count: 0 };
+        e.total += t.grandTotal;
+        e.count += 1;
+        map.set(key, e);
+      }
+      const breakdown = Array.from(map.entries())
+        .sort((a, b) => b[1].total - a[1].total)
+        .map(([method, v]) => ({
+          method,
+          total: fmtRp(v.total),
+          transactionCount: v.count,
+        }));
+      const grand = txs.reduce((s, t) => s + t.grandTotal, 0);
+      return {
+        period: label,
+        grandTotal: fmtRp(grand),
+        transactionCount: txs.length,
+        byMethod: breakdown,
+      };
+    }
+
+    case "get_service_orders_summary": {
+      const { start, end, label } = resolvePeriod(
+        args.period ?? "last_30_days",
+        args.from,
+        args.to,
+      );
+      const orders = await prisma.serviceOrder.findMany({
+        where: {
+          companyId,
+          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
+        },
+        select: { status: true, finalAmount: true, estimateAmount: true },
+      });
+      const map = new Map<string, { count: number; totalValue: number }>();
+      for (const o of orders) {
+        const e = map.get(o.status) ?? { count: 0, totalValue: 0 };
+        e.count += 1;
+        e.totalValue += o.finalAmount ?? o.estimateAmount ?? 0;
+        map.set(o.status, e);
+      }
+      const items = Array.from(map.entries()).map(([status, v]) => ({
+        status,
+        count: v.count,
+        totalValue: fmtRp(v.totalValue),
+      }));
+      return {
+        period: label,
+        totalOrders: orders.length,
+        byStatus: items,
+      };
+    }
+
+    case "get_refunds_summary": {
+      const { start, end, label } = resolvePeriod(
+        args.period ?? "this_month",
+        args.from,
+        args.to,
+      );
+      const refunds = await prisma.refund.findMany({
+        where: {
+          transaction: {
+            companyId,
+            ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
+          },
+        },
+        select: {
+          amount: true,
+          reason: true,
+          createdAt: true,
+          transaction: {
+            select: { invoiceDisplayNumber: true, invoiceNumber: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      });
+      const total = refunds.reduce((s, r) => s + r.amount, 0);
+      return {
+        period: label,
+        totalAmount: fmtRp(total),
+        count: refunds.length,
+        recent: refunds.slice(0, 10).map((r) => ({
+          invoice:
+            r.transaction.invoiceDisplayNumber ??
+            r.transaction.invoiceNumber,
+          amount: fmtRp(r.amount),
+          reason: r.reason ?? "—",
+          date: r.createdAt.toISOString().slice(0, 10),
+        })),
+      };
+    }
+
+    case "get_purchase_orders_summary": {
+      const { start, end, label } = resolvePeriod(
+        args.period ?? "this_month",
+        args.from,
+        args.to,
+      );
+      const statusArg =
+        typeof args.status === "string" ? args.status.toUpperCase() : null;
+      const poWhere: Prisma.PurchaseOrderWhereInput = { companyId };
+      if (start && end) {
+        poWhere.createdAt = { gte: start, lte: end };
+      }
+      if (statusArg) {
+        (poWhere as { status?: unknown }).status = statusArg;
+      }
+      const pos = await prisma.purchaseOrder.findMany({
+        where: poWhere,
+        select: {
+          status: true,
+          totalAmount: true,
+          supplier: { select: { name: true } },
+        },
+      });
+      const map = new Map<string, { count: number; totalValue: number }>();
+      for (const p of pos) {
+        const e = map.get(p.status) ?? { count: 0, totalValue: 0 };
+        e.count += 1;
+        e.totalValue += p.totalAmount ?? 0;
+        map.set(p.status, e);
+      }
+      const items = Array.from(map.entries()).map(([status, v]) => ({
+        status,
+        count: v.count,
+        totalValue: fmtRp(v.totalValue),
+      }));
+      return {
+        period: label,
+        totalPO: pos.length,
+        byStatus: items,
+      };
+    }
+
+    case "get_business_overview": {
+      // Quick comprehensive snapshot untuk pertanyaan general "gimana bisnis
+      // hari ini". Paralel beberapa query supaya cepat.
+      const today = resolvePeriod("today", undefined, undefined);
+      const [txs, lowStockProducts, openShifts, bookings, topItems] =
+        await Promise.all([
+          prisma.transaction.findMany({
+            where: {
+              companyId,
+              status: "COMPLETED",
+              createdAt: { gte: today.start!, lte: today.end! },
+            },
+            select: { grandTotal: true },
+          }),
+          prisma.product.findMany({
+            where: {
+              companyId,
+              isActive: true,
+              itemType: "PRODUCT",
+              deletedAt: null,
+            },
+            select: { stock: true, minStock: true },
+          }),
+          prisma.cashierShift.count({
+            where: { user: { companyId }, isOpen: true },
+          }),
+          prisma.booking.count({
+            where: {
+              companyId,
+              scheduledAt: { gte: today.start!, lte: today.end! },
+            },
+          }),
+          prisma.transactionItem.findMany({
+            where: {
+              transaction: {
+                companyId,
+                status: "COMPLETED",
+                createdAt: { gte: today.start!, lte: today.end! },
+              },
+            },
+            select: {
+              quantity: true,
+              product: { select: { name: true } },
+            },
+            take: 500,
+          }),
+        ]);
+
+      const totalRevenue = txs.reduce((s, t) => s + t.grandTotal, 0);
+      const lowStockCount = lowStockProducts.filter(
+        (p) => p.stock <= p.minStock,
+      ).length;
+      const topMap = new Map<string, number>();
+      for (const it of topItems) {
+        const n = it.product?.name ?? "(unknown)";
+        topMap.set(n, (topMap.get(n) ?? 0) + it.quantity);
+      }
+      const top3 = Array.from(topMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([name, qty]) => ({ name, quantitySold: qty }));
+
+      return {
+        date: today.start!.toISOString().slice(0, 10),
+        sales: {
+          revenue: fmtRp(totalRevenue),
+          transactionCount: txs.length,
+        },
+        operations: {
+          openShifts,
+          bookingsToday: bookings,
+          lowStockItems: lowStockCount,
+        },
+        top3ProductsToday: top3,
       };
     }
 
