@@ -520,6 +520,7 @@ model Product {
   recipe             Recipe?
   usedInRecipes      RecipeIngredient[]     @relation("RecipeIngredient")
   marketplaceMappings ProductMarketplaceMapping[]
+  shopeeItems        ShopeeItem[]
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -1586,6 +1587,12 @@ model ShopeeAccount {
   // User-agent yang dipakai saat dapat cookie ini — beberapa cookie
   // ke-bind ke fingerprint browser, jadi disimpan untuk konsisten.
   cookieUserAgent String? @map("cookie_user_agent") @db.Text
+  // Anti-bot tokens (mode=COOKIE, only untuk WRITE ops seperti update_stock,
+  // update_product_info, create_product). Read ops gak butuh.
+  // Struktur: { xSapRi, xSapSec, afAcEncSzToken, scFeSession, scFeVer }.
+  // Tokens ini di-generate runtime oleh JS Shopee dan EXPIRE per session
+  // (~15 menit s.d. beberapa jam). User wajib paste ulang saat expired.
+  scrapingTokens Json? @map("scraping_tokens")
   // ─── Common ────────────────────────────────────────────────────
   isActive     Boolean  @default(true)
   lastSyncedAt DateTime? @map("last_synced_at")
@@ -1594,10 +1601,54 @@ model ShopeeAccount {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   productMappings ProductMarketplaceMapping[]
+  cachedItems     ShopeeItem[]
 
   @@unique([companyId, shopId])
   @@index([companyId])
   @@map("shopee_accounts")
+}
+
+/// Cache produk Shopee per akun. Setiap kali user "Refresh", semua item
+/// dari Shopee di-upsert ke sini. UI tampil dari sini (instant, gak perlu
+/// hit Shopee tiap buka halaman). Auto-match: saat upsert, kalau `sku` Shopee
+/// match `Product.sku` di company yg sama, link `productId` otomatis.
+///
+/// Catatan: 1 Shopee item bisa punya beberapa model (varian). Untuk simplicity,
+/// 1 ShopeeItem row = 1 (itemId, modelId) — produk dengan banyak varian akan
+/// punya beberapa row.
+model ShopeeItem {
+  id              String   @id @default(uuid())
+  shopeeAccountId String   @map("shopee_account_id")
+  account         ShopeeAccount @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
+  // Shopee item_id (int64) & model_id (int64). Disimpan sebagai string supaya
+  // gak overflow JS Number. modelId NULL kalau produk tanpa varian (untuk
+  // produk dengan model_list, selalu pakai model_id walaupun cuma 1 model).
+  itemId          String   @map("item_id")
+  // "0" untuk produk tanpa varian (atau yg model_id tidak ditemukan).
+  // Non-nullable supaya composite unique [account, item, model] selalu unik
+  // (PostgreSQL treat NULL != NULL di unique constraint).
+  modelId         String   @default("0") @map("model_id")
+  name            String
+  sku             String?
+  status          String   @default("NORMAL")
+  currentPrice    Int?     @map("current_price")
+  originalPrice   Int?     @map("original_price")
+  totalStock      Int?     @map("total_stock")
+  imageUrl        String?  @map("image_url") @db.Text
+  hasModel        Boolean  @default(false) @map("has_model")
+  // Link ke produk MiniPOS — NULL = belum linked. Auto-set saat fetch kalau
+  // SKU match.
+  productId       String?  @map("product_id")
+  product         Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  lastFetchedAt   DateTime @default(now()) @map("last_fetched_at")
+  lastPushedAt    DateTime? @map("last_pushed_at") // Terakhir push stok ke Shopee
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([shopeeAccountId, itemId, modelId])
+  @@index([shopeeAccountId])
+  @@index([productId])
+  @@map("shopee_items")
 }
 
 /// (RESERVED — belum dipakai). Mapping Product internal kita ↔ item di

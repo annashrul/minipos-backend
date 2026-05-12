@@ -641,23 +641,30 @@ export class ProductsService {
 
       // Hapus legacy untuk branch yang TIDAK ada di payload (kalau matrix
       // user kosongkan suatu branch, harus di-clean di legacy juga).
+      //
+      // PENTING: kalau payload KOSONG (branchIdsInPayload.length === 0),
+      // SKIP delete — preserve existing. Tanpa guard ini, kalau form gagal
+      // load branchPrices (network blip, race condition) lalu user submit,
+      // semua BranchStock akan ke-wipe → trigger sync Product.stock = 0.
+      // Bug ini muncul terutama untuk produk hasil auto-create dari Shopee.
       const branchIdsInPayload = [...perBranch.keys()];
-      await tx.branchProductPrice.deleteMany({
-        where: {
-          productId,
-          branchId: branchIdsInPayload.length
-            ? { notIn: branchIdsInPayload }
-            : undefined,
-        },
-      });
-      await tx.branchStock.deleteMany({
-        where: {
-          productId,
-          branchId: branchIdsInPayload.length
-            ? { notIn: branchIdsInPayload }
-            : undefined,
-        },
-      });
+      if (branchIdsInPayload.length > 0) {
+        await tx.branchProductPrice.deleteMany({
+          where: {
+            productId,
+            branchId: { notIn: branchIdsInPayload },
+          },
+        });
+        await tx.branchStock.deleteMany({
+          where: {
+            productId,
+            branchId: { notIn: branchIdsInPayload },
+          },
+        });
+      }
+      // else: payload kosong → preserve semua. Kalau user benar-benar mau
+      // remove all branches, harus pakai mekanisme lain (mis. endpoint
+      // dedicated DELETE /products/:id/branches).
 
       for (const [branchId, vals] of perBranch.entries()) {
         await tx.branchProductPrice.upsert({
