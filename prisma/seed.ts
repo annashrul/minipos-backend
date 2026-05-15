@@ -334,6 +334,7 @@ const MENU_SEED = [
 ] as const;
 
 const MENU_ACCESS_BY_ROLE: Record<Role, string[]> = {
+  PLATFORM_OWNER: MENU_SEED.map((menu) => menu.key),
   SUPER_ADMIN: MENU_SEED.map((menu) => menu.key),
   ADMIN: MENU_SEED.map((menu) => menu.key).filter(
     (key) => key !== "audit-logs",
@@ -409,8 +410,7 @@ async function main() {
   await prisma.supplierPayment.deleteMany();
   await prisma.customerPointHistory.deleteMany();
   await prisma.productUnit.deleteMany();
-  await prisma.productBarcode.deleteMany();
-  await prisma.productPriceHistory.deleteMany();
+  // ProductBarcode & ProductPriceHistory models removed from schema — skip
   await prisma.branchProductPrice.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();

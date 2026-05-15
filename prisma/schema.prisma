@@ -171,6 +171,7 @@ model Company {
   whatsappSession      WhatsappSession?
   whatsappBotConfig    WhatsappBotConfig?
   shopeeAccounts       ShopeeAccount[]
+  grabAccounts         GrabAccount[]
 
   @@index([slug])
   @@map("companies")
@@ -374,6 +375,7 @@ model Branch {
   serviceOrders      ServiceOrder[]
   bookings           Booking[]
   productBranchSkus  ProductBranchSku[]
+  grabAccounts       GrabAccount[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -1685,6 +1687,137 @@ model ProductMarketplaceMapping {
   @@index([shopeeAccountId])
   @@index([marketplace])
   @@map("product_marketplace_mappings")
+}
+
+// ===========================
+// GRABFOOD INTEGRATION (Scraping-based, daily reporting only)
+// ===========================
+//
+// Pattern serupa ShopeeAccount mode=COOKIE: user paste cookie dari Grab
+// Merchant Portal, backend pakai untuk pull daily summary + order detail
+// 1x sehari via cron. NOT untuk real-time order intake (lihat
+// CATATAN_SHOPEE_API.md & Grab section di docs).
+//
+// 1 GrabAccount = 1 outlet GrabFood (multi-outlet per company supported).
+
+model GrabAccount {
+  id           String   @id @default(uuid())
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // Branch MiniPOS yang outlet GrabFood ini "milik". Optional — kalau merchant
+  // belum mapping branch, biarkan null dan tampil sebagai outlet standalone.
+  branchId     String?  @map("branch_id")
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  // Grab merchantID (string, di-set saat paste cookie atau dari profile API).
+  merchantId   String   @map("merchant_id")
+  // Nama outlet untuk tampil di UI (cached dari Grab profile).
+  merchantName String?  @map("merchant_name")
+  region       String   @default("ID") // ID/MY/SG/TH/VN/PH
+  // ─── Cookie session (paste manual dari browser) ────────────────
+  // Cookie lengkap dari header Cookie request browser merchant Grab.
+  // Format: "k1=v1; k2=v2; ...". Berisi token session. Expire 1-4 jam
+  // typical — user wajib paste ulang saat expired.
+  cookie       String   @db.Text
+  cookieUserAgent String? @map("cookie_user_agent") @db.Text
+  // Anti-bot tokens kalau Grab portal pakai (mis. x-csrf-token, x-grab-app).
+  // Disimpan terpisah supaya bisa di-refresh tanpa replace cookie.
+  scrapingTokens Json?  @map("scraping_tokens")
+  // ─── Status ────────────────────────────────────────────────────
+  isActive     Boolean  @default(true)
+  lastSyncedAt DateTime? @map("last_synced_at")
+  lastError    String?  @map("last_error") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  dailyReports GrabDailyReport[]
+  orders       GrabOrder[]
+
+  @@unique([companyId, merchantId])
+  @@index([companyId])
+  @@index([branchId])
+  @@map("grab_accounts")
+}
+
+/// Summary harian per outlet GrabFood. Cron daily upsert 1 row per
+/// (account, reportDate). Reportable di dashboard MiniPOS untuk
+/// rekonsiliasi keuangan & sales analytics.
+model GrabDailyReport {
+  id             String      @id @default(uuid())
+  accountId      String      @map("account_id")
+  account        GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // Tanggal report (date only, no time). UTC date — convert ke WIB di UI.
+  reportDate     DateTime    @map("report_date") @db.Date
+  // Aggregate metrics (semua dalam rupiah, integer untuk hindari floating point).
+  orderCount     Int         @default(0) @map("order_count")
+  completedCount Int         @default(0) @map("completed_count")
+  cancelledCount Int         @default(0) @map("cancelled_count")
+  // GMV (gross merchandise value) = total nominal order sebelum potongan
+  grossSales     Int         @default(0) @map("gross_sales")
+  // Net payout = GMV - Grab commission - refund. Match dengan settlement Grab.
+  netPayout      Int         @default(0) @map("net_payout")
+  // Grab commission (fee Grab ambil). Biasanya 20-30% di Indonesia.
+  commission     Int         @default(0)
+  // Refund total kalau ada return/cancel after charge.
+  refundAmount   Int         @default(0) @map("refund_amount")
+  // Raw response dari Grab portal (untuk debug & schema migration nanti).
+  rawPayload     Json?       @map("raw_payload")
+  fetchedAt      DateTime    @default(now()) @map("fetched_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  @@unique([accountId, reportDate])
+  @@index([accountId, reportDate])
+  @@map("grab_daily_reports")
+}
+
+/// Detail order individual dari GrabFood. Cron daily upsert order yang
+/// completed/cancelled di hari sebelumnya. Pending/active orders skip —
+/// karena real-time integration butuh Partner API resmi.
+model GrabOrder {
+  id              String      @id @default(uuid())
+  accountId       String      @map("account_id")
+  account         GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // Grab order_id / short_order_id — public visible di app customer.
+  grabOrderId     String      @map("grab_order_id")
+  shortOrderId    String?     @map("short_order_id")
+  // ─── Customer (sebagian masked Grab — biasanya cuma nama depan & nomor masked) ─
+  customerName    String?     @map("customer_name")
+  customerPhone   String?     @map("customer_phone") // biasanya masked "0812****1234"
+  // ─── Money (dalam rupiah, integer) ─────────────────────────────
+  subtotal        Int         @default(0)
+  deliveryFee     Int         @default(0) @map("delivery_fee")
+  discount        Int         @default(0)
+  total           Int         @default(0) // total yang dibayar customer
+  commission      Int         @default(0) // Grab cut
+  netPayout       Int         @default(0) @map("net_payout") // yang merchant terima
+  // ─── Status ──────────────────────────────────────────────────────
+  // COMPLETED, CANCELLED, REFUNDED, PENDING — string supaya extend mudah
+  status          String      @default("COMPLETED")
+  paymentMethod   String?     @map("payment_method") // GRABPAY, OVO, CASH, etc.
+  cancelReason    String?     @map("cancel_reason")
+  // ─── Items ─────────────────────────────────────────────────────
+  // Disimpan sebagai JSON karena schema item Grab bervariasi & kita gak
+  // butuh query per-item (cuma display). Format:
+  // [{ name, qty, price, modifiers: [{name, price}], note }]
+  items           Json?
+  itemCount       Int         @default(0) @map("item_count")
+  // ─── Timing ────────────────────────────────────────────────────
+  orderedAt       DateTime?   @map("ordered_at")
+  acceptedAt      DateTime?   @map("accepted_at")
+  readyAt         DateTime?   @map("ready_at")
+  pickedUpAt      DateTime?   @map("picked_up_at")
+  deliveredAt     DateTime?   @map("delivered_at")
+  cancelledAt     DateTime?   @map("cancelled_at")
+  // ─── Raw payload untuk reference / future re-parse ─────────────
+  rawPayload      Json?       @map("raw_payload")
+  fetchedAt       DateTime    @default(now()) @map("fetched_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@unique([accountId, grabOrderId])
+  @@index([accountId, status])
+  @@index([accountId, orderedAt])
+  @@map("grab_orders")
 }
 
 // ===========================

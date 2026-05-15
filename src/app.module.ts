@@ -75,6 +75,7 @@ import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatbot.module";
 import { MarketplaceShopeeModule } from "./modules/marketplace-shopee/marketplace-shopee.module";
+import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-grab.module";
 
 @Module({
   imports: [
@@ -154,6 +155,7 @@ import { MarketplaceShopeeModule } from "./modules/marketplace-shopee/marketplac
     WhatsappReceiptModule,
     WhatsappChatbotModule,
     MarketplaceShopeeModule,
+    MarketplaceGrabModule,
   ],
   providers: [
     {
