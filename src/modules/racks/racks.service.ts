@@ -63,24 +63,31 @@ export class RacksService {
     ]);
 
     const rackIds = rows.map((r) => r.id);
-    const stocks =
+    // Phase 1: hitung dari Product.defaultRackId (rak default produk).
+    // Phase 2 (qty per rak) akan tambah agregat dari RackStock.
+    const products =
       rackIds.length > 0
-        ? await this.prisma.rackStock.groupBy({
-            by: ["rackId"],
-            where: { rackId: { in: rackIds } },
-            _count: { productId: true },
-            _sum: { qty: true },
+        ? await this.prisma.product.groupBy({
+            by: ["defaultRackId"],
+            where: {
+              defaultRackId: { in: rackIds },
+              companyId,
+            },
+            _count: { id: true },
+            _sum: { stock: true },
           })
         : [];
 
     const stockMap = new Map(
-      stocks.map((s) => [
-        s.rackId,
-        {
-          productCount: s._count.productId,
-          totalQty: s._sum.qty ?? 0,
-        },
-      ]),
+      products
+        .filter((p) => p.defaultRackId)
+        .map((p) => [
+          p.defaultRackId as string,
+          {
+            productCount: p._count.id,
+            totalQty: p._sum.stock ?? 0,
+          },
+        ]),
     );
 
     return {
@@ -100,39 +107,36 @@ export class RacksService {
     });
     if (!rack) throw new NotFoundException("Rack not found");
 
-    const items = await this.prisma.rackStock.findMany({
-      where: { rackId: id },
+    // Phase 1: items dari Product.defaultRackId (qty pakai Product.stock).
+    // Phase 2 (bin location) akan replace dengan RackStock breakdown.
+    const products = await this.prisma.product.findMany({
+      where: { defaultRackId: id, companyId },
       select: {
-        qty: true,
-        product: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            unit: true,
-            imageUrl: true,
-            defaultRackId: true,
-          },
-        },
+        id: true,
+        code: true,
+        name: true,
+        unit: true,
+        stock: true,
+        imageUrl: true,
       },
-      orderBy: { qty: "desc" },
+      orderBy: { stock: "desc" },
     });
 
     const stockSummary = {
-      productCount: items.length,
-      totalQty: items.reduce((sum, i) => sum + i.qty, 0),
+      productCount: products.length,
+      totalQty: products.reduce((sum, p) => sum + p.stock, 0),
     };
 
     return {
       ...toRackResponse(rack, stockSummary),
-      items: items.map((s) => ({
-        productId: s.product.id,
-        productCode: s.product.code,
-        productName: s.product.name,
-        unit: s.product.unit,
-        qty: s.qty,
-        imageUrl: s.product.imageUrl,
-        isDefaultRack: s.product.defaultRackId === id,
+      items: products.map((p) => ({
+        productId: p.id,
+        productCode: p.code,
+        productName: p.name,
+        unit: p.unit,
+        qty: p.stock,
+        imageUrl: p.imageUrl,
+        isDefaultRack: true,
       })),
     };
   }
