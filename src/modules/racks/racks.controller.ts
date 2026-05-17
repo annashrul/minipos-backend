@@ -12,14 +12,19 @@ import {
 import {
   CreateRackSchema,
   ListRacksQuerySchema,
+  SetRackStockSchema,
+  TransferRackStockSchema,
   UpdateRackSchema,
   type CreateRackDto,
   type ListRacksQueryDto,
+  type SetRackStockDto,
+  type TransferRackStockDto,
   type UpdateRackDto,
 } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
 import { RequireAccess } from "../auth/require-access.decorator";
 import { RacksService } from "./racks.service";
 
@@ -92,6 +97,30 @@ export class RacksController {
     @Param("id") id: string,
   ) {
     const data = await this.racks.delete(companyId, id);
+    return { data };
+  }
+
+  @Post(":id/stock")
+  @RequireAccess("racks", "update")
+  async setStock(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: { id: string },
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetRackStockSchema)) body: SetRackStockDto,
+  ) {
+    const data = await this.racks.setStock(companyId, id, body, user.id);
+    return { data };
+  }
+
+  @Post("transfer")
+  @RequireAccess("racks", "update")
+  async transfer(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: { id: string },
+    @Body(new ZodValidationPipe(TransferRackStockSchema))
+    body: TransferRackStockDto,
+  ) {
+    const data = await this.racks.transfer(companyId, body, user.id);
     return { data };
   }
 }

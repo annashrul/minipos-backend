@@ -80,3 +80,52 @@ export type ProductRackLookupResponse = {
   locations: ProductRackLocation[];
   totalQty: number;
 };
+
+// Phase 2A: manual entry RackStock
+export const SetRackStockItemSchema = z.object({
+  productId: z.string().uuid(),
+  qty: z.number().int().min(0),
+});
+
+export const SetRackStockSchema = z.object({
+  items: z.array(SetRackStockItemSchema).min(1),
+  notes: z.string().nullable().optional(),
+});
+export type SetRackStockDto = z.infer<typeof SetRackStockSchema>;
+
+export const TransferRackStockSchema = z.object({
+  fromRackId: z.string().uuid(),
+  toRackId: z.string().uuid(),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        qty: z.number().int().min(1),
+      }),
+    )
+    .min(1),
+  notes: z.string().nullable().optional(),
+});
+export type TransferRackStockDto = z.infer<typeof TransferRackStockSchema>;
+
+export type RackMovementType = "IN" | "OUT" | "TRANSFER" | "ADJUST";
+
+export type RackStockMovementResponse = {
+  id: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  branchId: string;
+  fromRackId: string | null;
+  fromRackCode: string | null;
+  toRackId: string | null;
+  toRackCode: string | null;
+  qty: number;
+  type: RackMovementType;
+  refType: string | null;
+  refId: string | null;
+  byUserId: string | null;
+  byUserName: string | null;
+  notes: string | null;
+  createdAt: string;
+};
