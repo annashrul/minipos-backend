@@ -172,60 +172,62 @@ model Company {
   whatsappBotConfig    WhatsappBotConfig?
   shopeeAccounts       ShopeeAccount[]
   grabAccounts         GrabAccount[]
+  racks                Rack[]
 
   @@index([slug])
   @@map("companies")
 }
 
 model User {
-  id                  String                     @id @default(uuid())
-  name                String
-  email               String                     @unique
-  phone               String?
-  password            String
+  id                      String                     @id @default(uuid())
+  name                    String
+  email                   String                     @unique
+  phone                   String?
+  password                String
   // Password otorisasi untuk aksi sensitif (void/refund/hapus transaksi, dll).
   // Berbeda dari `password` (login). Nullable untuk backward-compat — user lama
   // bisa set lewat profile. Hashed sama seperti password login (bcrypt).
-  authorizationPassword String?                  @map("authorization_password")
-  role                String                     @default("CASHIER")
+  authorizationPassword   String?                    @map("authorization_password")
+  role                    String                     @default("CASHIER")
   // Bengkel: User dengan flag ini bisa di-assign sebagai mekanik di
   // ServiceOrder & ServiceOrderItem (untuk komisi/payroll).
-  isMechanic          Boolean                    @default(false) @map("is_mechanic")
-  companyId           String?
-  company             Company?                   @relation(fields: [companyId], references: [id])
-  branchId            String?
-  branch              Branch?                    @relation(fields: [branchId], references: [id])
+  isMechanic              Boolean                    @default(false) @map("is_mechanic")
+  companyId               String?
+  company                 Company?                   @relation(fields: [companyId], references: [id])
+  branchId                String?
+  branch                  Branch?                    @relation(fields: [branchId], references: [id])
   // Multi-branch — user bisa di-assign ke beberapa cabang sekaligus. `branchId`
   // tetap dipakai sebagai primary/default branch (utk POS context default).
   // `branches` (M2M) untuk authorization "user X boleh akses cabang Y?".
-  branches            UserBranch[]
-  isActive            Boolean                    @default(true)
-  emailVerified       Boolean                    @default(false)
-  phoneVerified       Boolean                    @default(false)
-  deletedAt           DateTime?
-  createdAt           DateTime                   @default(now())
-  updatedAt           DateTime                   @updatedAt
-  transactions        Transaction[]
-  auditLogs           AuditLog[]
-  activityLogs        ActivityLog[]
-  cashierShifts       CashierShift[]
-  debtsCreated        Debt[]
-  debtPayments        DebtPayment[]
-  returnsProcessed    ReturnExchange[]           @relation("ReturnProcessedBy")
-  giftCardsCreated    GiftCard[]                 @relation("GiftCardCreatedBy")
-  salesTargets        SalesTarget[]
-  badges              CashierBadge[]
-  schedules           EmployeeSchedule[]
-  favorites           CashierFavorite[]
-  journalsCreated     JournalEntry[]             @relation("JournalCreatedBy")
-  journalsApproved    JournalEntry[]             @relation("JournalApprovedBy")
-  journalChangeLogs   JournalChangeLog[]
-  recurringTemplates  RecurringJournalTemplate[]
-  tableOrdersApproved TableOrder[]
-  serviceOrdersAsMechanic ServiceOrder[]         @relation("ServiceOrderMechanic")
-  serviceOrderItems       ServiceOrderItem[]    @relation("ServiceOrderItemMechanic")
-  bookingsAsMechanic      Booking[]              @relation("BookingMechanic")
-  bookingsCreated         Booking[]              @relation("BookingCreatedBy")
+  branches                UserBranch[]
+  isActive                Boolean                    @default(true)
+  emailVerified           Boolean                    @default(false)
+  phoneVerified           Boolean                    @default(false)
+  deletedAt               DateTime?
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+  transactions            Transaction[]
+  auditLogs               AuditLog[]
+  activityLogs            ActivityLog[]
+  cashierShifts           CashierShift[]
+  debtsCreated            Debt[]
+  debtPayments            DebtPayment[]
+  returnsProcessed        ReturnExchange[]           @relation("ReturnProcessedBy")
+  giftCardsCreated        GiftCard[]                 @relation("GiftCardCreatedBy")
+  salesTargets            SalesTarget[]
+  badges                  CashierBadge[]
+  schedules               EmployeeSchedule[]
+  favorites               CashierFavorite[]
+  journalsCreated         JournalEntry[]             @relation("JournalCreatedBy")
+  journalsApproved        JournalEntry[]             @relation("JournalApprovedBy")
+  journalChangeLogs       JournalChangeLog[]
+  recurringTemplates      RecurringJournalTemplate[]
+  tableOrdersApproved     TableOrder[]
+  serviceOrdersAsMechanic ServiceOrder[]             @relation("ServiceOrderMechanic")
+  serviceOrderItems       ServiceOrderItem[]         @relation("ServiceOrderItemMechanic")
+  bookingsAsMechanic      Booking[]                  @relation("BookingMechanic")
+  bookingsCreated         Booking[]                  @relation("BookingCreatedBy")
+  rackMovements           RackStockMovement[]
 
   @@index([email])
   @@index([role])
@@ -236,25 +238,25 @@ model User {
 }
 
 model AppMenu {
-  id        String               @id @default(uuid())
-  key       String               @unique
-  name      String
-  path      String               @unique
-  group     String
+  id            String               @id @default(uuid())
+  key           String               @unique
+  name          String
+  path          String               @unique
+  group         String
   // Sub-grouping di dalam `group` untuk visual hierarchy di sidebar
   // (mis. Inventori → Purchase → [Purchase Order, Receiving]). Null = item
   // langsung di-render di bawah header group tanpa sub-heading.
-  subgroup  String?
-  sortOrder Int                  @default(0)
-  isActive  Boolean              @default(true)
+  subgroup      String?
+  sortOrder     Int                  @default(0)
+  isActive      Boolean              @default(true)
   // Daftar business unit yang bisa lihat menu ini (mis. ["BENGKEL"] berarti
   // hanya company businessUnit=BENGKEL). NULL atau empty = available untuk
   // semua. Default null supaya semua menu existing tetap visible.
-  businessUnits Json?            @map("business_units")
-  createdAt DateTime             @default(now())
-  updatedAt DateTime             @updatedAt
-  actions   MenuAction[]
-  roleMenus RoleMenuPermission[]
+  businessUnits Json?                @map("business_units")
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  actions       MenuAction[]
+  roleMenus     RoleMenuPermission[]
 
   @@index([group])
   @@index([sortOrder])
@@ -376,6 +378,9 @@ model Branch {
   bookings           Booking[]
   productBranchSkus  ProductBranchSku[]
   grabAccounts       GrabAccount[]
+  racks              Rack[]
+  rackStocks         RackStock[]
+  rackMovements      RackStockMovement[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -453,17 +458,17 @@ model Category {
 }
 
 model Brand {
-  id          String     @id @default(uuid())
-  name        String
-  companyId   String
-  company     Company    @relation(fields: [companyId], references: [id])
+  id        String     @id @default(uuid())
+  name      String
+  companyId String
+  company   Company    @relation(fields: [companyId], references: [id])
   // PRODUCT (default) atau VEHICLE — Honda, Toyota, dll untuk bengkel.
-  kind        String     @default("PRODUCT")
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  products    Product[]
-  models      Category[] @relation("CategoryBrand")
-  vehicles    Vehicle[]  @relation("VehicleBrand")
+  kind      String     @default("PRODUCT")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  products  Product[]
+  models    Category[] @relation("CategoryBrand")
+  vehicles  Vehicle[]  @relation("VehicleBrand")
 
   @@unique([companyId, name])
   @@index([companyId])
@@ -472,57 +477,61 @@ model Brand {
 }
 
 model Product {
-  id                 String                 @id @default(uuid())
-  code               String
-  name               String
-  categoryId         String
-  category           Category               @relation(fields: [categoryId], references: [id])
-  brandId            String?
-  brand              Brand?                 @relation(fields: [brandId], references: [id])
-  supplierId         String?
-  supplier           Supplier?              @relation(fields: [supplierId], references: [id])
-  companyId          String
-  company            Company                @relation(fields: [companyId], references: [id])
-  purchasePrice      Float
-  sellingPrice       Float
-  stock              Int                    @default(0)
-  minStock           Int                    @default(5)
-  barcode            String?
-  unit               String                 @default("pcs")
+  id                  String                      @id @default(uuid())
+  code                String
+  name                String
+  categoryId          String
+  category            Category                    @relation(fields: [categoryId], references: [id])
+  brandId             String?
+  brand               Brand?                      @relation(fields: [brandId], references: [id])
+  supplierId          String?
+  supplier            Supplier?                   @relation(fields: [supplierId], references: [id])
+  companyId           String
+  company             Company                     @relation(fields: [companyId], references: [id])
+  purchasePrice       Float
+  sellingPrice        Float
+  stock               Int                         @default(0)
+  minStock            Int                         @default(5)
+  barcode             String?
+  unit                String                      @default("pcs")
   // PRODUCT = barang fisik dengan stock; SERVICE = jasa (no stock validation,
   // skip stock movement, dipakai bisnis bengkel/jasa). Default PRODUCT supaya
   // backward-compat.
-  itemType           String                 @default("PRODUCT") @map("item_type")
-  isActive           Boolean                @default(true)
-  description        String?
-  imageUrl           String?
-  expiryDate         DateTime?
-  deletedAt          DateTime?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-  transactionItems   TransactionItem[]
-  stockMovements     StockMovement[]
-  promotions         Promotion[]
-  promoTriggers      PromotionTriggerProduct[] @relation("ProductPromoTriggers")
-  promoRewards       PromotionGetProduct[]     @relation("ProductPromoRewards")
-  purchaseOrderItems PurchaseOrderItem[]
-  stockOpnameItems   StockOpnameItem[]
-  branchPrices       BranchProductPrice[]
-  branchStocks       BranchStock[]
-  units              ProductUnit[]
-  variants           ProductVariant[]
-  branchSkus         ProductBranchSku[]
-  tierPrices         ProductTierPrice[]
-  returnItems        ReturnExchangeItem[]
-  exchangeItems      ReturnExchangeItem[]   @relation("ExchangeProduct")
-  cashierFavorites   CashierFavorite[]
-  bundleItems        ProductBundleItem[]
-  modifierGroups     ProductModifierGroup[]
-  tableOrderItems    TableOrderItem[]
-  recipe             Recipe?
-  usedInRecipes      RecipeIngredient[]     @relation("RecipeIngredient")
+  itemType            String                      @default("PRODUCT") @map("item_type")
+  isActive            Boolean                     @default(true)
+  description         String?
+  imageUrl            String?
+  expiryDate          DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  transactionItems    TransactionItem[]
+  stockMovements      StockMovement[]
+  promotions          Promotion[]
+  promoTriggers       PromotionTriggerProduct[]   @relation("ProductPromoTriggers")
+  promoRewards        PromotionGetProduct[]       @relation("ProductPromoRewards")
+  purchaseOrderItems  PurchaseOrderItem[]
+  stockOpnameItems    StockOpnameItem[]
+  branchPrices        BranchProductPrice[]
+  branchStocks        BranchStock[]
+  units               ProductUnit[]
+  variants            ProductVariant[]
+  branchSkus          ProductBranchSku[]
+  tierPrices          ProductTierPrice[]
+  returnItems         ReturnExchangeItem[]
+  exchangeItems       ReturnExchangeItem[]        @relation("ExchangeProduct")
+  cashierFavorites    CashierFavorite[]
+  bundleItems         ProductBundleItem[]
+  modifierGroups      ProductModifierGroup[]
+  tableOrderItems     TableOrderItem[]
+  recipe              Recipe?
+  usedInRecipes       RecipeIngredient[]          @relation("RecipeIngredient")
   marketplaceMappings ProductMarketplaceMapping[]
-  shopeeItems        ShopeeItem[]
+  shopeeItems         ShopeeItem[]
+  defaultRackId       String?
+  defaultRack         Rack?                       @relation("ProductDefaultRack", fields: [defaultRackId], references: [id])
+  rackStocks          RackStock[]
+  rackMovements       RackStockMovement[]
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -533,6 +542,7 @@ model Product {
   @@index([barcode])
   @@index([name])
   @@index([isActive, stock])
+  @@index([defaultRackId])
   @@map("products")
 }
 
@@ -550,8 +560,8 @@ model ProductUnit {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  branchSkus     ProductBranchSku[]
-  purchaseItems  PurchaseOrderItem[]
+  branchSkus    ProductBranchSku[]
+  purchaseItems PurchaseOrderItem[]
 
   @@unique([productId, name])
   @@index([productId])
@@ -565,22 +575,22 @@ model ProductUnit {
 // dengan kombinasi modifier yang dipilih customer di POS.
 // Kalau no variant match → fallback ke product.sellingPrice + product.stock.
 model ProductVariant {
-  id                    String                  @id @default(uuid())
+  id                    String                 @id @default(uuid())
   productId             String
-  product               Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product               Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
   // Override harga jual. Null = pakai product.sellingPrice.
   priceOverride         Float?
   // Override harga beli (untuk HPP/COGS akurat per variant). Null = product.purchasePrice.
   purchasePriceOverride Float?
-  stock                 Int                     @default(0)
-  barcode               String?                 @unique
-  isActive              Boolean                 @default(true)
+  stock                 Int                    @default(0)
+  barcode               String?                @unique
+  isActive              Boolean                @default(true)
   options               ProductVariantOption[]
   branchSkus            ProductBranchSku[]
   stockMovements        StockMovement[]
   purchaseItems         PurchaseOrderItem[]
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   @@index([productId])
   @@map("product_variants")
@@ -627,9 +637,9 @@ model ProductBranchSku {
 // variant (1 variant = 1 option per group).
 model ProductVariantOption {
   variantId String
-  variant   ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
   optionId  String
-  option    ModifierOption  @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  option    ModifierOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
 
   @@id([variantId, optionId])
   @@index([optionId])
@@ -747,47 +757,47 @@ model CustomerPointHistory {
 // ===========================
 
 model Transaction {
-  id             String            @id @default(uuid())
+  id                   String            @id @default(uuid())
   // Global-unique invoice — composite "{COMPANY_SLUG}-{BRANCH_CODE}-{RAND}".
   // Tetap dipakai sebagai authoritative ID lintas system (export, audit log).
-  invoiceNumber  String            @unique
+  invoiceNumber        String            @unique
   // Display invoice — readable per company per hari, format
   // "INV-DDMMYYYY-NNNNN" (NNNNN sequential per companyId per date).
   // Nullable utk row legacy sebelum kolom ini dibuat.
   invoiceDisplayNumber String?
   // Denormalized companyId (sumber: user.companyId) supaya unique constraint
   // (companyId, invoiceDisplayNumber) bisa dipasang langsung.
-  companyId      String?
-  userId         String
-  user           User              @relation(fields: [userId], references: [id])
-  branchId       String?
-  branch         Branch?           @relation(fields: [branchId], references: [id])
-  customerId     String?
-  customer       Customer?         @relation(fields: [customerId], references: [id])
-  subtotal       Float
-  discountAmount Float             @default(0)
-  taxAmount      Float             @default(0)
-  grandTotal     Float
-  paymentMethod  PaymentMethod     @default(CASH)
-  paymentAmount  Float
-  changeAmount   Float             @default(0)
-  status         TransactionStatus @default(COMPLETED)
-  voidReason     String?
-  promoApplied   String?
-  notes          String?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  items          TransactionItem[]
-  payments       Payment[]
-  refund         Refund?
-  returns        ReturnExchange[]
-  orderQueues    OrderQueue[]
-  paymentOrders  PaymentOrder[]
-  tableId        String?
-  table          RestaurantTable?  @relation(fields: [tableId], references: [id])
-  tableSession   TableSession?
+  companyId            String?
+  userId               String
+  user                 User              @relation(fields: [userId], references: [id])
+  branchId             String?
+  branch               Branch?           @relation(fields: [branchId], references: [id])
+  customerId           String?
+  customer             Customer?         @relation(fields: [customerId], references: [id])
+  subtotal             Float
+  discountAmount       Float             @default(0)
+  taxAmount            Float             @default(0)
+  grandTotal           Float
+  paymentMethod        PaymentMethod     @default(CASH)
+  paymentAmount        Float
+  changeAmount         Float             @default(0)
+  status               TransactionStatus @default(COMPLETED)
+  voidReason           String?
+  promoApplied         String?
+  notes                String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  items                TransactionItem[]
+  payments             Payment[]
+  refund               Refund?
+  returns              ReturnExchange[]
+  orderQueues          OrderQueue[]
+  paymentOrders        PaymentOrder[]
+  tableId              String?
+  table                RestaurantTable?  @relation(fields: [tableId], references: [id])
+  tableSession         TableSession?
   // Bengkel: Transaction yang berasal dari finalize ServiceOrder.
-  serviceOrder   ServiceOrder?     @relation("ServiceOrderTransaction")
+  serviceOrder         ServiceOrder?     @relation("ServiceOrderTransaction")
 
   @@unique([companyId, invoiceDisplayNumber])
   @@index([invoiceNumber])
@@ -870,24 +880,24 @@ model ModifierGroup {
 }
 
 model ModifierOption {
-  id              String        @id @default(uuid())
+  id              String                     @id @default(uuid())
   groupId         String
-  group           ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group           ModifierGroup              @relation(fields: [groupId], references: [id], onDelete: Cascade)
   name            String
-  priceAdjustment Float         @default(0)
-  isActive        Boolean       @default(true)
-  sortOrder       Int           @default(0)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  priceAdjustment Float                      @default(0)
+  isActive        Boolean                    @default(true)
+  sortOrder       Int                        @default(0)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
   // Dependency m2m self-reference. Sebuah option bisa "diaktifkan" oleh
   // satu/banyak parent option dari group LAIN. Contoh: option "XL" di group
   // "Ukuran" di-enable oleh ["Hitam"] di group "Warna" — saat user pick
   // Hitam, opsi XL muncul; saat pilih Putih, XL ke-hide.
   // - `enables`: edges di mana option ini = parent (membuat option lain visible)
   // - `enabledBy`: edges di mana option ini = dependent (visible kalau parent dipilih)
-  enables   ModifierOptionDependency[] @relation("EnablesOption")
-  enabledBy ModifierOptionDependency[] @relation("EnabledByOption")
-  variants  ProductVariantOption[]
+  enables         ModifierOptionDependency[] @relation("EnablesOption")
+  enabledBy       ModifierOptionDependency[] @relation("EnabledByOption")
+  variants        ProductVariantOption[]
 
   @@index([groupId])
   @@map("modifier_options")
@@ -981,7 +991,7 @@ model StockMovement {
   // Magnitude positif. Direction encoded di `direction` agar query running
   // balance bisa pakai aritmatika langsung tanpa CASE WHEN type IN (...).
   quantity     Int
-  direction    String?           // "IN" | "OUT" — null untuk row legacy
+  direction    String? // "IN" | "OUT" — null untuk row legacy
   // Running balance branch_stock setelah movement ini (per branch+product).
   // Null untuk row legacy sebelum ledger refactor — UI kartu stok fallback
   // ke recompute kalau null.
@@ -1101,36 +1111,36 @@ model StockTransferItem {
 // ===========================
 
 model PurchaseOrder {
-  id             String              @id @default(uuid())
+  id                        String                   @id @default(uuid())
   // Unique scoped per company — sequence reset per company per hari.
-  orderNumber    String
+  orderNumber               String
   // No transaksi pembelian (BL-YYYYMMDD-NNNN) — generated saat PO dibuat,
   // sequence per hari per company. Format: BL-20260509-0001.
   // Dipakai sebagai identifier utama di Laporan Pembelian.
   // Unique scoped per company (multi-tenant), bukan global — karena
   // sequence reset per company per hari.
   purchaseTransactionNumber String
-  supplierId     String
-  supplier       Supplier            @relation(fields: [supplierId], references: [id])
-  branchId       String?
-  branch         Branch?             @relation(fields: [branchId], references: [id])
-  companyId      String?
-  status         PurchaseOrderStatus @default(DRAFT)
-  totalAmount    Float               @default(0)
-  receivedAmount Float               @default(0)
-  paidAmount     Float               @default(0)
-  notes          String?
-  closingNotes   String?
-  orderDate      DateTime            @default(now())
-  expectedDate   DateTime?
-  receivedDate   DateTime?
-  closedDate     DateTime?
-  createdBy      String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  items          PurchaseOrderItem[]
-  goodsReceipts  GoodsReceipt[]
-  transactionLogs PurchaseTransactionLog[]
+  supplierId                String
+  supplier                  Supplier                 @relation(fields: [supplierId], references: [id])
+  branchId                  String?
+  branch                    Branch?                  @relation(fields: [branchId], references: [id])
+  companyId                 String?
+  status                    PurchaseOrderStatus      @default(DRAFT)
+  totalAmount               Float                    @default(0)
+  receivedAmount            Float                    @default(0)
+  paidAmount                Float                    @default(0)
+  notes                     String?
+  closingNotes              String?
+  orderDate                 DateTime                 @default(now())
+  expectedDate              DateTime?
+  receivedDate              DateTime?
+  closedDate                DateTime?
+  createdBy                 String?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  items                     PurchaseOrderItem[]
+  goodsReceipts             GoodsReceipt[]
+  transactionLogs           PurchaseTransactionLog[]
 
   @@unique([companyId, purchaseTransactionNumber])
   @@unique([companyId, orderNumber])
@@ -1172,29 +1182,29 @@ model PurchaseTransactionLog {
 }
 
 model PurchaseOrderItem {
-  id                String          @id @default(uuid())
-  purchaseOrderId   String
-  purchaseOrder     PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  productId         String
-  product           Product         @relation(fields: [productId], references: [id])
+  id                    String          @id @default(uuid())
+  purchaseOrderId       String
+  purchaseOrder         PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId             String
+  product               Product         @relation(fields: [productId], references: [id])
   // Satuan + varian SKU yang di-PO (untuk produk multi-unit / multi-variant).
   // Null untuk produk simple. Goods receipt nanti decrement stok di SKU ini.
-  unitId            String?
-  unit              ProductUnit?    @relation(fields: [unitId], references: [id])
-  variantId         String?
-  variant           ProductVariant? @relation(fields: [variantId], references: [id])
-  quantity          Int
-  receivedQty       Int             @default(0)
-  unitPrice         Float
+  unitId                String?
+  unit                  ProductUnit?    @relation(fields: [unitId], references: [id])
+  variantId             String?
+  variant               ProductVariant? @relation(fields: [variantId], references: [id])
+  quantity              Int
+  receivedQty           Int             @default(0)
+  unitPrice             Float
   // Snapshot harga master sebelum receive pertama. Capture sekali saat receive
   // pertama dipanggil utk item ini. Dipakai di laporan pembelian utk
   // tampilkan perubahan harga beli tanpa JOIN ke goods receipts.
   previousPurchasePrice Float?
-  subtotal          Float
-  discrepancyQty    Int             @default(0)
-  discrepancyReason String?
-  discrepancyNote   String?
-  createdAt         DateTime        @default(now())
+  subtotal              Float
+  discrepancyQty        Int             @default(0)
+  discrepancyReason     String?
+  discrepancyNote       String?
+  createdAt             DateTime        @default(now())
 
   @@index([purchaseOrderId])
   @@index([productId])
@@ -1227,20 +1237,20 @@ model GoodsReceipt {
 }
 
 model GoodsReceiptItem {
-  id               String       @id @default(uuid())
-  goodsReceiptId   String
-  goodsReceipt     GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
-  productId        String
-  productName      String
-  quantityOrdered  Int
-  quantityReceived Int
+  id                    String       @id @default(uuid())
+  goodsReceiptId        String
+  goodsReceipt          GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  productId             String
+  productName           String
+  quantityOrdered       Int
+  quantityReceived      Int
   // Snapshot harga di PO saat diterima (harga "baru" yang akan jadi master).
-  unitPrice              Float?
+  unitPrice             Float?
   // Snapshot harga master sebelum sync (harga "lama"). Null = tidak diketahui
   // / receipt lama sebelum fitur diaktifkan.
-  previousPurchasePrice  Float?
-  notes            String?
-  createdAt        DateTime     @default(now())
+  previousPurchasePrice Float?
+  notes                 String?
+  createdAt             DateTime     @default(now())
 
   @@index([goodsReceiptId])
   @@map("goods_receipt_items")
@@ -1356,34 +1366,34 @@ model Expense {
 // ===========================
 
 model Promotion {
-  id           String    @id @default(uuid())
-  name         String
-  type         PromoType
-  value        Float
-  minPurchase  Float?
-  maxDiscount  Float?
-  scope        String    @default("all") // "all", "product", "category"
-  categoryId   String?
-  category     Category? @relation(fields: [categoryId], references: [id])
-  productId    String?
-  product      Product?  @relation(fields: [productId], references: [id])
-  companyId    String
-  company      Company   @relation(fields: [companyId], references: [id])
-  branchId     String?
-  branch       Branch?   @relation(fields: [branchId], references: [id])
-  buyQty       Int? // BUY_X_GET_Y: buy this many
-  getQty       Int? // BUY_X_GET_Y: get this many free
-  getProductId String? // BUY_X_GET_Y: free product id (null = same product)
-  voucherCode  String?   @unique
-  usageLimit   Int?
-  usageCount   Int       @default(0)
-  description  String?
-  isActive     Boolean   @default(true)
-  startDate    DateTime
-  endDate      DateTime
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  vouchers     Voucher[]
+  id              String                    @id @default(uuid())
+  name            String
+  type            PromoType
+  value           Float
+  minPurchase     Float?
+  maxDiscount     Float?
+  scope           String                    @default("all") // "all", "product", "category"
+  categoryId      String?
+  category        Category?                 @relation(fields: [categoryId], references: [id])
+  productId       String?
+  product         Product?                  @relation(fields: [productId], references: [id])
+  companyId       String
+  company         Company                   @relation(fields: [companyId], references: [id])
+  branchId        String?
+  branch          Branch?                   @relation(fields: [branchId], references: [id])
+  buyQty          Int? // BUY_X_GET_Y: buy this many
+  getQty          Int? // BUY_X_GET_Y: get this many free
+  getProductId    String? // BUY_X_GET_Y: free product id (null = same product)
+  voucherCode     String?                   @unique
+  usageLimit      Int?
+  usageCount      Int                       @default(0)
+  description     String?
+  isActive        Boolean                   @default(true)
+  startDate       DateTime
+  endDate         DateTime
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  vouchers        Voucher[]
   // Multi-trigger products (any-of). Saat di-set, engine cek kombinasi: customer
   // beli SALAH SATU produk dari list ini sudah memenuhi syarat. Backward-compat
   // dengan `productId` single-trigger — kalau triggerProducts kosong, engine
@@ -1541,8 +1551,8 @@ model WhatsappBotConfig {
   // Di-stuff ke system prompt customer mode supaya bot bisa jawab tanpa
   // halusinasi. Kalau kosong, bot fallback minta admin manusia.
   knowledge            String?  @db.Text
-  systemPromptCustomer String?  @db.Text @map("system_prompt_customer")
-  systemPromptOwner    String?  @db.Text @map("system_prompt_owner")
+  systemPromptCustomer String?  @map("system_prompt_customer") @db.Text
+  systemPromptOwner    String?  @map("system_prompt_owner") @db.Text
   // Model Groq yang dipakai. Default ke versatile (terbaik) — bisa diganti
   // ke "llama-3.1-8b-instant" untuk hemat rate-limit.
   model                String   @default("llama-3.3-70b-versatile")
@@ -1567,40 +1577,40 @@ model WhatsappBotConfig {
 /// login → user authorize → callback dengan code → exchange code → dapat
 /// access_token (4 jam) + refresh_token (30 hari).
 model ShopeeAccount {
-  id           String   @id @default(uuid())
-  companyId    String   @map("company_id")
-  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  shopId       String   @map("shop_id") // Shopee shop ID (numeric string)
-  shopName     String?  @map("shop_name") // Cached display name dari Shopee
-  region       String   @default("ID") // ID/MY/SG/TH/VN/PH/TW/BR
+  id               String    @id @default(uuid())
+  companyId        String    @map("company_id")
+  company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shopId           String    @map("shop_id") // Shopee shop ID (numeric string)
+  shopName         String?   @map("shop_name") // Cached display name dari Shopee
+  region           String    @default("ID") // ID/MY/SG/TH/VN/PH/TW/BR
   // Mode koneksi: OAUTH (resmi, butuh shop ≥30 order atau Mall) atau
   // COOKIE (PoC, paste cookie session dari browser seller).
-  connectionMode String @default("OAUTH") @map("connection_mode")
+  connectionMode   String    @default("OAUTH") @map("connection_mode")
   // ─── OAuth fields (mode=OAUTH) ─────────────────────────────────
-  accessToken  String?  @map("access_token") @db.Text
-  refreshToken String?  @map("refresh_token") @db.Text
-  expiresAt    DateTime? @map("expires_at") // access_token expiry (~4 jam)
+  accessToken      String?   @map("access_token") @db.Text
+  refreshToken     String?   @map("refresh_token") @db.Text
+  expiresAt        DateTime? @map("expires_at") // access_token expiry (~4 jam)
   refreshExpiresAt DateTime? @map("refresh_expires_at")
   // ─── Cookie fields (mode=COOKIE) ───────────────────────────────
   // Cookie string lengkap dari header Cookie request browser seller Shopee.
   // Format: "k1=v1; k2=v2; ...". Berisi token session yang valid 24-72 jam.
   // User wajib paste ulang saat expired.
-  sellerCookie String? @map("seller_cookie") @db.Text
+  sellerCookie     String?   @map("seller_cookie") @db.Text
   // User-agent yang dipakai saat dapat cookie ini — beberapa cookie
   // ke-bind ke fingerprint browser, jadi disimpan untuk konsisten.
-  cookieUserAgent String? @map("cookie_user_agent") @db.Text
+  cookieUserAgent  String?   @map("cookie_user_agent") @db.Text
   // Anti-bot tokens (mode=COOKIE, only untuk WRITE ops seperti update_stock,
   // update_product_info, create_product). Read ops gak butuh.
   // Struktur: { xSapRi, xSapSec, afAcEncSzToken, scFeSession, scFeVer }.
   // Tokens ini di-generate runtime oleh JS Shopee dan EXPIRE per session
   // (~15 menit s.d. beberapa jam). User wajib paste ulang saat expired.
-  scrapingTokens Json? @map("scraping_tokens")
+  scrapingTokens   Json?     @map("scraping_tokens")
   // ─── Common ────────────────────────────────────────────────────
-  isActive     Boolean  @default(true)
-  lastSyncedAt DateTime? @map("last_synced_at")
-  lastError    String?  @map("last_error") @db.Text
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  isActive         Boolean   @default(true)
+  lastSyncedAt     DateTime? @map("last_synced_at")
+  lastError        String?   @map("last_error") @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   productMappings ProductMarketplaceMapping[]
   cachedItems     ShopeeItem[]
@@ -1619,33 +1629,33 @@ model ShopeeAccount {
 /// 1 ShopeeItem row = 1 (itemId, modelId) — produk dengan banyak varian akan
 /// punya beberapa row.
 model ShopeeItem {
-  id              String   @id @default(uuid())
-  shopeeAccountId String   @map("shopee_account_id")
+  id              String        @id @default(uuid())
+  shopeeAccountId String        @map("shopee_account_id")
   account         ShopeeAccount @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
   // Shopee item_id (int64) & model_id (int64). Disimpan sebagai string supaya
   // gak overflow JS Number. modelId NULL kalau produk tanpa varian (untuk
   // produk dengan model_list, selalu pakai model_id walaupun cuma 1 model).
-  itemId          String   @map("item_id")
+  itemId          String        @map("item_id")
   // "0" untuk produk tanpa varian (atau yg model_id tidak ditemukan).
   // Non-nullable supaya composite unique [account, item, model] selalu unik
   // (PostgreSQL treat NULL != NULL di unique constraint).
-  modelId         String   @default("0") @map("model_id")
+  modelId         String        @default("0") @map("model_id")
   name            String
   sku             String?
-  status          String   @default("NORMAL")
-  currentPrice    Int?     @map("current_price")
-  originalPrice   Int?     @map("original_price")
-  totalStock      Int?     @map("total_stock")
-  imageUrl        String?  @map("image_url") @db.Text
-  hasModel        Boolean  @default(false) @map("has_model")
+  status          String        @default("NORMAL")
+  currentPrice    Int?          @map("current_price")
+  originalPrice   Int?          @map("original_price")
+  totalStock      Int?          @map("total_stock")
+  imageUrl        String?       @map("image_url") @db.Text
+  hasModel        Boolean       @default(false) @map("has_model")
   // Link ke produk MiniPOS — NULL = belum linked. Auto-set saat fetch kalau
   // SKU match.
-  productId       String?  @map("product_id")
-  product         Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  lastFetchedAt   DateTime @default(now()) @map("last_fetched_at")
-  lastPushedAt    DateTime? @map("last_pushed_at") // Terakhir push stok ke Shopee
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  productId       String?       @map("product_id")
+  product         Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  lastFetchedAt   DateTime      @default(now()) @map("last_fetched_at")
+  lastPushedAt    DateTime?     @map("last_pushed_at") // Terakhir push stok ke Shopee
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
 
   @@unique([shopeeAccountId, itemId, modelId])
   @@index([shopeeAccountId])
@@ -1659,28 +1669,28 @@ model ShopeeItem {
 /// (mis. import Shopee item → buat Product baru di kita, atau sync stok)
 /// tinggal pakai model ini tanpa migrasi schema.
 model ProductMarketplaceMapping {
-  id              String   @id @default(uuid())
-  productId       String   @map("product_id")
-  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id                   String         @id @default(uuid())
+  productId            String         @map("product_id")
+  product              Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
   // SHOPEE / TOKOPEDIA / LAZADA / TIKTOK_SHOP — pakai string supaya mudah
   // extend tanpa migrasi enum.
-  marketplace     String
+  marketplace          String
   // External item ID (Shopee item_id, Tokopedia product_id, dst).
-  externalItemId  String   @map("external_item_id")
+  externalItemId       String         @map("external_item_id")
   // Variant level mapping (kalau product punya varian, masing-masing variant
   // di-link ke model_id Shopee). NULL = product-level mapping.
-  externalModelId String?  @map("external_model_id")
-  externalSku     String?  @map("external_sku")
+  externalModelId      String?        @map("external_model_id")
+  externalSku          String?        @map("external_sku")
   // Reference balik ke akun yang punya item ini (untuk Shopee).
-  shopeeAccountId String?  @map("shopee_account_id")
-  shopeeAccount   ShopeeAccount? @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
+  shopeeAccountId      String?        @map("shopee_account_id")
+  shopeeAccount        ShopeeAccount? @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
   // Sinkronisasi status — last sync timestamp + last known stock di marketplace
   // (untuk reconciliation kalau ada discrepancy dengan stok kita).
-  lastSyncedAt    DateTime? @map("last_synced_at")
-  lastMarketplaceStock Int?  @map("last_marketplace_stock")
-  syncEnabled     Boolean  @default(true) @map("sync_enabled")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  lastSyncedAt         DateTime?      @map("last_synced_at")
+  lastMarketplaceStock Int?           @map("last_marketplace_stock")
+  syncEnabled          Boolean        @default(true) @map("sync_enabled")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
 
   @@unique([marketplace, externalItemId, externalModelId])
   @@index([productId])
@@ -1701,33 +1711,33 @@ model ProductMarketplaceMapping {
 // 1 GrabAccount = 1 outlet GrabFood (multi-outlet per company supported).
 
 model GrabAccount {
-  id           String   @id @default(uuid())
-  companyId    String   @map("company_id")
-  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid())
+  companyId       String    @map("company_id")
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   // Branch MiniPOS yang outlet GrabFood ini "milik". Optional — kalau merchant
   // belum mapping branch, biarkan null dan tampil sebagai outlet standalone.
-  branchId     String?  @map("branch_id")
-  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId        String?   @map("branch_id")
+  branch          Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   // Grab merchantID (string, di-set saat paste cookie atau dari profile API).
-  merchantId   String   @map("merchant_id")
+  merchantId      String    @map("merchant_id")
   // Nama outlet untuk tampil di UI (cached dari Grab profile).
-  merchantName String?  @map("merchant_name")
-  region       String   @default("ID") // ID/MY/SG/TH/VN/PH
+  merchantName    String?   @map("merchant_name")
+  region          String    @default("ID") // ID/MY/SG/TH/VN/PH
   // ─── Cookie session (paste manual dari browser) ────────────────
   // Cookie lengkap dari header Cookie request browser merchant Grab.
   // Format: "k1=v1; k2=v2; ...". Berisi token session. Expire 1-4 jam
   // typical — user wajib paste ulang saat expired.
-  cookie       String   @db.Text
-  cookieUserAgent String? @map("cookie_user_agent") @db.Text
+  cookie          String    @db.Text
+  cookieUserAgent String?   @map("cookie_user_agent") @db.Text
   // Anti-bot tokens kalau Grab portal pakai (mis. x-csrf-token, x-grab-app).
   // Disimpan terpisah supaya bisa di-refresh tanpa replace cookie.
-  scrapingTokens Json?  @map("scraping_tokens")
+  scrapingTokens  Json?     @map("scraping_tokens")
   // ─── Status ────────────────────────────────────────────────────
-  isActive     Boolean  @default(true)
-  lastSyncedAt DateTime? @map("last_synced_at")
-  lastError    String?  @map("last_error") @db.Text
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  isActive        Boolean   @default(true)
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  lastError       String?   @map("last_error") @db.Text
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   dailyReports GrabDailyReport[]
   orders       GrabOrder[]
@@ -1774,45 +1784,45 @@ model GrabDailyReport {
 /// completed/cancelled di hari sebelumnya. Pending/active orders skip —
 /// karena real-time integration butuh Partner API resmi.
 model GrabOrder {
-  id              String      @id @default(uuid())
-  accountId       String      @map("account_id")
-  account         GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id            String      @id @default(uuid())
+  accountId     String      @map("account_id")
+  account       GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   // Grab order_id / short_order_id — public visible di app customer.
-  grabOrderId     String      @map("grab_order_id")
-  shortOrderId    String?     @map("short_order_id")
+  grabOrderId   String      @map("grab_order_id")
+  shortOrderId  String?     @map("short_order_id")
   // ─── Customer (sebagian masked Grab — biasanya cuma nama depan & nomor masked) ─
-  customerName    String?     @map("customer_name")
-  customerPhone   String?     @map("customer_phone") // biasanya masked "0812****1234"
+  customerName  String?     @map("customer_name")
+  customerPhone String?     @map("customer_phone") // biasanya masked "0812****1234"
   // ─── Money (dalam rupiah, integer) ─────────────────────────────
-  subtotal        Int         @default(0)
-  deliveryFee     Int         @default(0) @map("delivery_fee")
-  discount        Int         @default(0)
-  total           Int         @default(0) // total yang dibayar customer
-  commission      Int         @default(0) // Grab cut
-  netPayout       Int         @default(0) @map("net_payout") // yang merchant terima
+  subtotal      Int         @default(0)
+  deliveryFee   Int         @default(0) @map("delivery_fee")
+  discount      Int         @default(0)
+  total         Int         @default(0) // total yang dibayar customer
+  commission    Int         @default(0) // Grab cut
+  netPayout     Int         @default(0) @map("net_payout") // yang merchant terima
   // ─── Status ──────────────────────────────────────────────────────
   // COMPLETED, CANCELLED, REFUNDED, PENDING — string supaya extend mudah
-  status          String      @default("COMPLETED")
-  paymentMethod   String?     @map("payment_method") // GRABPAY, OVO, CASH, etc.
-  cancelReason    String?     @map("cancel_reason")
+  status        String      @default("COMPLETED")
+  paymentMethod String?     @map("payment_method") // GRABPAY, OVO, CASH, etc.
+  cancelReason  String?     @map("cancel_reason")
   // ─── Items ─────────────────────────────────────────────────────
   // Disimpan sebagai JSON karena schema item Grab bervariasi & kita gak
   // butuh query per-item (cuma display). Format:
   // [{ name, qty, price, modifiers: [{name, price}], note }]
-  items           Json?
-  itemCount       Int         @default(0) @map("item_count")
+  items         Json?
+  itemCount     Int         @default(0) @map("item_count")
   // ─── Timing ────────────────────────────────────────────────────
-  orderedAt       DateTime?   @map("ordered_at")
-  acceptedAt      DateTime?   @map("accepted_at")
-  readyAt         DateTime?   @map("ready_at")
-  pickedUpAt      DateTime?   @map("picked_up_at")
-  deliveredAt     DateTime?   @map("delivered_at")
-  cancelledAt     DateTime?   @map("cancelled_at")
+  orderedAt     DateTime?   @map("ordered_at")
+  acceptedAt    DateTime?   @map("accepted_at")
+  readyAt       DateTime?   @map("ready_at")
+  pickedUpAt    DateTime?   @map("picked_up_at")
+  deliveredAt   DateTime?   @map("delivered_at")
+  cancelledAt   DateTime?   @map("cancelled_at")
   // ─── Raw payload untuk reference / future re-parse ─────────────
-  rawPayload      Json?       @map("raw_payload")
-  fetchedAt       DateTime    @default(now()) @map("fetched_at")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
+  rawPayload    Json?       @map("raw_payload")
+  fetchedAt     DateTime    @default(now()) @map("fetched_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
 
   @@unique([accountId, grabOrderId])
   @@index([accountId, status])
@@ -1857,7 +1867,7 @@ model Vehicle {
   updatedAt       DateTime       @updatedAt @map("updated_at")
   serviceOrders   ServiceOrder[]
 
-  bookings        Booking[]
+  bookings Booking[]
 
   @@unique([companyId, plateNumber])
   @@index([companyId])
@@ -1879,33 +1889,33 @@ model Vehicle {
 //   PENDING → CONFIRMED → IN_PROGRESS → COMPLETED
 //   atau CANCELLED / NO_SHOW dari status manapun.
 model Booking {
-  id            String            @id @default(uuid())
-  companyId     String            @map("company_id")
-  branchId      String            @map("branch_id")
-  branch        Branch            @relation(fields: [branchId], references: [id])
-  customerId    String?           @map("customer_id")
-  customer      Customer?         @relation(fields: [customerId], references: [id])
+  id             String           @id @default(uuid())
+  companyId      String           @map("company_id")
+  branchId       String           @map("branch_id")
+  branch         Branch           @relation(fields: [branchId], references: [id])
+  customerId     String?          @map("customer_id")
+  customer       Customer?        @relation(fields: [customerId], references: [id])
   // Identitas customer kalau bukan member (walk-in booking).
-  customerName  String?           @map("customer_name")
-  customerPhone String?           @map("customer_phone")
+  customerName   String?          @map("customer_name")
+  customerPhone  String?          @map("customer_phone")
   // BENGKEL | RESTAURANT | CAFE — menentukan field opsional yang relevan.
-  bookingType   String            @map("booking_type")
+  bookingType    String           @map("booking_type")
   // Jadwal kedatangan / janji.
-  scheduledAt   DateTime          @map("scheduled_at")
-  durationMin   Int?              @map("duration_min") // estimasi durasi pelayanan
+  scheduledAt    DateTime         @map("scheduled_at")
+  durationMin    Int?             @map("duration_min") // estimasi durasi pelayanan
   // Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW
-  status        String            @default("PENDING")
-  notes         String?
+  status         String           @default("PENDING")
+  notes          String?
   // ─── Bengkel-specific ──────────────────────────────────────────
-  vehicleId     String?           @map("vehicle_id")
-  vehicle       Vehicle?          @relation(fields: [vehicleId], references: [id])
-  serviceType   String?           @map("service_type") // Ganti Oli, Tune Up, dll
-  mechanicId    String?           @map("mechanic_id")
-  mechanic      User?             @relation("BookingMechanic", fields: [mechanicId], references: [id])
+  vehicleId      String?          @map("vehicle_id")
+  vehicle        Vehicle?         @relation(fields: [vehicleId], references: [id])
+  serviceType    String?          @map("service_type") // Ganti Oli, Tune Up, dll
+  mechanicId     String?          @map("mechanic_id")
+  mechanic       User?            @relation("BookingMechanic", fields: [mechanicId], references: [id])
   // ─── Resto/Cafe-specific ───────────────────────────────────────
-  partySize     Int?              @map("party_size")
-  tableId       String?           @map("table_id")
-  table         RestaurantTable?  @relation(fields: [tableId], references: [id])
+  partySize      Int?             @map("party_size")
+  tableId        String?          @map("table_id")
+  table          RestaurantTable? @relation(fields: [tableId], references: [id])
   // Reminder WA tracking — supaya cron tidak dobel kirim.
   reminderSentAt DateTime?        @map("reminder_sent_at")
   // Saat di-finalize jadi service order (bengkel) atau table session (F&B),
@@ -1915,9 +1925,9 @@ model Booking {
   cancelledAt    DateTime?        @map("cancelled_at")
   completedAt    DateTime?        @map("completed_at")
   createdById    String?          @map("created_by_id")
-  createdBy      User?             @relation("BookingCreatedBy", fields: [createdById], references: [id])
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
+  createdBy      User?            @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
 
   @@index([companyId])
   @@index([branchId])
@@ -1932,48 +1942,48 @@ model Booking {
 }
 
 model ServiceOrder {
-  id              String              @id @default(uuid())
+  id                 String             @id @default(uuid())
   // Unique scoped per company — sequence reset per company per hari.
-  orderNumber     String              @map("order_number")
-  companyId       String              @map("company_id")
-  branchId        String              @map("branch_id")
-  branch          Branch              @relation(fields: [branchId], references: [id])
-  vehicleId       String              @map("vehicle_id")
-  vehicle         Vehicle             @relation(fields: [vehicleId], references: [id])
-  customerId      String              @map("customer_id")
-  customer        Customer            @relation(fields: [customerId], references: [id])
+  orderNumber        String             @map("order_number")
+  companyId          String             @map("company_id")
+  branchId           String             @map("branch_id")
+  branch             Branch             @relation(fields: [branchId], references: [id])
+  vehicleId          String             @map("vehicle_id")
+  vehicle            Vehicle            @relation(fields: [vehicleId], references: [id])
+  customerId         String             @map("customer_id")
+  customer           Customer           @relation(fields: [customerId], references: [id])
   // Mekanik utama yang assigned (boleh null kalau belum di-assign).
-  mechanicId      String?             @map("mechanic_id")
-  mechanic        User?               @relation("ServiceOrderMechanic", fields: [mechanicId], references: [id])
+  mechanicId         String?            @map("mechanic_id")
+  mechanic           User?              @relation("ServiceOrderMechanic", fields: [mechanicId], references: [id])
   // Status: ANTRIAN, DIAGNOSA, MENUNGGU_APPROVAL, DIKERJAKAN, SELESAI, DIBAYAR, DIBATALKAN
-  status          String              @default("ANTRIAN")
-  complaint       String? // Keluhan customer
-  diagnose        String? // Hasil diagnosa mekanik
-  estimateAmount  Float?              @map("estimate_amount")
-  finalAmount     Float?              @map("final_amount") // Total final yg disepakati
-  mileageIn       Int?                @map("mileage_in")
-  mileageOut      Int?                @map("mileage_out")
-  approvedAt      DateTime?           @map("approved_at")
-  startedAt       DateTime?           @map("started_at")
-  completedAt     DateTime?           @map("completed_at")
-  paidAt          DateTime?           @map("paid_at")
-  cancelledAt     DateTime?           @map("cancelled_at")
-  cancelReason    String?             @map("cancel_reason")
+  status             String             @default("ANTRIAN")
+  complaint          String? // Keluhan customer
+  diagnose           String? // Hasil diagnosa mekanik
+  estimateAmount     Float?             @map("estimate_amount")
+  finalAmount        Float?             @map("final_amount") // Total final yg disepakati
+  mileageIn          Int?               @map("mileage_in")
+  mileageOut         Int?               @map("mileage_out")
+  approvedAt         DateTime?          @map("approved_at")
+  startedAt          DateTime?          @map("started_at")
+  completedAt        DateTime?          @map("completed_at")
+  paidAt             DateTime?          @map("paid_at")
+  cancelledAt        DateTime?          @map("cancelled_at")
+  cancelReason       String?            @map("cancel_reason")
   // Estimasi tanggal service berikutnya — di-set saat finalize, dipakai oleh
   // cron reminder WA (H-7 / H-3 sebelum tanggal ini).
-  nextServiceAt   DateTime?           @map("next_service_at")
+  nextServiceAt      DateTime?          @map("next_service_at")
   // Stempel waktu terakhir reminder dikirim, supaya tidak dobel di window
   // yang sama (H-7 → tidak dikirim ulang sampai pindah window H-3).
-  lastReminderSentAt DateTime?        @map("last_reminder_sent_at")
+  lastReminderSentAt DateTime?          @map("last_reminder_sent_at")
   // Foto sebelum/sesudah, attachment lain. Format: [{url, label, uploadedAt}]
-  attachments     Json?
-  notes           String?
+  attachments        Json?
+  notes              String?
   // Link ke Transaction setelah dibayar (1:1 — Service Order finalize jadi Transaction).
-  transactionId   String?             @unique @map("transaction_id")
-  transaction     Transaction?        @relation("ServiceOrderTransaction", fields: [transactionId], references: [id])
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
-  items           ServiceOrderItem[]
+  transactionId      String?            @unique @map("transaction_id")
+  transaction        Transaction?       @relation("ServiceOrderTransaction", fields: [transactionId], references: [id])
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+  items              ServiceOrderItem[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId])
@@ -1991,31 +2001,31 @@ model ServiceOrder {
 }
 
 model ServiceOrderItem {
-  id              String       @id @default(uuid())
-  serviceOrderId  String       @map("service_order_id")
-  serviceOrder    ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  id               String       @id @default(uuid())
+  serviceOrderId   String       @map("service_order_id")
+  serviceOrder     ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
   // Kalau item = produk dari katalog, isi productId. Kalau jasa ad-hoc
   // (mis. "Pengecekan suspensi"), productId null + name diisi manual.
-  productId       String?      @map("product_id")
+  productId        String?      @map("product_id")
   // PRODUCT atau SERVICE — duplikasi dari Product.itemType supaya tidak
   // butuh JOIN di list view. Default SERVICE supaya UI default ke "jasa".
-  itemType        String       @default("SERVICE") @map("item_type")
-  name            String
-  quantity        Float        @default(1)
-  unitPrice       Float        @map("unit_price")
-  discount        Float        @default(0)
-  subtotal        Float
+  itemType         String       @default("SERVICE") @map("item_type")
+  name             String
+  quantity         Float        @default(1)
+  unitPrice        Float        @map("unit_price")
+  discount         Float        @default(0)
+  subtotal         Float
   // Mekanik yang nge-handle item ini (untuk komisi). Bisa beda dengan
   // mekanik utama di ServiceOrder kalau ada lebih dari 1 mekanik.
-  mechanicId      String?      @map("mechanic_id")
-  mechanic        User?        @relation("ServiceOrderItemMechanic", fields: [mechanicId], references: [id])
+  mechanicId       String?      @map("mechanic_id")
+  mechanic         User?        @relation("ServiceOrderItemMechanic", fields: [mechanicId], references: [id])
   // Untuk JASA: persen komisi yang akan dihitung. Default 0.
-  commissionPct   Float        @default(0) @map("commission_pct")
+  commissionPct    Float        @default(0) @map("commission_pct")
   // Computed dari subtotal × commissionPct/100 saat finalize. Disimpan
   // supaya laporan komisi tidak butuh re-compute.
-  commissionAmount Float       @default(0) @map("commission_amount")
-  notes           String?
-  createdAt       DateTime     @default(now()) @map("created_at")
+  commissionAmount Float        @default(0) @map("commission_amount")
+  notes            String?
+  createdAt        DateTime     @default(now()) @map("created_at")
 
   @@index([serviceOrderId])
   @@index([productId])
@@ -2893,35 +2903,108 @@ model PlanActionAccess {
 }
 
 model PaymentOrder {
-  id             String              @id @default(uuid())
-  companyId      String
-  transactionId  String?
-  transaction    Transaction?        @relation(fields: [transactionId], references: [id], onDelete: SetNull)
-  provider       String              @default("xendit")
+  id              String             @id @default(uuid())
+  companyId       String
+  transactionId   String?
+  transaction     Transaction?       @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  provider        String             @default("xendit")
   // ID yang kita kirim ke Xendit sebagai external_id (unik global).
-  externalId     String              @unique
+  externalId      String             @unique
   // ID dari sisi Xendit (dari response create) — disimpan saat tahu.
   providerOrderId String?
-  status         PaymentOrderStatus  @default(PENDING)
-  amount         Int
-  currency       String              @default("IDR")
-  description    String?
-  payerEmail     String?
-  paymentUrl     String?
+  status          PaymentOrderStatus @default(PENDING)
+  amount          Int
+  currency        String             @default("IDR")
+  description     String?
+  payerEmail      String?
+  paymentUrl      String?
   // Method final yang dipilih customer di halaman Xendit (BCA/QRIS/OVO/dst).
-  paymentMethod  String?
-  paymentChannel String?
-  paidAt         DateTime?
-  expiresAt      DateTime?
-  failureReason  String?
-  rawCreate      Json?
-  rawCallback    Json?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  paymentMethod   String?
+  paymentChannel  String?
+  paidAt          DateTime?
+  expiresAt       DateTime?
+  failureReason   String?
+  rawCreate       Json?
+  rawCallback     Json?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@index([companyId])
   @@index([transactionId])
   @@index([status])
   @@index([provider, providerOrderId])
   @@map("payment_orders")
+}
+
+// ===========================
+// RAK / BIN LOCATION INVENTORY
+// ===========================
+
+model Rack {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  code      String
+  name      String
+  location  String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rackStocks         RackStock[]
+  fromMovements      RackStockMovement[] @relation("FromRack")
+  toMovements        RackStockMovement[] @relation("ToRack")
+  defaultForProducts Product[]           @relation("ProductDefaultRack")
+
+  @@unique([branchId, code])
+  @@index([branchId])
+  @@index([companyId])
+  @@map("racks")
+}
+
+model RackStock {
+  id        String   @id @default(uuid())
+  rackId    String
+  rack      Rack     @relation(fields: [rackId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  qty       Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rackId, productId])
+  @@index([productId, branchId])
+  @@index([rackId])
+  @@map("rack_stocks")
+}
+
+model RackStockMovement {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id])
+  fromRackId String?
+  fromRack   Rack?    @relation("FromRack", fields: [fromRackId], references: [id])
+  toRackId   String?
+  toRack     Rack?    @relation("ToRack", fields: [toRackId], references: [id])
+  qty        Int
+  type       String
+  refType    String?
+  refId      String?
+  byUserId   String?
+  byUser     User?    @relation(fields: [byUserId], references: [id])
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([productId, branchId])
+  @@index([fromRackId])
+  @@index([toRackId])
+  @@index([createdAt])
+  @@map("rack_stock_movements")
 }
