@@ -1108,7 +1108,7 @@ export class ProductsService {
                     brand_id, company_id, base_unit, is_active, image_url, barcode, description
            ORDER BY MIN(created_at) DESC
            LIMIT $${i} OFFSET $${i + 1}`;
-    const [countRes, rows] = await Promise.all([
+    const [countRes, rawRows] = await Promise.all([
       this.prisma.$queryRawUnsafe<[{ total: number | bigint }]>(
         countQuery,
         ...values,
@@ -1120,6 +1120,48 @@ export class ProductsService {
         offset,
       ),
     ]);
+
+    // Augment rows with default_rack info (raw SQL view doesn't include it).
+    const productIds = Array.from(
+      new Set(rawRows.map((r) => String(r.product_id))),
+    ).filter((id) => id);
+    const rackInfoByProduct = new Map<
+      string,
+      {
+        id: string;
+        code: string;
+        name: string;
+        branchId: string;
+      } | null
+    >();
+    if (productIds.length > 0) {
+      const productsWithRack = await this.prisma.product.findMany({
+        where: { id: { in: productIds }, companyId },
+        select: {
+          id: true,
+          defaultRack: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              branchId: true,
+            },
+          },
+        },
+      });
+      for (const p of productsWithRack) {
+        rackInfoByProduct.set(p.id, p.defaultRack ?? null);
+      }
+    }
+    const rows = rawRows.map((r) => {
+      const rack = rackInfoByProduct.get(String(r.product_id)) ?? null;
+      return {
+        ...r,
+        default_rack_id: rack?.id ?? null,
+        default_rack: rack,
+      };
+    });
+
     return { rows, total: Number(countRes[0]?.total ?? 0) };
   }
 
