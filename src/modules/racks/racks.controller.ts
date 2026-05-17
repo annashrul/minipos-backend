@@ -10,11 +10,13 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import {
+  AssignProductsToRackSchema,
   CreateRackSchema,
   ListRacksQuerySchema,
   SetRackStockSchema,
   TransferRackStockSchema,
   UpdateRackSchema,
+  type AssignProductsToRackDto,
   type CreateRackDto,
   type ListRacksQueryDto,
   type SetRackStockDto,
@@ -121,6 +123,18 @@ export class RacksController {
     body: TransferRackStockDto,
   ) {
     const data = await this.racks.transfer(companyId, body, user.id);
+    return { data };
+  }
+
+  @Post(":id/assign-products")
+  @RequireAccess("racks", "update")
+  async assignProducts(
+    @CurrentCompany() companyId: string,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(AssignProductsToRackSchema))
+    body: AssignProductsToRackDto,
+  ) {
+    const data = await this.racks.assignProducts(companyId, id, body);
     return { data };
   }
 }

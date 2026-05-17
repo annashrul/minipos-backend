@@ -108,6 +108,11 @@ export const TransferRackStockSchema = z.object({
 });
 export type TransferRackStockDto = z.infer<typeof TransferRackStockSchema>;
 
+export const AssignProductsToRackSchema = z.object({
+  productIds: z.array(z.string().uuid()),
+});
+export type AssignProductsToRackDto = z.infer<typeof AssignProductsToRackSchema>;
+
 export type RackMovementType = "IN" | "OUT" | "TRANSFER" | "ADJUST";
 
 export type RackStockMovementResponse = {

@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
+  AssignProductsToRackDto,
   CreateRackDto,
   ListRacksQueryDto,
   ProductRackLookupResponse,
@@ -426,6 +427,60 @@ export class RacksService {
     });
 
     return { success: true, updated: dto.items.length };
+  }
+
+  /**
+   * Bulk replace produk yang punya defaultRackId = rackId. Produk lama yang
+   * tidak ada di payload akan di-unset (defaultRackId = null). Tidak menyentuh
+   * RackStock — itu di-handle lewat setStock/transfer.
+   */
+  async assignProducts(
+    companyId: string,
+    rackId: string,
+    dto: AssignProductsToRackDto,
+  ): Promise<{ success: true; assigned: number; unassigned: number }> {
+    const rack = await this.prisma.rack.findFirst({
+      where: { id: rackId, companyId },
+      select: { id: true },
+    });
+    if (!rack) throw new NotFoundException("Rack not found");
+
+    if (dto.productIds.length > 0) {
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: dto.productIds }, companyId },
+        select: { id: true },
+      });
+      if (products.length !== dto.productIds.length) {
+        throw new BadRequestException("Beberapa produk tidak ditemukan");
+      }
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Unset produk lama yang masih point ke rak ini tapi tidak ada di payload.
+      const unset = await tx.product.updateMany({
+        where: {
+          defaultRackId: rackId,
+          companyId,
+          ...(dto.productIds.length > 0
+            ? { id: { notIn: dto.productIds } }
+            : {}),
+        },
+        data: { defaultRackId: null },
+      });
+
+      // Set defaultRackId untuk produk yang dipilih.
+      let assigned = 0;
+      if (dto.productIds.length > 0) {
+        const set = await tx.product.updateMany({
+          where: { id: { in: dto.productIds }, companyId },
+          data: { defaultRackId: rackId },
+        });
+        assigned = set.count;
+      }
+      return { assigned, unassigned: unset.count };
+    });
+
+    return { success: true, ...result };
   }
 
   /**
