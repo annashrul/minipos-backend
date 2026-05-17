@@ -35,6 +35,8 @@ const PRODUCT_SELECT = {
   isActive: true,
   description: true,
   imageUrl: true,
+  defaultRackId: true,
+  defaultRack: { select: { id: true, code: true, name: true, branchId: true } },
   createdAt: true,
   updatedAt: true,
   // Counts dipakai UI list utk decide apakah row punya breakdown SKU
@@ -354,6 +356,7 @@ export class ProductsService {
           isActive: dto.isActive ?? true,
           description: dto.description ?? null,
           imageUrl: dto.imageUrl ?? null,
+          defaultRackId: dto.defaultRackId ?? null,
         },
         select: PRODUCT_SELECT,
       });
@@ -425,6 +428,11 @@ export class ProductsService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
+    if (dto.defaultRackId !== undefined) {
+      data.defaultRack = dto.defaultRackId
+        ? { connect: { id: dto.defaultRackId } }
+        : { disconnect: true };
+    }
 
     try {
       const updated = await this.prisma.product.update({
@@ -1176,6 +1184,15 @@ function toProductResponse(p: RawProduct): ProductResponse {
     isActive: p.isActive,
     description: p.description,
     imageUrl: p.imageUrl,
+    defaultRackId: p.defaultRackId ?? null,
+    defaultRack: p.defaultRack
+      ? {
+          id: p.defaultRack.id,
+          code: p.defaultRack.code,
+          name: p.defaultRack.name,
+          branchId: p.defaultRack.branchId,
+        }
+      : null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
     unitCount: p._count?.units ?? 0,
