@@ -17,6 +17,7 @@ import type {
   StockMovementResponse,
 } from "@/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 const MOVEMENT_SELECT = {
@@ -60,6 +61,7 @@ export class StockService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly rackStockHelper: RackStockHelperService,
   ) {}
 
   async listMovements(
@@ -213,6 +215,61 @@ export class StockService {
           select: { quantity: true },
         });
         balanceAfter = upserted.quantity;
+
+        // Phase 2B: sync RackStock saat adjustment.
+        //   - IN/ADJUSTMENT positif → tambah ke rak (rackId eksplisit atau default)
+        //   - OUT → kurangi dari rak (FIFO dari default kalau rackId tidak diset,
+        //     atau spesifik dari rackId kalau diset)
+        if (delta > 0) {
+          await this.rackStockHelper.addToRack(tx, {
+            branchId,
+            productId: dto.productId,
+            qty: dto.quantity,
+            rackId: dto.rackId ?? null,
+            refType: "manual_adjustment",
+            ...(dto.reference ? { refId: dto.reference } : {}),
+            userId,
+            ...(dto.note ? { notes: dto.note } : {}),
+            movementType: "MANUAL_IN",
+          });
+        } else if (delta < 0) {
+          if (dto.rackId) {
+            // Adjust spesifik rak — kurangi qty di rak itu (boleh ≤ stock rak).
+            const existing = await tx.rackStock.findUnique({
+              where: {
+                rackId_productId: {
+                  rackId: dto.rackId,
+                  productId: dto.productId,
+                },
+              },
+              select: { qty: true },
+            });
+            const oldQty = existing?.qty ?? 0;
+            const newQty = Math.max(oldQty - dto.quantity, 0);
+            await this.rackStockHelper.setRackQty(tx, {
+              branchId,
+              productId: dto.productId,
+              rackId: dto.rackId,
+              qty: newQty,
+              refType: "manual_adjustment",
+              ...(dto.reference ? { refId: dto.reference } : {}),
+              userId,
+              ...(dto.note ? { notes: dto.note } : {}),
+              movementType: "MANUAL_OUT",
+            });
+          } else {
+            await this.rackStockHelper.deductFromRacks(tx, {
+              branchId,
+              productId: dto.productId,
+              qty: dto.quantity,
+              refType: "manual_adjustment",
+              ...(dto.reference ? { refId: dto.reference } : {}),
+              userId,
+              ...(dto.note ? { notes: dto.note } : {}),
+              movementType: "MANUAL_OUT",
+            });
+          }
+        }
 
         // Sync ProductBranchSku per (productId, branchId, variantId, unitId).
         // Tanpa ini, stok variant di matrix produk tidak ikut berubah.

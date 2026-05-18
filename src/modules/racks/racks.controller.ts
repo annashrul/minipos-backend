@@ -12,13 +12,17 @@ import {
 import {
   AssignProductsToRackSchema,
   CreateRackSchema,
+  ListRackMovementsQuerySchema,
   ListRacksQuerySchema,
+  ReportDiscrepancySchema,
   SetRackStockSchema,
   TransferRackStockSchema,
   UpdateRackSchema,
   type AssignProductsToRackDto,
   type CreateRackDto,
+  type ListRackMovementsQueryDto,
   type ListRacksQueryDto,
+  type ReportDiscrepancyDto,
   type SetRackStockDto,
   type TransferRackStockDto,
   type UpdateRackDto,
@@ -135,6 +139,56 @@ export class RacksController {
     body: AssignProductsToRackDto,
   ) {
     const data = await this.racks.assignProducts(companyId, id, body);
+    return { data };
+  }
+
+  @Get("movements/list")
+  @RequireAccess("racks", "view")
+  async listMovements(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(ListRackMovementsQuerySchema))
+    query: ListRackMovementsQueryDto,
+  ) {
+    const data = await this.racks.listMovements(companyId, query);
+    return { data };
+  }
+
+  @Get("discrepancies/list")
+  @RequireAccess("racks", "view")
+  async listDiscrepancies(
+    @CurrentCompany() companyId: string,
+    @Query("status") status?: "OPEN" | "RESOLVED",
+  ) {
+    const data = await this.racks.listDiscrepancies(companyId, status);
+    return { data };
+  }
+
+  @Post("discrepancies/report")
+  @RequireAccess("racks", "update")
+  async reportDiscrepancy(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: { id: string },
+    @Body(new ZodValidationPipe(ReportDiscrepancySchema))
+    body: ReportDiscrepancyDto,
+  ) {
+    const data = await this.racks.reportDiscrepancy(companyId, user.id, body);
+    return { data };
+  }
+
+  @Post("discrepancies/:id/resolve")
+  @RequireAccess("racks", "update")
+  async resolveDiscrepancy(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: { id: string },
+    @Param("id") id: string,
+    @Body() body: { applyAdjustment?: boolean },
+  ) {
+    const data = await this.racks.resolveDiscrepancy(
+      companyId,
+      user.id,
+      id,
+      body.applyAdjustment ?? false,
+    );
     return { data };
   }
 }

@@ -257,7 +257,10 @@ export class WhatsappChatbotService implements OnModuleInit {
     }
 
     const config = params.config;
-    const model = config?.model || "llama-3.3-70b-versatile";
+    // Default model: openai/gpt-oss-120b — tool-calling jauh lebih reliable
+    // dibanding Llama-3 family (yang kadang emit native function-tag malformed).
+    // Bisa override per-company via WhatsappBotConfig.model.
+    const model = config?.model || "openai/gpt-oss-120b";
     const groq = new Groq({ apiKey });
 
     const basePrompt =
@@ -692,7 +695,7 @@ harga, stok, ada nggak, jam buka, antar.`
         knowledge: dto.knowledge ?? null,
         systemPromptCustomer: dto.systemPromptCustomer ?? null,
         systemPromptOwner: dto.systemPromptOwner ?? null,
-        model: dto.model ?? "llama-3.3-70b-versatile",
+        model: dto.model ?? "openai/gpt-oss-120b",
         replyThrottleSec: dto.replyThrottleSec ?? 3,
       },
     });

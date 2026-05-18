@@ -19,6 +19,7 @@ import {
   nextDocumentNumber,
 } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
+import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 
 const OPNAME_ITEM_SELECT = {
   id: true,
@@ -65,7 +66,10 @@ type RawOpnameItem = Prisma.StockOpnameItemGetPayload<{
 
 @Injectable()
 export class StockOpnameService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rackStockHelper: RackStockHelperService,
+  ) {}
 
   async list(
     companyId: string,
@@ -288,6 +292,35 @@ export class StockOpnameService {
             select: { quantity: true },
           });
           balanceAfter = upserted.quantity;
+
+          // Phase 2B: sync RackStock juga. Opname menetapkan stok fisik ke
+          // angka final — kalau produk punya RackStock di rak default, set
+          // qty rak ke selisih (atau sum across racks dipertahankan).
+          // Strategi sederhana: terapkan difference ke rak default kalau ada,
+          // fallback ke FIFO deduct / add default.
+          if (item.difference > 0) {
+            await this.rackStockHelper.addToRack(tx, {
+              branchId: opname.branchId,
+              productId: item.productId,
+              qty: item.difference,
+              refType: "stock_opname",
+              refId: id,
+              userId,
+              notes: `Opname ${opname.opnameNumber}: stok bertambah`,
+              movementType: "OPNAME_ADJUSTMENT",
+            });
+          } else {
+            await this.rackStockHelper.deductFromRacks(tx, {
+              branchId: opname.branchId,
+              productId: item.productId,
+              qty: Math.abs(item.difference),
+              refType: "stock_opname",
+              refId: id,
+              userId,
+              notes: `Opname ${opname.opnameNumber}: stok berkurang`,
+              movementType: "OPNAME_ADJUSTMENT",
+            });
+          }
         } else {
           const updatedP = await tx.product.update({
             where: { id: item.productId },

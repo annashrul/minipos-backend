@@ -8,11 +8,15 @@ import { Prisma } from "@prisma/client";
 import type {
   AssignProductsToRackDto,
   CreateRackDto,
+  DiscrepancyReportResponse,
+  ListRackMovementsQueryDto,
   ListRacksQueryDto,
   ProductRackLookupResponse,
   RackDetailResponse,
   RackListResponse,
+  RackMovementListResponse,
   RackResponse,
+  ReportDiscrepancyDto,
   SetRackStockDto,
   TransferRackStockDto,
   UpdateRackDto,
@@ -591,6 +595,344 @@ export class RacksService {
     });
 
     return { success: true, transferred: dto.items.length };
+  }
+
+  /**
+   * Phase 3: list RackStockMovement dengan filter & pagination. Dipakai
+   * halaman audit log buat trace siapa, kapan, ngapain di rak.
+   */
+  async listMovements(
+    companyId: string,
+    query: ListRackMovementsQueryDto,
+  ): Promise<RackMovementListResponse> {
+    const { rackId, branchId, productId, type, dateFrom, dateTo, page, perPage } =
+      query;
+    const where: Prisma.RackStockMovementWhereInput = {
+      product: { companyId },
+    };
+    if (branchId) where.branchId = branchId;
+    if (productId) where.productId = productId;
+    if (type) where.type = type;
+    if (rackId) {
+      where.OR = [{ fromRackId: rackId }, { toRackId: rackId }];
+    }
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) where.createdAt.lte = new Date(dateTo);
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.rackStockMovement.findMany({
+        where,
+        select: {
+          id: true,
+          qty: true,
+          type: true,
+          refType: true,
+          refId: true,
+          notes: true,
+          createdAt: true,
+          byUserId: true,
+          byUser: { select: { id: true, name: true } },
+          branchId: true,
+          branch: { select: { id: true, name: true } },
+          productId: true,
+          product: {
+            select: { id: true, code: true, name: true, unit: true },
+          },
+          fromRackId: true,
+          fromRack: { select: { id: true, code: true } },
+          toRackId: true,
+          toRack: { select: { id: true, code: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * perPage,
+        take: perPage,
+      }),
+      this.prisma.rackStockMovement.count({ where }),
+    ]);
+
+    return {
+      movements: rows.map((r) => ({
+        id: r.id,
+        productId: r.productId,
+        productCode: r.product.code,
+        productName: r.product.name,
+        unit: r.product.unit,
+        branchId: r.branchId,
+        branchName: r.branch.name,
+        fromRackId: r.fromRackId,
+        fromRackCode: r.fromRack?.code ?? null,
+        toRackId: r.toRackId,
+        toRackCode: r.toRack?.code ?? null,
+        qty: r.qty,
+        type: r.type,
+        refType: r.refType,
+        refId: r.refId,
+        notes: r.notes,
+        byUserId: r.byUserId,
+        byUserName: r.byUser?.name ?? null,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      total,
+      totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  /**
+   * Phase 3: user lapor selisih stok di rak. Buat record RackDiscrepancy
+   * (status OPEN), TIDAK auto-apply adjustment — admin harus investigate &
+   * resolve manual via UI.
+   */
+  async reportDiscrepancy(
+    companyId: string,
+    userId: string,
+    dto: ReportDiscrepancyDto,
+  ): Promise<DiscrepancyReportResponse> {
+    const rack = await this.prisma.rack.findFirst({
+      where: { id: dto.rackId, companyId },
+      select: { id: true, code: true, branchId: true },
+    });
+    if (!rack) throw new NotFoundException("Rack not found");
+    const product = await this.prisma.product.findFirst({
+      where: { id: dto.productId, companyId },
+      select: { id: true, code: true, name: true },
+    });
+    if (!product) throw new NotFoundException("Product not found");
+
+    const difference = dto.actualQty - dto.expectedQty;
+    const created = await this.prisma.rackDiscrepancy.create({
+      data: {
+        rackId: rack.id,
+        productId: product.id,
+        branchId: rack.branchId,
+        companyId,
+        expectedQty: dto.expectedQty,
+        actualQty: dto.actualQty,
+        difference,
+        status: "OPEN",
+        notes: dto.notes ?? null,
+        reportedByUserId: userId,
+      },
+      select: {
+        id: true,
+        rackId: true,
+        productId: true,
+        expectedQty: true,
+        actualQty: true,
+        difference: true,
+        status: true,
+        notes: true,
+        reportedByUserId: true,
+        reportedAt: true,
+        resolvedAt: true,
+        reportedBy: { select: { name: true } },
+      },
+    });
+    return {
+      id: created.id,
+      rackId: created.rackId,
+      rackCode: rack.code,
+      productId: created.productId,
+      productCode: product.code,
+      productName: product.name,
+      expectedQty: created.expectedQty,
+      actualQty: created.actualQty,
+      difference: created.difference,
+      status: created.status as "OPEN" | "RESOLVED",
+      notes: created.notes,
+      reportedByUserId: created.reportedByUserId,
+      reportedByName: created.reportedBy.name,
+      reportedAt: created.reportedAt.toISOString(),
+      resolvedAt: created.resolvedAt?.toISOString() ?? null,
+    };
+  }
+
+  async listDiscrepancies(
+    companyId: string,
+    status?: "OPEN" | "RESOLVED",
+  ): Promise<DiscrepancyReportResponse[]> {
+    const where: Prisma.RackDiscrepancyWhereInput = { companyId };
+    if (status) where.status = status;
+    const rows = await this.prisma.rackDiscrepancy.findMany({
+      where,
+      select: {
+        id: true,
+        rackId: true,
+        rack: { select: { code: true } },
+        productId: true,
+        product: { select: { code: true, name: true } },
+        expectedQty: true,
+        actualQty: true,
+        difference: true,
+        status: true,
+        notes: true,
+        reportedByUserId: true,
+        reportedBy: { select: { name: true } },
+        reportedAt: true,
+        resolvedAt: true,
+      },
+      orderBy: { reportedAt: "desc" },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      rackId: r.rackId,
+      rackCode: r.rack.code,
+      productId: r.productId,
+      productCode: r.product.code,
+      productName: r.product.name,
+      expectedQty: r.expectedQty,
+      actualQty: r.actualQty,
+      difference: r.difference,
+      status: r.status as "OPEN" | "RESOLVED",
+      notes: r.notes,
+      reportedByUserId: r.reportedByUserId,
+      reportedByName: r.reportedBy.name,
+      reportedAt: r.reportedAt.toISOString(),
+      resolvedAt: r.resolvedAt?.toISOString() ?? null,
+    }));
+  }
+
+  async resolveDiscrepancy(
+    companyId: string,
+    userId: string,
+    id: string,
+    applyAdjustment: boolean,
+  ): Promise<DiscrepancyReportResponse> {
+    const disc = await this.prisma.rackDiscrepancy.findFirst({
+      where: { id, companyId, status: "OPEN" },
+      select: {
+        id: true,
+        rackId: true,
+        productId: true,
+        branchId: true,
+        actualQty: true,
+        expectedQty: true,
+        difference: true,
+      },
+    });
+    if (!disc) throw new NotFoundException("Discrepancy not found or already resolved");
+
+    await this.prisma.$transaction(async (tx) => {
+      if (applyAdjustment && disc.difference !== 0) {
+        // Set RackStock qty ke actual (final value) + log movement.
+        const existing = await tx.rackStock.findUnique({
+          where: {
+            rackId_productId: {
+              rackId: disc.rackId,
+              productId: disc.productId,
+            },
+          },
+          select: { qty: true },
+        });
+        const oldQty = existing?.qty ?? 0;
+        const delta = disc.actualQty - oldQty;
+
+        if (disc.actualQty === 0 && existing) {
+          await tx.rackStock.delete({
+            where: {
+              rackId_productId: {
+                rackId: disc.rackId,
+                productId: disc.productId,
+              },
+            },
+          });
+        } else if (disc.actualQty > 0) {
+          await tx.rackStock.upsert({
+            where: {
+              rackId_productId: {
+                rackId: disc.rackId,
+                productId: disc.productId,
+              },
+            },
+            update: { qty: disc.actualQty },
+            create: {
+              rackId: disc.rackId,
+              productId: disc.productId,
+              branchId: disc.branchId,
+              qty: disc.actualQty,
+            },
+          });
+        }
+        if (delta !== 0) {
+          await tx.rackStockMovement.create({
+            data: {
+              productId: disc.productId,
+              branchId: disc.branchId,
+              fromRackId: delta < 0 ? disc.rackId : null,
+              toRackId: delta > 0 ? disc.rackId : null,
+              qty: Math.abs(delta),
+              type: "DISCREPANCY_RESOLVE",
+              refType: "rack_discrepancy",
+              refId: disc.id,
+              byUserId: userId,
+              notes: `Resolve discrepancy ${disc.id}`,
+            },
+          });
+          // Sinkronkan BranchStock (delta sama).
+          await tx.branchStock.upsert({
+            where: {
+              branchId_productId: {
+                branchId: disc.branchId,
+                productId: disc.productId,
+              },
+            },
+            update: { quantity: { increment: delta } },
+            create: {
+              branchId: disc.branchId,
+              productId: disc.productId,
+              quantity: Math.max(delta, 0),
+            },
+          });
+        }
+      }
+      await tx.rackDiscrepancy.update({
+        where: { id },
+        data: {
+          status: "RESOLVED",
+          resolvedAt: new Date(),
+          resolvedByUserId: userId,
+        },
+      });
+    });
+
+    const updated = await this.prisma.rackDiscrepancy.findUniqueOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        rackId: true,
+        rack: { select: { code: true } },
+        productId: true,
+        product: { select: { code: true, name: true } },
+        expectedQty: true,
+        actualQty: true,
+        difference: true,
+        status: true,
+        notes: true,
+        reportedByUserId: true,
+        reportedBy: { select: { name: true } },
+        reportedAt: true,
+        resolvedAt: true,
+      },
+    });
+    return {
+      id: updated.id,
+      rackId: updated.rackId,
+      rackCode: updated.rack.code,
+      productId: updated.productId,
+      productCode: updated.product.code,
+      productName: updated.product.name,
+      expectedQty: updated.expectedQty,
+      actualQty: updated.actualQty,
+      difference: updated.difference,
+      status: updated.status as "OPEN" | "RESOLVED",
+      notes: updated.notes,
+      reportedByUserId: updated.reportedByUserId,
+      reportedByName: updated.reportedBy.name,
+      reportedAt: updated.reportedAt.toISOString(),
+      resolvedAt: updated.resolvedAt?.toISOString() ?? null,
+    };
   }
 }
 

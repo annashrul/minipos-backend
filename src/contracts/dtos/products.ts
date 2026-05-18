@@ -159,3 +159,17 @@ export type ProductListResponse = {
   total: number;
   totalPages: number;
 };
+
+export const GenerateProductDescriptionSchema = z.object({
+  productName: z.string().min(1, "Nama produk wajib diisi"),
+  categoryId: z.string().nullable().optional(),
+  brandId: z.string().nullable().optional(),
+  unit: z.string().nullable().optional(),
+});
+export type GenerateProductDescriptionDto = z.infer<
+  typeof GenerateProductDescriptionSchema
+>;
+
+export type GenerateProductDescriptionResponse = {
+  description: string;
+};

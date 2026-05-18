@@ -228,6 +228,8 @@ model User {
   bookingsAsMechanic      Booking[]                  @relation("BookingMechanic")
   bookingsCreated         Booking[]                  @relation("BookingCreatedBy")
   rackMovements           RackStockMovement[]
+  discrepanciesReported   RackDiscrepancy[]          @relation("DiscrepancyReporter")
+  discrepanciesResolved   RackDiscrepancy[]          @relation("DiscrepancyResolver")
 
   @@index([email])
   @@index([role])
@@ -381,6 +383,7 @@ model Branch {
   racks              Rack[]
   rackStocks         RackStock[]
   rackMovements      RackStockMovement[]
+  rackDiscrepancies  RackDiscrepancy[]
 
   @@unique([companyId, name])
   @@unique([companyId, code])
@@ -532,6 +535,7 @@ model Product {
   defaultRack         Rack?                       @relation("ProductDefaultRack", fields: [defaultRackId], references: [id])
   rackStocks          RackStock[]
   rackMovements       RackStockMovement[]
+  rackDiscrepancies   RackDiscrepancy[]
 
   @@unique([companyId, code])
   @@unique([companyId, barcode])
@@ -1553,9 +1557,10 @@ model WhatsappBotConfig {
   knowledge            String?  @db.Text
   systemPromptCustomer String?  @map("system_prompt_customer") @db.Text
   systemPromptOwner    String?  @map("system_prompt_owner") @db.Text
-  // Model Groq yang dipakai. Default ke versatile (terbaik) — bisa diganti
-  // ke "llama-3.1-8b-instant" untuk hemat rate-limit.
-  model                String   @default("llama-3.3-70b-versatile")
+  // Model Groq yang dipakai. Default ke openai/gpt-oss-120b karena
+  // tool-calling-nya jauh lebih reliable. Llama-3 family kadang emit
+  // native function-tag format yang bikin Groq parser fail.
+  model                String   @default("openai/gpt-oss-120b")
   // Throttle balas: max 1 reply per nomor per N detik supaya tidak loop kalau
   // ada bot lain di seberang juga auto-reply.
   replyThrottleSec     Int      @default(3) @map("reply_throttle_sec")
@@ -2958,6 +2963,7 @@ model Rack {
   fromMovements      RackStockMovement[] @relation("FromRack")
   toMovements        RackStockMovement[] @relation("ToRack")
   defaultForProducts Product[]           @relation("ProductDefaultRack")
+  discrepancies      RackDiscrepancy[]
 
   @@unique([branchId, code])
   @@index([branchId])
@@ -3007,4 +3013,35 @@ model RackStockMovement {
   @@index([toRackId])
   @@index([createdAt])
   @@map("rack_stock_movements")
+}
+
+// Phase 3: laporan stok hilang / selisih per rak. User lapor "harusnya N,
+// aktual M" → buat record, auto-create adjustment (kalau diizinkan),
+// notif admin. Admin bisa investigate sebelum apply.
+model RackDiscrepancy {
+  id               String    @id @default(uuid())
+  rackId           String
+  rack             Rack      @relation(fields: [rackId], references: [id], onDelete: Cascade)
+  productId        String
+  product          Product   @relation(fields: [productId], references: [id])
+  branchId         String
+  branch           Branch    @relation(fields: [branchId], references: [id])
+  companyId        String
+  expectedQty      Int
+  actualQty        Int
+  difference       Int
+  status           String    @default("OPEN") // OPEN | RESOLVED
+  notes            String?
+  reportedByUserId String
+  reportedBy       User      @relation("DiscrepancyReporter", fields: [reportedByUserId], references: [id])
+  reportedAt       DateTime  @default(now())
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+  resolvedBy       User?     @relation("DiscrepancyResolver", fields: [resolvedByUserId], references: [id])
+
+  @@index([rackId])
+  @@index([productId])
+  @@index([companyId, status])
+  @@index([reportedAt])
+  @@map("rack_discrepancies")
 }

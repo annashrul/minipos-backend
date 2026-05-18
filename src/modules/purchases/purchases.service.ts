@@ -27,6 +27,7 @@ import type {
 } from "@/contracts";
 import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
+import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 
 const PO_ITEM_SELECT = {
   id: true,
@@ -133,7 +134,10 @@ const ALLOWED_TRANSITIONS: Record<
 
 @Injectable()
 export class PurchasesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rackStockHelper: RackStockHelperService,
+  ) {}
 
   async list(
     companyId: string,
@@ -688,6 +692,20 @@ export class PurchasesService {
               select: { quantity: true },
             });
             balanceAfter = updated.quantity;
+
+            // Phase 2B: tempatkan qty terima ke rak. Pakai rackId dari input
+            // kalau ada, fallback ke product.defaultRackId. Kalau produk tidak
+            // punya rak sama sekali, qty stays "unassigned" di BranchStock.
+            await this.rackStockHelper.addToRack(tx, {
+              branchId: targetBranchId,
+              productId,
+              qty: input.quantityReceived,
+              rackId: input.rackId ?? null,
+              refType: "purchase_order",
+              refId: po.id,
+              notes: `Terima PO ${po.purchaseTransactionNumber}`,
+              movementType: "PURCHASE_RECEIVE",
+            });
 
             // Sync ProductBranchSku per varian. Match EXACT (productId,
             // branchId, variantId, unitId) supaya target SKU row tepat —

@@ -113,24 +113,72 @@ export const AssignProductsToRackSchema = z.object({
 });
 export type AssignProductsToRackDto = z.infer<typeof AssignProductsToRackSchema>;
 
-export type RackMovementType = "IN" | "OUT" | "TRANSFER" | "ADJUST";
+export const ListRackMovementsQuerySchema = z.object({
+  rackId: z.string().uuid().optional(),
+  branchId: z.string().uuid().optional(),
+  productId: z.string().uuid().optional(),
+  type: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ListRackMovementsQueryDto = z.infer<
+  typeof ListRackMovementsQuerySchema
+>;
 
 export type RackStockMovementResponse = {
   id: string;
   productId: string;
   productCode: string;
   productName: string;
+  unit: string;
   branchId: string;
+  branchName: string;
   fromRackId: string | null;
   fromRackCode: string | null;
   toRackId: string | null;
   toRackCode: string | null;
   qty: number;
-  type: RackMovementType;
+  type: string;
   refType: string | null;
   refId: string | null;
+  notes: string | null;
   byUserId: string | null;
   byUserName: string | null;
-  notes: string | null;
   createdAt: string;
 };
+
+export type RackMovementListResponse = {
+  movements: RackStockMovementResponse[];
+  total: number;
+  totalPages: number;
+};
+
+export const ReportDiscrepancySchema = z.object({
+  rackId: z.string().uuid(),
+  productId: z.string().uuid(),
+  expectedQty: z.number().int().min(0),
+  actualQty: z.number().int().min(0),
+  notes: z.string().nullable().optional(),
+});
+export type ReportDiscrepancyDto = z.infer<typeof ReportDiscrepancySchema>;
+
+export type DiscrepancyReportResponse = {
+  id: string;
+  rackId: string;
+  rackCode: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  expectedQty: number;
+  actualQty: number;
+  difference: number;
+  status: "OPEN" | "RESOLVED";
+  notes: string | null;
+  reportedByUserId: string;
+  reportedByName: string;
+  reportedAt: string;
+  resolvedAt: string | null;
+};
+

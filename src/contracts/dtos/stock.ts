@@ -74,6 +74,9 @@ export const AdjustStockSchema = z.object({
   quantity: z.number().int().min(1),
   note: z.string().nullable().optional(),
   reference: z.string().nullable().optional(),
+  // Phase 2B: optional rakId — kalau diisi, adjustment juga dilakukan di
+  // RackStock rak tsb. Kalau null, fallback ke product.defaultRackId.
+  rackId: z.string().uuid().nullable().optional(),
 });
 export type AdjustStockDto = z.infer<typeof AdjustStockSchema>;
 
