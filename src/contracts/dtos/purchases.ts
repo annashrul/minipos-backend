@@ -73,6 +73,10 @@ export const ReceivePurchaseItemSchema = z.object({
   quantityReceived: z.number().int().positive(),
   unitCost: z.number().nonnegative().optional(),
   notes: z.string().nullable().optional(),
+  // Phase 2B: rak tujuan saat barang masuk. Kalau null/omit, fallback ke
+  // product.defaultRackId. Kalau produk tidak punya default, item tetap
+  // diterima ke BranchStock tapi tidak ditaruh ke rak (unassigned).
+  rackId: z.string().uuid().nullable().optional(),
 }).refine((v) => !!v.purchaseOrderItemId || !!v.productId, {
   message: "purchaseOrderItemId atau productId wajib diisi",
 });

@@ -21,6 +21,7 @@ import type {
 import { DebtsService } from "../debts/debts.service";
 import { PointsService } from "../points/points.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 
 const TX_SELECT = {
@@ -114,6 +115,7 @@ export class TransactionsService {
     private readonly realtime: RealtimeService,
     private readonly autoJournal: AutoJournalService,
     private readonly whatsapp: WhatsappReceiptService,
+    private readonly rackStockHelper: RackStockHelperService,
   ) {}
 
   async list(
@@ -558,6 +560,20 @@ export class TransactionsService {
                 },
                 data: { quantity: { decrement: qtyInt } },
                 select: { quantity: true },
+              });
+              // Phase 2B: kurangi RackStock kalau produk ini di-track per rak.
+              // FIFO dari rak default → rak lain. No-op kalau produk tidak
+              // punya entry RackStock (legacy / non-tracked).
+              await this.rackStockHelper.deductFromRacks(tx, {
+                branchId,
+                productId: d.productId,
+                qty: qtyInt,
+                refType: "transaction",
+                refId: newTx.id,
+                userId: userId ?? null,
+                notes: `Penjualan ${displayRef}`,
+                movementType:
+                  movementType === "RECIPE_DEDUCT" ? "RECIPE_DEDUCT" : "SALE",
               });
               // Decrement ProductBranchSku — match base-unit row exact
               // (unitId=null) supaya stok varian di matriks produk berkurang.
@@ -1193,7 +1209,7 @@ export class TransactionsService {
           const restoreQty =
             item.baseQty ?? item.quantity * (item.conversionQty ?? 1);
           if (transaction.branchId) {
-            return tx.branchStock.upsert({
+            await tx.branchStock.upsert({
               where: {
                 branchId_productId: {
                   branchId: transaction.branchId,
@@ -1209,6 +1225,20 @@ export class TransactionsService {
                 quantity: { increment: restoreQty },
               },
             });
+            // Phase 2B: restore RackStock ke rak default produk (kalau ada).
+            // Void/refund tidak tahu rak asal pengambilan, jadi balikin ke
+            // default rak — admin bisa adjust manual kalau perlu.
+            await this.rackStockHelper.addToRack(tx, {
+              branchId: transaction.branchId,
+              productId: item.productId,
+              qty: restoreQty,
+              refType: "transaction",
+              refId: transaction.id,
+              userId: userId ?? null,
+              notes: `${noun} transaksi ${transaction.invoiceNumber}`,
+              movementType: target === "VOIDED" ? "VOID_RESTORE" : "REFUND_IN",
+            });
+            return;
           }
           await tx.product.update({
             where: { id: item.productId },

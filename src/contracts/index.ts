@@ -63,6 +63,7 @@ export * from "./dtos/auto-journal";
 export * from "./dtos/vehicle";
 export * from "./dtos/service-order";
 export * from "./dtos/bookings";
+export * from "./dtos/racks";
 
 export type ApiSuccess<T> = { data: T };
 

@@ -68,6 +68,10 @@ export const CreateProductSchema = z.object({
   isActive: z.boolean().optional(),
   description: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
+  // Default rack untuk fitur bin-location inventory. Saat checkout POS,
+  // sistem auto-pilih rak ini sebagai sumber pengambilan stok (kalau
+  // useRackInventory aktif di branch).
+  defaultRackId: z.string().nullable().optional(),
   // Optional: replace product↔modifier-group attachments in the same request.
   modifierGroupIds: z.array(z.string().min(1)).optional(),
   // Optional: replace ProductUnit (delete-all + create-from-payload) inline.
@@ -135,6 +139,13 @@ export type ProductResponse = {
   isActive: boolean;
   description: string | null;
   imageUrl: string | null;
+  defaultRackId: string | null;
+  defaultRack: {
+    id: string;
+    code: string;
+    name: string;
+    branchId: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
   /** Jumlah ProductUnit (satuan tambahan). 0 / 1 = single-unit, >1 = multi-unit. */
@@ -147,4 +158,18 @@ export type ProductListResponse = {
   products: ProductResponse[];
   total: number;
   totalPages: number;
+};
+
+export const GenerateProductDescriptionSchema = z.object({
+  productName: z.string().min(1, "Nama produk wajib diisi"),
+  categoryId: z.string().nullable().optional(),
+  brandId: z.string().nullable().optional(),
+  unit: z.string().nullable().optional(),
+});
+export type GenerateProductDescriptionDto = z.infer<
+  typeof GenerateProductDescriptionSchema
+>;
+
+export type GenerateProductDescriptionResponse = {
+  description: string;
 };

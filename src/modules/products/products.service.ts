@@ -35,6 +35,8 @@ const PRODUCT_SELECT = {
   isActive: true,
   description: true,
   imageUrl: true,
+  defaultRackId: true,
+  defaultRack: { select: { id: true, code: true, name: true, branchId: true } },
   createdAt: true,
   updatedAt: true,
   // Counts dipakai UI list utk decide apakah row punya breakdown SKU
@@ -354,6 +356,7 @@ export class ProductsService {
           isActive: dto.isActive ?? true,
           description: dto.description ?? null,
           imageUrl: dto.imageUrl ?? null,
+          defaultRackId: dto.defaultRackId ?? null,
         },
         select: PRODUCT_SELECT,
       });
@@ -425,6 +428,11 @@ export class ProductsService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
+    if (dto.defaultRackId !== undefined) {
+      data.defaultRack = dto.defaultRackId
+        ? { connect: { id: dto.defaultRackId } }
+        : { disconnect: true };
+    }
 
     try {
       const updated = await this.prisma.product.update({
@@ -1100,7 +1108,7 @@ export class ProductsService {
                     brand_id, company_id, base_unit, is_active, image_url, barcode, description
            ORDER BY MIN(created_at) DESC
            LIMIT $${i} OFFSET $${i + 1}`;
-    const [countRes, rows] = await Promise.all([
+    const [countRes, rawRows] = await Promise.all([
       this.prisma.$queryRawUnsafe<[{ total: number | bigint }]>(
         countQuery,
         ...values,
@@ -1112,6 +1120,48 @@ export class ProductsService {
         offset,
       ),
     ]);
+
+    // Augment rows with default_rack info (raw SQL view doesn't include it).
+    const productIds = Array.from(
+      new Set(rawRows.map((r) => String(r.product_id))),
+    ).filter((id) => id);
+    const rackInfoByProduct = new Map<
+      string,
+      {
+        id: string;
+        code: string;
+        name: string;
+        branchId: string;
+      } | null
+    >();
+    if (productIds.length > 0) {
+      const productsWithRack = await this.prisma.product.findMany({
+        where: { id: { in: productIds }, companyId },
+        select: {
+          id: true,
+          defaultRack: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              branchId: true,
+            },
+          },
+        },
+      });
+      for (const p of productsWithRack) {
+        rackInfoByProduct.set(p.id, p.defaultRack ?? null);
+      }
+    }
+    const rows = rawRows.map((r) => {
+      const rack = rackInfoByProduct.get(String(r.product_id)) ?? null;
+      return {
+        ...r,
+        default_rack_id: rack?.id ?? null,
+        default_rack: rack,
+      };
+    });
+
     return { rows, total: Number(countRes[0]?.total ?? 0) };
   }
 
@@ -1176,6 +1226,15 @@ function toProductResponse(p: RawProduct): ProductResponse {
     isActive: p.isActive,
     description: p.description,
     imageUrl: p.imageUrl,
+    defaultRackId: p.defaultRackId ?? null,
+    defaultRack: p.defaultRack
+      ? {
+          id: p.defaultRack.id,
+          code: p.defaultRack.code,
+          name: p.defaultRack.name,
+          branchId: p.defaultRack.branchId,
+        }
+      : null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
     unitCount: p._count?.units ?? 0,

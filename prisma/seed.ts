@@ -236,6 +236,14 @@ const MENU_SEED = [
     actions: ["view", "create", "update", "delete"],
   },
   {
+    key: "racks",
+    name: "Rak",
+    path: "/racks",
+    group: "Master Data",
+    sortOrder: 6,
+    actions: ["view", "create", "update", "delete"],
+  },
+  {
     key: "audit-logs",
     name: "Audit Log",
     path: "/audit-logs",

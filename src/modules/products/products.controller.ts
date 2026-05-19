@@ -11,9 +11,11 @@
 } from "@nestjs/common";
 import {
   CreateProductSchema,
+  GenerateProductDescriptionSchema,
   ListProductsQuerySchema,
   UpdateProductSchema,
   type CreateProductDto,
+  type GenerateProductDescriptionDto,
   type ListProductsQueryDto,
   type UpdateProductDto,
 } from "@/contracts";
@@ -21,12 +23,16 @@ import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
 import { RequireAccess } from "../auth/require-access.decorator";
+import { ProductAiService } from "./product-ai.service";
 import { ProductsService } from "./products.service";
 
 @Controller("products")
 @UseGuards(AccessGuard)
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(
+    private readonly products: ProductsService,
+    private readonly ai: ProductAiService,
+  ) {}
 
   @Get()
   @RequireAccess("products", "view")
@@ -191,6 +197,16 @@ export class ProductsController {
     @Param("id") id: string,
   ) {
     const data = await this.products.softDelete(companyId, id);
+    return { data };
+  }
+
+  @Post("ai/generate-description")
+  @RequireAccess("products", "view")
+  async generateDescription(
+    @Body(new ZodValidationPipe(GenerateProductDescriptionSchema))
+    body: GenerateProductDescriptionDto,
+  ) {
+    const data = await this.ai.generateDescription(body);
     return { data };
   }
 }

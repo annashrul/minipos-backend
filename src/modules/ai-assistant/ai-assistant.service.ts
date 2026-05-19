@@ -157,6 +157,61 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "find_product_location",
+      description:
+        "Cari LOKASI FISIK produk di rak. WAJIB dipakai saat user nanya 'dimana letak X', 'rak mana barang Y', 'cariin oli vario', 'mekanik minta aki PCX dimana taruhnya'. Return: kode rak, nama rak, lokasi fisik, qty di tiap rak, total stok per cabang.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Nama atau kode produk yang dicari (mis. 'oli matic', 'AKI-005', 'busi vario')",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lookup_rack_contents",
+      description:
+        "Lihat isi rak. Pakai saat user nanya 'apa isi rak AK-01', 'produk apa di rak roller', 'tampilkan stok rak X'. Bisa cari by kode rak atau nama rak.",
+      parameters: {
+        type: "object",
+        properties: {
+          rackQuery: {
+            type: "string",
+            description:
+              "Kode rak (mis. 'AK-01') atau nama rak (mis. 'rak roller', 'oli matic')",
+          },
+        },
+        required: ["rackQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_low_stock_with_location",
+      description:
+        "Produk stok menipis BERIKUT lokasi rak-nya. Dipakai saat user nanya 'stok apa yang habis dan dimana letaknya', 'produk hampir habis di rak mana'.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Jumlah produk (default 20)",
+          },
+        },
+      },
+    },
+  },
 ];
 
 type AuthContext = {
@@ -501,11 +556,16 @@ export class AiAssistantService {
       .slice(0, 20);
   }
 
-  private async executeSearchProducts(input: { query: string }) {
+  private async executeSearchProducts(
+    auth: AuthContext,
+    input: { query: string },
+  ) {
     const q = input.query || "";
     const products = await this.prisma.product.findMany({
       where: {
+        ...(auth.companyId ? { companyId: auth.companyId } : {}),
         isActive: true,
+        deletedAt: null,
         OR: [
           { name: { contains: q, mode: "insensitive" } },
           { code: { contains: q, mode: "insensitive" } },
@@ -522,6 +582,15 @@ export class AiAssistantService {
         minStock: true,
         category: { select: { name: true } },
         supplier: { select: { id: true, name: true } },
+        defaultRack: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            location: true,
+            branch: { select: { name: true } },
+          },
+        },
       },
       take: 10,
     });
@@ -538,6 +607,265 @@ export class AiAssistantService {
       category: p.category?.name || "Tanpa Kategori",
       supplierId: p.supplier?.id || null,
       supplierName: p.supplier?.name || "Tidak ada supplier",
+      defaultRack: p.defaultRack
+        ? {
+            code: p.defaultRack.code,
+            name: p.defaultRack.name,
+            location: p.defaultRack.location,
+            branch: p.defaultRack.branch.name,
+          }
+        : null,
+    }));
+  }
+
+  /**
+   * Find LOKASI FISIK produk di rak. Return detail per-rak (bukan cuma
+   * defaultRackId) — termasuk qty actual di tiap rak, plus default rack.
+   */
+  private async executeFindProductLocation(
+    auth: AuthContext,
+    input: { query: string },
+  ) {
+    const q = input.query || "";
+    const products = await this.prisma.product.findMany({
+      where: {
+        ...(auth.companyId ? { companyId: auth.companyId } : {}),
+        deletedAt: null,
+        OR: [
+          { name: { contains: q, mode: "insensitive" } },
+          { code: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        unit: true,
+        sellingPrice: true,
+        stock: true,
+        category: { select: { name: true } },
+        defaultRack: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            location: true,
+            branch: { select: { id: true, name: true } },
+          },
+        },
+        rackStocks: {
+          where: { qty: { gt: 0 } },
+          select: {
+            qty: true,
+            rack: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                location: true,
+                branch: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+        branchStocks: {
+          select: {
+            quantity: true,
+            branch: { select: { id: true, name: true } },
+          },
+        },
+      },
+      take: 5,
+    });
+
+    if (products.length === 0) {
+      return {
+        found: false,
+        message: `Tidak ada produk yang cocok dengan "${q}"`,
+      };
+    }
+
+    return {
+      found: true,
+      products: products.map((p) => ({
+        code: p.code,
+        name: p.name,
+        category: p.category?.name ?? null,
+        unit: p.unit,
+        sellingPrice: p.sellingPrice,
+        totalStock: p.stock,
+        defaultLocation: p.defaultRack
+          ? {
+              rackCode: p.defaultRack.code,
+              rackName: p.defaultRack.name,
+              location: p.defaultRack.location,
+              branch: p.defaultRack.branch.name,
+            }
+          : null,
+        racks: p.rackStocks.map((rs) => ({
+          rackCode: rs.rack.code,
+          rackName: rs.rack.name,
+          location: rs.rack.location,
+          branch: rs.rack.branch.name,
+          qty: rs.qty,
+          isDefault: rs.rack.id === p.defaultRack?.id,
+        })),
+        stockPerBranch: p.branchStocks.map((bs) => ({
+          branch: bs.branch.name,
+          quantity: bs.quantity,
+        })),
+      })),
+    };
+  }
+
+  /**
+   * Lookup isi rak by kode atau nama. Return produk-produk yang ada di rak,
+   * qty masing-masing, info rak.
+   */
+  private async executeLookupRackContents(
+    auth: AuthContext,
+    input: { rackQuery: string },
+  ) {
+    const q = input.rackQuery || "";
+    const racks = await this.prisma.rack.findMany({
+      where: {
+        ...(auth.companyId ? { companyId: auth.companyId } : {}),
+        OR: [
+          { code: { contains: q, mode: "insensitive" } },
+          { name: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        location: true,
+        isActive: true,
+        branch: { select: { name: true } },
+        rackStocks: {
+          where: { qty: { gt: 0 } },
+          select: {
+            qty: true,
+            product: {
+              select: {
+                code: true,
+                name: true,
+                unit: true,
+                category: { select: { name: true } },
+              },
+            },
+          },
+          orderBy: { qty: "desc" },
+        },
+        defaultForProducts: {
+          where: { deletedAt: null },
+          select: {
+            code: true,
+            name: true,
+            unit: true,
+            stock: true,
+          },
+        },
+      },
+      take: 5,
+    });
+
+    if (racks.length === 0) {
+      return {
+        found: false,
+        message: `Tidak ada rak dengan kode/nama "${q}"`,
+      };
+    }
+
+    return {
+      found: true,
+      racks: racks.map((r) => {
+        const itemsWithStock = r.rackStocks.map((rs) => ({
+          productCode: rs.product.code,
+          productName: rs.product.name,
+          category: rs.product.category?.name ?? null,
+          unit: rs.product.unit,
+          qty: rs.qty,
+        }));
+        const stockProductCodes = new Set(itemsWithStock.map((i) => i.productCode));
+        const defaultOnly = r.defaultForProducts
+          .filter((p) => !stockProductCodes.has(p.code))
+          .map((p) => ({
+            productCode: p.code,
+            productName: p.name,
+            unit: p.unit,
+            qty: 0,
+            note: "default rak, qty rak 0",
+          }));
+        return {
+          rackCode: r.code,
+          rackName: r.name,
+          location: r.location,
+          branch: r.branch.name,
+          isActive: r.isActive,
+          totalItems: itemsWithStock.length + defaultOnly.length,
+          totalQty: itemsWithStock.reduce((s, i) => s + i.qty, 0),
+          items: [...itemsWithStock, ...defaultOnly],
+        };
+      }),
+    };
+  }
+
+  /**
+   * Produk stok menipis dengan info rak.
+   */
+  private async executeFindLowStockWithLocation(
+    auth: AuthContext,
+    input: { limit?: number },
+  ) {
+    const limit = input.limit || 20;
+    const lowStock = await this.prisma.product.findMany({
+      where: {
+        ...(auth.companyId ? { companyId: auth.companyId } : {}),
+        isActive: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        stock: true,
+        minStock: true,
+        unit: true,
+        category: { select: { name: true } },
+        defaultRack: {
+          select: {
+            code: true,
+            name: true,
+            location: true,
+            branch: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { stock: "asc" },
+      take: limit * 2, // overscan, filter later
+    });
+
+    const filtered = lowStock
+      .filter((p) => p.stock <= p.minStock)
+      .slice(0, limit);
+
+    return filtered.map((p) => ({
+      code: p.code,
+      name: p.name,
+      category: p.category?.name ?? null,
+      stock: p.stock,
+      minStock: p.minStock,
+      unit: p.unit,
+      isOutOfStock: p.stock === 0,
+      location: p.defaultRack
+        ? {
+            rackCode: p.defaultRack.code,
+            rackName: p.defaultRack.name,
+            location: p.defaultRack.location,
+            branch: p.defaultRack.branch.name,
+          }
+        : null,
     }));
   }
 
@@ -632,11 +960,29 @@ export class AiAssistantService {
             input as { days?: number },
           );
         case "search_products":
-          return await this.executeSearchProducts(input as { query: string });
+          return await this.executeSearchProducts(
+            auth,
+            input as { query: string },
+          );
         case "get_suppliers":
           return await this.executeGetSuppliers();
         case "get_category_sales":
           return await this.executeGetCategorySales(input as { days?: number });
+        case "find_product_location":
+          return await this.executeFindProductLocation(
+            auth,
+            input as { query: string },
+          );
+        case "lookup_rack_contents":
+          return await this.executeLookupRackContents(
+            auth,
+            input as { rackQuery: string },
+          );
+        case "find_low_stock_with_location":
+          return await this.executeFindLowStockWithLocation(
+            auth,
+            input as { limit?: number },
+          );
         default:
           return { error: `Tool '${name}' not found` };
       }
@@ -661,27 +1007,40 @@ export class AiAssistantService {
     auth: AuthContext,
     messages: AiChatMessageDto[],
   ): Promise<AiChatResponse> {
-    const systemPrompt = `Kamu adalah asisten AI untuk aplikasi POS "NusaPOS". Kamu WAJIB menggunakan tools/functions yang tersedia untuk menjawab pertanyaan tentang data toko. JANGAN PERNAH mengarang data â€” selalu panggil tool yang sesuai terlebih dahulu untuk mendapatkan data real-time dari database.
+    const systemPrompt = `Kamu adalah asisten AI untuk aplikasi POS/Bengkel "NusaPOS". Kamu WAJIB pakai tools yang tersedia untuk menjawab pertanyaan tentang data toko. JANGAN PERNAH mengarang data.
 
 ATURAN KETAT:
-1. Jika user bertanya tentang produk, penjualan, stok, kasir, supplier, atau kategori â†’ WAJIB panggil tool dulu, baru jawab berdasarkan hasilnya
-2. JANGAN mengarang angka, nama produk, atau data apapun tanpa memanggil tool
-3. Jika tidak ada tool yang cocok, jawab "Maaf, saya tidak memiliki akses ke data tersebut"
-4. Jawab dalam Bahasa Indonesia
+1. Pertanyaan tentang produk, stok, lokasi rak, penjualan, kasir, supplier, kategori -> WAJIB panggil tool dulu
+2. JANGAN mengarang angka, nama produk, kode rak, atau data apapun tanpa tool call
+3. Jika tidak ada tool yang cocok, jawab "Maaf, saya tidak punya akses ke data tersebut"
+4. Bahasa Indonesia, ringkas, langsung ke jawabannya. JANGAN bertele-tele.
 5. Format angka uang dengan Rp (contoh: Rp 150.000)
-6. Berikan analisis yang ringkas dan actionable
-7. Saat diminta membuat PO, panggil get_restock_recommendation atau search_products dan get_suppliers dulu sebelum create_purchase_order
+6. WAJIB pakai find_product_location saat user nanya LOKASI/POSISI produk ("dimana", "rak mana", "ada di mana", "letak", "cariin")
+7. WAJIB pakai lookup_rack_contents saat user nanya ISI RAK ("apa isi rak X", "produk apa di rak Y", "tampilkan rak Z")
+8. find_low_stock_with_location lebih baik daripada get_low_stock karena include lokasi rak
+9. Saat buat PO, panggil get_restock_recommendation + get_suppliers dulu
 
-Contoh alur:
-- User: "Produk apa yang laris?" â†’ Panggil get_top_products â†’ Jawab berdasarkan data
-- User: "Stok apa yang menipis?" â†’ Panggil get_low_stock â†’ Jawab berdasarkan data
-- User: "Buatkan PO" â†’ Panggil get_restock_recommendation + get_suppliers â†’ create_purchase_order
+CONTOH ALUR:
+- "Dimana oli Yamalube?" -> find_product_location("oli yamalube") -> "Oli Yamalube Power Matic ada di rak OL-02 (Sintetik/Premium). Tersedia 25 botol."
+- "Mekanik minta aki Vario, dimana?" -> find_product_location("aki vario") -> Jawab dengan kode rak + qty
+- "Apa isi rak BU-01?" -> lookup_rack_contents("BU-01") -> Daftar produk di rak itu
+- "Produk apa yang hampir habis?" -> find_low_stock_with_location -> Sertakan lokasi rak
+- "Cari oli matic" -> find_product_location("oli matic")
+- "Berapa stok busi NGK CR8E?" -> find_product_location("busi NGK CR8E")
+
+FORMAT JAWABAN UNTUK LOOKUP LOKASI:
+Sertakan: nama produk, kode rak, sub-section/nama rak, qty. Format ringkas.
+Contoh: "AHM Oil SPX2 Matic 0.8L (OLI-007) - Rak OL-01 (Matic 0.8L), tersedia 40 botol."
 
 Info user: ${auth.userName} (${auth.role})`;
 
     const apiKey = this.config.get<string>("GROQ_API_KEY");
+    // OpenAI gpt-oss-120b di Groq punya tool-calling jauh lebih reliable
+    // dibanding Llama-3 family (yang kadang emit native function-tag format
+    // `<function=name={args}>` alih-alih JSON, bikin Groq API reject dgn
+    // "tool call validation failed"). Set GROQ_MODEL di .env untuk override.
     const model =
-      this.config.get<string>("GROQ_MODEL") || "llama3-70b-8192";
+      this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-120b";
 
     if (!apiKey) {
       return {
@@ -759,6 +1118,45 @@ Info user: ${auth.userName} (${auth.role})`;
         (err as Error).stack,
       );
       const msg = err instanceof Error ? err.message : "Unknown error";
+
+      // Fallback: kalau model error karena tool calling validation (Llama-3
+      // family quirk), retry tanpa tools — minta model jawab seadanya saja.
+      // Ini menjamin user tetap dapat respons walau data terbatas.
+      if (msg.includes("tool_use_failed") || msg.includes("tool call validation")) {
+        this.logger.warn(
+          "Tool calling failed — retrying without tools for fallback response",
+        );
+        try {
+          const groq = new Groq({ apiKey });
+          const fallbackResponse = await groq.chat.completions.create({
+            model,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Kamu asisten AI. User nanya tentang data toko, tapi kamu sedang tidak bisa akses tool/database. Minta maaf, sarankan user buka halaman terkait (mis. /products buat cari produk, /racks buat lihat rak) atau coba lagi sebentar. Singkat, dalam Bahasa Indonesia.",
+              },
+              ...messages.map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              })),
+            ],
+            max_tokens: 256,
+            temperature: 0.3,
+          });
+          return {
+            response:
+              fallbackResponse.choices[0]?.message.content ||
+              "Maaf, AI sedang bermasalah. Coba buka halaman /products atau /racks untuk cari produk manual.",
+          };
+        } catch {
+          return {
+            error:
+              "AI sedang bermasalah saat memanggil tool. Coba lagi atau buka halaman /products / /racks untuk cari manual.",
+          };
+        }
+      }
+
       if (msg.includes("API") || msg.includes("key") || msg.includes("auth")) {
         return {
           error:
@@ -768,6 +1166,12 @@ Info user: ${auth.userName} (${auth.role})`;
       if (msg.includes("429") || msg.includes("rate")) {
         return {
           error: "Rate limit tercapai. Coba lagi dalam beberapa detik.",
+        };
+      }
+      if (msg.includes("decommissioned") || msg.includes("model")) {
+        return {
+          error:
+            "Model AI sudah deprecated. Set GROQ_MODEL=openai/gpt-oss-120b di .env backend.",
         };
       }
       return { error: `Gagal memproses: ${msg}` };
