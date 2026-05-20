@@ -566,6 +566,7 @@ model ProductUnit {
 
   branchSkus    ProductBranchSku[]
   purchaseItems PurchaseOrderItem[]
+  stockMovements StockMovement[]
 
   @@unique([productId, name])
   @@index([productId])
@@ -990,6 +991,9 @@ model StockMovement {
   // Denormalized label varian untuk display ("Putih · S"). Disimpan supaya
   // kartu stok bisa render tanpa join ke modifier_options tiap row.
   variantLabel String?
+  unitId       String?
+  unit         ProductUnit?      @relation(fields: [unitId], references: [id])
+  unitQuantity Int?
   companyId    String?
   type         StockMovementType
   // Magnitude positif. Direction encoded di `direction` agar query running
@@ -1019,6 +1023,7 @@ model StockMovement {
   @@index([productId])
   @@index([branchId])
   @@index([variantId])
+  @@index([unitId])
   @@index([type])
   @@index([createdAt])
   @@index([reference])

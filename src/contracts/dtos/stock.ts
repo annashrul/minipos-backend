@@ -43,12 +43,15 @@ export type ListStockMovementsQueryDto = z.infer<
 export type StockMovementResponse = {
   id: string;
   productId: string;
-  product: { id: string; name: string; code: string } | null;
+  product: { id: string; name: string; code: string; unit: string } | null;
   branchId: string | null;
   branch: { id: string; name: string } | null;
   /** Varian terkait pergerakan (Putih · S). Null untuk produk non-variant. */
   variantId: string | null;
   variantLabel: string | null;
+  unitId: string | null;
+  unitName: string | null;
+  unitQuantity: number | null;
   type: string;
   quantity: number;
   note: string | null;
