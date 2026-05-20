@@ -164,6 +164,16 @@ export class StockService {
     });
     if (!product) throw new NotFoundException("Product not found");
 
+    const selectedUnit = dto.unitId
+      ? await this.prisma.productUnit.findFirst({
+          where: { id: dto.unitId, productId: dto.productId },
+          select: { id: true, conversionQty: true },
+        })
+      : null;
+    if (dto.unitId && !selectedUnit) {
+      throw new NotFoundException("Satuan produk tidak ditemukan");
+    }
+    const baseQuantity = dto.quantity * (selectedUnit?.conversionQty ?? 1);
     const branchId = dto.branchId ?? null;
     if (branchId) {
       const branch = await this.prisma.branch.findFirst({
@@ -189,7 +199,7 @@ export class StockService {
         variant.options.map((o) => o.option.name).join(" · ") || null;
     }
 
-    const delta = dto.type === "OUT" ? -dto.quantity : dto.quantity;
+    const delta = dto.type === "OUT" ? -baseQuantity : baseQuantity;
 
     const movement = await this.prisma.$transaction(async (tx) => {
       let balanceAfter: number | null = null;
@@ -199,7 +209,7 @@ export class StockService {
           select: { quantity: true },
         });
         const current = existing?.quantity ?? 0;
-        if (dto.type === "OUT" && current < dto.quantity) {
+        if (dto.type === "OUT" && current < baseQuantity) {
           throw new BadRequestException(
             `Stok cabang tidak mencukupi (sisa: ${current})`,
           );
@@ -224,7 +234,7 @@ export class StockService {
           await this.rackStockHelper.addToRack(tx, {
             branchId,
             productId: dto.productId,
-            qty: dto.quantity,
+            qty: baseQuantity,
             rackId: dto.rackId ?? null,
             refType: "manual_adjustment",
             ...(dto.reference ? { refId: dto.reference } : {}),
@@ -245,7 +255,7 @@ export class StockService {
               select: { qty: true },
             });
             const oldQty = existing?.qty ?? 0;
-            const newQty = Math.max(oldQty - dto.quantity, 0);
+            const newQty = Math.max(oldQty - baseQuantity, 0);
             await this.rackStockHelper.setRackQty(tx, {
               branchId,
               productId: dto.productId,
@@ -261,7 +271,7 @@ export class StockService {
             await this.rackStockHelper.deductFromRacks(tx, {
               branchId,
               productId: dto.productId,
-              qty: dto.quantity,
+              qty: baseQuantity,
               refType: "manual_adjustment",
               ...(dto.reference ? { refId: dto.reference } : {}),
               userId,
@@ -271,21 +281,20 @@ export class StockService {
           }
         }
 
-        // Sync ProductBranchSku per (productId, branchId, variantId, unitId).
-        // Tanpa ini, stok variant di matrix produk tidak ikut berubah.
+        // Sync hanya base SKU row. Stok operasional disimpan dalam satuan
+        // dasar; unit lain dihitung dari conversionQty saat ditampilkan.
         const skuVariantId = dto.variantId ?? null;
-        const skuUnitId = dto.unitId ?? null;
         const skuRow = await tx.productBranchSku.findFirst({
           where: {
             productId: dto.productId,
             branchId,
             variantId: skuVariantId,
-            unitId: skuUnitId,
+            unitId: null,
           },
           select: { id: true, stock: true },
         });
         if (skuRow) {
-          if (dto.type === "OUT" && skuRow.stock < dto.quantity) {
+          if (dto.type === "OUT" && skuRow.stock < baseQuantity) {
             throw new BadRequestException(
               `Stok SKU tidak mencukupi (sisa: ${skuRow.stock})`,
             );
@@ -301,7 +310,7 @@ export class StockService {
             data: {
               productId: dto.productId,
               branchId,
-              unitId: skuUnitId,
+              unitId: null,
               variantId: skuVariantId,
               sellingPrice: 0,
               purchasePrice: 0,
@@ -312,7 +321,7 @@ export class StockService {
           });
         }
       } else {
-        if (dto.type === "OUT" && product.stock < dto.quantity) {
+        if (dto.type === "OUT" && product.stock < baseQuantity) {
           throw new BadRequestException(
             `Stok tidak mencukupi (sisa: ${product.stock})`,
           );
@@ -345,7 +354,7 @@ export class StockService {
           variantLabel,
           companyId,
           type: granularType,
-          quantity: dto.quantity,
+          quantity: baseQuantity,
           direction,
           balanceAfter,
           refType: "manual_adjustment",

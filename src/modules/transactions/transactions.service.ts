@@ -383,49 +383,6 @@ export class TransactionsService {
                   );
                 }
               }
-              // Validasi per varian: kalau item resolve ke ProductVariant,
-              // cek stok ProductBranchSku-nya. Tanpa ini, transaksi varian
-              // bisa lolos meski stok varian-nya 0 (asal total branch_stock
-              // masih cukup karena varian lain masih ada).
-              const variantDeductions = aggregatedDeductions.filter(
-                (d) => d.variantId,
-              );
-              if (variantDeductions.length > 0) {
-                // Validasi pakai base-unit row (unitId=null) — itu source
-                // of truth untuk stok per varian. Filter eksplisit.
-                const skuRows = await tx.productBranchSku.findMany({
-                  where: {
-                    branchId,
-                    unitId: null,
-                    OR: variantDeductions.map((d) => ({
-                      productId: d.productId,
-                      variantId: d.variantId!,
-                    })),
-                  },
-                  select: {
-                    productId: true,
-                    variantId: true,
-                    stock: true,
-                  },
-                });
-                const variantStockMap = new Map<string, number>();
-                for (const r of skuRows) {
-                  const key = `${r.productId}|${r.variantId}`;
-                  variantStockMap.set(key, r.stock);
-                }
-                for (const d of variantDeductions) {
-                  const key = `${d.productId}|${d.variantId}`;
-                  const available = variantStockMap.get(key) ?? 0;
-                  if (available < d.quantity) {
-                    const label = d.variantLabel
-                      ? `${d.productName} (${d.variantLabel})`
-                      : d.productName;
-                    throw new BadRequestException(
-                      `Stok ${label} tidak mencukupi di cabang ini (sisa: ${available})`,
-                    );
-                  }
-                }
-              }
             } else {
               const products = await tx.product.findMany({
                 where: { id: { in: productIds }, companyId },
@@ -575,10 +532,6 @@ export class TransactionsService {
                 movementType:
                   movementType === "RECIPE_DEDUCT" ? "RECIPE_DEDUCT" : "SALE",
               });
-              // Decrement ProductBranchSku — match base-unit row exact
-              // (unitId=null) supaya stok varian di matriks produk berkurang.
-              // Postgres `ORDER BY x ASC` default `NULLS LAST`, jadi pakai
-              // `unitId: null` filter eksplisit, bukan andalkan ordering.
               const skuRow = await tx.productBranchSku.findFirst({
                 where: {
                   productId: d.productId,
@@ -586,12 +539,12 @@ export class TransactionsService {
                   variantId: d.variantId ?? null,
                   unitId: null,
                 },
-                select: { id: true },
+                select: { id: true, stock: true },
               });
               if (skuRow) {
                 await tx.productBranchSku.update({
                   where: { id: skuRow.id },
-                  data: { stock: { decrement: qtyInt } },
+                  data: { stock: Math.max(skuRow.stock - qtyInt, 0) },
                 });
               }
               await tx.stockMovement.create({
@@ -1523,6 +1476,8 @@ function aggregateDeductions(
   productId: string;
   productName: string;
   quantity: number;
+  unitName: string | null;
+  conversionQty: number;
   source: DeductionSource;
   variantId: string | null;
   variantLabel: string | null;
@@ -1536,6 +1491,8 @@ function aggregateDeductions(
       productId: string;
       productName: string;
       quantity: number;
+      unitName: string | null;
+      conversionQty: number;
       source: DeductionSource;
       variantId: string | null;
       variantLabel: string | null;
@@ -1545,16 +1502,21 @@ function aggregateDeductions(
     productId: string,
     productName: string,
     qty: number,
+    unitName: string | null,
+    conversionQty: number,
     source: DeductionSource,
     variantId: string | null,
     variantLabel: string | null,
   ) => {
-    const key = `${productId}|${variantId ?? ""}|${source}`;
+    const normalizedUnit = unitName?.trim() || "";
+    const key = `${productId}|${normalizedUnit}|${conversionQty}|${variantId ?? ""}|${source}`;
     const prev = map.get(key);
     map.set(key, {
       productId,
       productName: prev?.productName ?? productName,
       quantity: (prev?.quantity ?? 0) + qty,
+      unitName: unitName,
+      conversionQty,
       source,
       variantId,
       variantLabel,
@@ -1577,6 +1539,8 @@ function aggregateDeductions(
           comp.productId,
           comp.productName,
           comp.quantity * item.quantity,
+          null,
+          1,
           "SALE",
           null,
           null,
@@ -1599,6 +1563,8 @@ function aggregateDeductions(
           ing.ingredientId,
           ing.ingredientName,
           deduct,
+          null,
+          1,
           "RECIPE_DEDUCT",
           null,
           null,
@@ -1613,6 +1579,8 @@ function aggregateDeductions(
       item.productId,
       item.productName,
       totalQty,
+      item.unitName ?? null,
+      item.conversionQty ?? 1,
       "SALE",
       variantId,
       variantLabel,

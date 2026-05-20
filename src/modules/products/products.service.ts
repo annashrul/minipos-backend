@@ -52,6 +52,8 @@ const PRODUCT_SELECT = {
 
 type RawProduct = Prisma.ProductGetPayload<{ select: typeof PRODUCT_SELECT }>;
 
+const INT32_MAX = 2_147_483_647;
+
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -533,8 +535,9 @@ export class ProductsService {
         orderBy: { conversionQty: "asc" },
       });
       const unitIdByName = new Map<string, string>();
-      for (const u of units) unitIdByName.set(u.name, u.id);
-      const baseUnitId = units[0]?.id ?? null;
+      for (const u of units) {
+        unitIdByName.set(u.name, u.id);
+      }
 
       // Resolve variant per item via optionIds find-or-create.
       const resolved: Array<{
@@ -630,21 +633,35 @@ export class ProductsService {
         });
       }
 
-      // Sync ke tabel legacy + Product entity dari cell base-unit per branch.
+      // Sync ke tabel legacy + Product entity. Stok operasional disimpan
+      // hanya sebagai saldo satuan dasar di BranchStock/Product. Cell satuan
+      // tambahan tetap menyimpan harga/barcode, tapi tidak menambah stok agar
+      // tidak double-count (contoh: 240 batang => 20 bungkus, bukan stok baru).
       const perBranch = new Map<
         string,
         { sellingPrice: number; purchasePrice: number; stock: number; minStock: number }
       >();
       for (const r of resolved) {
-        const isBase = baseUnitId ? r.unitId === baseUnitId : !r.unitId;
-        if (!isBase) continue;
-        if (perBranch.has(r.branchId)) continue;
-        perBranch.set(r.branchId, {
-          sellingPrice: r.sellingPrice,
-          purchasePrice: r.purchasePrice,
-          stock: r.stock,
-          minStock: r.minStock,
-        });
+        if (!r.isActive) continue;
+        const current = perBranch.get(r.branchId);
+        const isBaseCell = !r.unitId;
+        if (!current) {
+          perBranch.set(r.branchId, {
+            sellingPrice: r.sellingPrice,
+            purchasePrice: r.purchasePrice,
+            stock: isBaseCell ? r.stock : 0,
+            minStock: r.minStock,
+          });
+          continue;
+        }
+        // Representative price untuk tabel legacy/list view tetap prefer
+        // satuan dasar. Kalau belum ada base cell, pakai cell pertama.
+        if (isBaseCell) {
+          current.sellingPrice = r.sellingPrice;
+          current.purchasePrice = r.purchasePrice;
+          current.stock = r.stock;
+          current.minStock = r.minStock;
+        }
       }
 
       // Hapus legacy untuk branch yang TIDAK ada di payload (kalau matrix
@@ -688,26 +705,27 @@ export class ProductsService {
             purchasePrice: vals.purchasePrice,
           },
         });
+        const aggregateStock = Math.min(vals.stock, INT32_MAX);
         await tx.branchStock.upsert({
           where: { branchId_productId: { branchId, productId } },
           create: {
             branchId,
             productId,
-            quantity: vals.stock,
+            quantity: aggregateStock,
             minStock: vals.minStock,
           },
           update: {
-            quantity: vals.stock,
+            quantity: aggregateStock,
             minStock: vals.minStock,
           },
         });
       }
 
       // Sync Product entity (global aggregate untuk list view).
-      const totalStock = [...perBranch.values()].reduce(
+      const totalStock = Math.min([...perBranch.values()].reduce(
         (sum, v) => sum + v.stock,
         0,
-      );
+      ), INT32_MAX);
       const repCell = [...perBranch.values()][0];
       await tx.product.update({
         where: { id: productId },
@@ -865,7 +883,7 @@ export class ProductsService {
     companyId: string,
     barcode: string,
   ): Promise<boolean> {
-    const [product, unit] = await Promise.all([
+    const [product, unit, branchSku] = await Promise.all([
       this.prisma.product.findFirst({
         where: { companyId, barcode },
         select: { id: true },
@@ -874,8 +892,12 @@ export class ProductsService {
         where: { barcode, product: { companyId } },
         select: { id: true },
       }),
+      this.prisma.productBranchSku.findFirst({
+        where: { barcode, product: { companyId } },
+        select: { id: true },
+      }),
     ]);
-    return Boolean(product || unit);
+    return Boolean(product || unit || branchSku);
   }
 
   async findByBarcode(
