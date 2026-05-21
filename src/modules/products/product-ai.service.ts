@@ -109,24 +109,69 @@ Tulis deskripsinya (ikuti aturan ketat di atas, lihat contoh).`;
 
     try {
       const groq = new Groq({ apiKey });
-      const response = await groq.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 250,
-        temperature: 0.5, // Lebih determinstik biar nggak ngarang.
-      });
+      const candidateModels = Array.from(
+        new Set([model, "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]),
+      );
+      let lastError: unknown = null;
+      let bestPartialDescription = "";
 
-      const text = response.choices[0]?.message?.content?.trim() ?? "";
-      if (!text) {
-        throw new InternalServerErrorException(
-          "AI tidak mengembalikan deskripsi",
-        );
+      for (const candidateModel of candidateModels) {
+        try {
+          const response = await groq.chat.completions.create({
+            model: candidateModel,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            // GPT-OSS can spend part of the budget on reasoning. Keep enough
+            // room so the final answer is not returned as empty content.
+            max_tokens: 700,
+            temperature: 0.5,
+          });
+
+          const text = response.choices[0]?.message?.content?.trim() ?? "";
+          if (!text) {
+            lastError = new Error(
+              `AI tidak mengembalikan deskripsi (${candidateModel})`,
+            );
+            this.logger.warn((lastError as Error).message);
+            continue;
+          }
+
+          const cleaned = text.replace(/^["'`]+|["'`]+$/g, "").trim();
+          bestPartialDescription ||= cleaned;
+          if (!/[.!?]$/.test(cleaned)) {
+            lastError = new Error(
+              `AI mengembalikan deskripsi yang belum selesai (${candidateModel})`,
+            );
+            this.logger.warn((lastError as Error).message);
+            continue;
+          }
+
+          return { description: cleaned };
+        } catch (err) {
+          lastError = err;
+          if (
+            err instanceof Error &&
+            /api[_ ]?key|unauthorized|401/i.test(err.message)
+          ) {
+            throw err;
+          }
+          this.logger.warn(
+            `Generate description failed with ${candidateModel}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
-      const cleaned = text.replace(/^["'`]+|["'`]+$/g, "").trim();
-      return { description: cleaned };
+
+      if (bestPartialDescription) {
+        return { description: `${bestPartialDescription.replace(/[,\s]+$/g, "")}.` };
+      }
+
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("AI tidak mengembalikan deskripsi");
     } catch (err) {
       this.logger.error("Failed to generate description", err);
       if (err instanceof Error && /api[_ ]?key|unauthorized|401/i.test(err.message)) {

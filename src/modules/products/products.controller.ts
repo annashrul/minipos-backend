@@ -114,6 +114,24 @@ export class ProductsController {
     return { data };
   }
 
+  @Post("pos-search")
+  @RequireAccess("products", "view")
+  async posSearch(
+    @CurrentCompany() companyId: string,
+    @Body()
+    body: {
+      branchId?: string;
+      search?: string;
+      categoryId?: string;
+      limit?: number;
+      offset?: number;
+      restrictToBranchAssigned?: boolean;
+    },
+  ) {
+    const data = await this.products.posSearch(companyId, body);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("products", "view")
   async findOne(
@@ -152,6 +170,8 @@ export class ProductsController {
       stockStatus?: string;
       limit?: number;
       offset?: number;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
       onlyWithStock?: boolean;
       restrictToBranchAssigned?: boolean;
       excludeIngredient?: boolean;

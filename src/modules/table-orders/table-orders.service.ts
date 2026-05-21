@@ -77,12 +77,125 @@ type RawSession = Prisma.TableSessionGetPayload<{
   select: typeof SESSION_SELECT;
 }>;
 
+function readPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 @Injectable()
 export class TableOrdersService {
+  private static readonly STALE_SESSION_MS = readPositiveInt(
+    "TABLE_ORDER_AUTO_CANCEL_MS",
+    5 * 60 * 60_000,
+  );
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
+
+  private async cleanupStaleSessions(
+    companyId: string,
+    branchId?: string | null,
+  ): Promise<void> {
+    const cutoff = new Date(Date.now() - TableOrdersService.STALE_SESSION_MS);
+    const stale = await this.prisma.tableSession.findMany({
+      where: {
+        branch: { companyId },
+        status: { in: ["OPEN", "AWAITING_PAYMENT"] },
+        openedAt: { lt: cutoff },
+        ...(branchId ? { branchId } : {}),
+      },
+      select: {
+        id: true,
+        tableId: true,
+        branchId: true,
+        orders: {
+          where: {
+            status: {
+              in: [
+                "PENDING_APPROVAL",
+                "APPROVED",
+                "SENT_TO_KITCHEN",
+                "READY",
+                "SERVED",
+              ],
+            },
+          },
+          select: { id: true },
+        },
+      },
+    });
+    if (stale.length === 0) return;
+
+    const sessionIds = stale.map((s) => s.id);
+    const tableIds = [...new Set(stale.map((s) => s.tableId))];
+    const branchIds = [...new Set(stale.map((s) => s.branchId))];
+    const orderIds = stale.flatMap((s) => s.orders.map((o) => o.id));
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tableOrder.updateMany({
+        where: {
+          sessionId: { in: sessionIds },
+          status: {
+            in: [
+              "PENDING_APPROVAL",
+              "APPROVED",
+              "SENT_TO_KITCHEN",
+              "READY",
+              "SERVED",
+            ],
+          },
+        },
+        data: {
+          status: "CANCELLED",
+          rejectReason: "Auto-cancel: pesanan tidak diproses lebih dari 5 jam.",
+        },
+      });
+      await tx.tableSessionPayment.updateMany({
+        where: { sessionId: { in: sessionIds }, status: "PENDING" },
+        data: { status: "EXPIRED" },
+      });
+      await tx.tableSession.updateMany({
+        where: { id: { in: sessionIds } },
+        data: { status: "CLOSED", closedAt: new Date() },
+      });
+      await tx.restaurantTable.updateMany({
+        where: {
+          id: { in: tableIds },
+          tableSessions: {
+            none: { status: { in: ["OPEN", "AWAITING_PAYMENT"] } },
+          },
+        },
+        data: { status: "AVAILABLE" },
+      });
+    });
+
+    for (const bid of branchIds) {
+      this.realtime.emit(
+        EVENTS.TABLE_ORDER_STATUS,
+        {
+          reason: "auto_cancel_stale",
+          sessionIds,
+          orderIds,
+          expiredAfterMs: TableOrdersService.STALE_SESSION_MS,
+        },
+        bid,
+      );
+      this.realtime.emit(
+        EVENTS.TABLE_SESSION_CLOSED,
+        {
+          reason: "auto_cancel_stale",
+          sessionIds,
+          tableIds,
+          expiredAfterMs: TableOrdersService.STALE_SESSION_MS,
+        },
+        bid,
+      );
+    }
+  }
 
   // ────────────────────────────────────────────────────────────
   // PUBLIC (tablet) — looked up by qrToken
@@ -119,7 +232,16 @@ export class TableOrdersService {
       throw new BadRequestException("Meja belum di-assign ke cabang");
     }
     const categories = await this.prisma.category.findMany({
-      where: { companyId: table.branch.companyId },
+      where: {
+        companyId: table.branch.companyId,
+        products: {
+          some: {
+            isActive: true,
+            deletedAt: null,
+            itemType: { not: "INGREDIENT" },
+          },
+        },
+      },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
@@ -145,6 +267,7 @@ export class TableOrdersService {
       companyId,
       isActive: true,
       deletedAt: null,
+      itemType: { not: "INGREDIENT" },
     };
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.search && query.search.trim()) {
@@ -211,6 +334,7 @@ export class TableOrdersService {
         companyId: table.branch.companyId,
         isActive: true,
         deletedAt: null,
+        itemType: { not: "INGREDIENT" },
       },
       select: {
         id: true,
@@ -291,6 +415,9 @@ export class TableOrdersService {
     qrToken: string,
   ): Promise<TableSessionResponse | null> {
     const table = await this.findTableByToken(qrToken);
+    if (table.branch) {
+      await this.cleanupStaleSessions(table.branch.companyId, table.branch.id);
+    }
     const session = await this.prisma.tableSession.findFirst({
       where: {
         tableId: table.id,
@@ -312,6 +439,7 @@ export class TableOrdersService {
       throw new BadRequestException("Meja belum di-assign ke cabang");
     }
     const companyId = table.branch.companyId;
+    await this.cleanupStaleSessions(companyId, table.branch.id);
 
     // Resolve product prices server-side (don't trust client).
     // Pull units + modifierGroups too so we can validate selections + compute price.
@@ -322,6 +450,7 @@ export class TableOrdersService {
         companyId,
         isActive: true,
         deletedAt: null,
+        itemType: { not: "INGREDIENT" },
       },
       select: {
         id: true,
@@ -567,6 +696,7 @@ export class TableOrdersService {
     companyId: string,
     query: ListTableOrdersQueryDto,
   ): Promise<TableOrderListResponse> {
+    await this.cleanupStaleSessions(companyId, query.branchId);
     const where: Prisma.TableOrderWhereInput = {
       branch: { companyId },
     };
@@ -600,6 +730,7 @@ export class TableOrdersService {
     companyId: string,
     query: ListTableSessionsQueryDto,
   ): Promise<TableSessionListResponse> {
+    await this.cleanupStaleSessions(companyId, query.branchId);
     const where: Prisma.TableSessionWhereInput = {
       branch: { companyId },
     };

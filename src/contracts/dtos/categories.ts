@@ -1,10 +1,18 @@
 import { z } from "zod";
 
+const BooleanQuerySchema = z.preprocess((value) => {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return value;
+}, z.boolean());
+
 export const ListCategoriesQuerySchema = z.object({
   search: z.string().optional(),
   parentId: z.string().nullable().optional(),
   kind: z.enum(["PRODUCT", "VEHICLE_MODEL"]).optional(),
   brandId: z.string().optional(),
+  sellableOnly: BooleanQuerySchema.optional(),
+  branchId: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(200).default(50),
   sortBy: z.enum(["name", "products", "createdAt"]).optional(),

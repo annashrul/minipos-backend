@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
+import { createHash } from "crypto";
 import type {
   AuthenticationCreds,
   AuthenticationState,
@@ -47,6 +49,8 @@ type SessionView = {
   lastError: string | null;
 };
 
+type OutboundSafetySource = "sendText" | "sendTextToJid";
+
 type BaileysModule = typeof import("@whiskeysockets/baileys");
 
 type BaileysRuntime = {
@@ -68,6 +72,23 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as <
 >(
   specifier: string,
 ) => Promise<T>;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomIntInclusive(min: number, max: number): number {
+  const safeMin = Math.max(0, Math.floor(min));
+  const safeMax = Math.max(safeMin, Math.floor(max));
+  return safeMin + Math.floor(Math.random() * (safeMax - safeMin + 1));
+}
+
+function readPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 // ─── Buffer-aware JSON helpers ─────────────────────────────────────
 // Baileys auth creds menyimpan key material sebagai `Buffer` / `Uint8Array`.
@@ -123,6 +144,14 @@ export class WhatsappReceiptService
 {
   private readonly logger = new Logger(WhatsappReceiptService.name);
   private readonly sockets = new Map<string, WASocket>();
+  private readonly connectLocks = new Map<string, Promise<SessionView>>();
+  private readonly activeSocketTokens = new Map<string, symbol>();
+  private readonly outboundQueues = new Map<string, Promise<void>>();
+  private readonly outboundQueueDepth = new Map<string, number>();
+  private readonly outboundDuplicateSeen = new Map<string, number>();
+  private readonly outboundSentAt = new Map<string, number[]>();
+  private readonly outboundLastSentAt = new Map<string, number>();
+  private readonly outboundCooldownUntil = new Map<string, number>();
   private readonly inboundHandlers: InboundMessageHandler[] = [];
 
   /** Register handler dipanggil setiap inbound message. Idempotent — handler
@@ -154,6 +183,34 @@ export class WhatsappReceiptService
   // Timeout cukup longgar (8s) supaya kalau network OK tapi sedikit lambat,
   // kita tetap dapat versi terbaru. Hanya fallback ke hardcoded saat real error.
   private static readonly FETCH_VERSION_TIMEOUT_MS = 8_000;
+  private static readonly OUTBOUND_MIN_DELAY_MS = readPositiveInt(
+    "WA_SEND_MIN_DELAY_MS",
+    4_500,
+  );
+  private static readonly OUTBOUND_MAX_DELAY_MS = readPositiveInt(
+    "WA_SEND_MAX_DELAY_MS",
+    9_000,
+  );
+  private static readonly OUTBOUND_MAX_PER_MINUTE = readPositiveInt(
+    "WA_SEND_MAX_PER_MINUTE",
+    12,
+  );
+  private static readonly OUTBOUND_MAX_PER_HOUR = readPositiveInt(
+    "WA_SEND_MAX_PER_HOUR",
+    120,
+  );
+  private static readonly OUTBOUND_MAX_QUEUE_SIZE = readPositiveInt(
+    "WA_SEND_MAX_QUEUE_SIZE",
+    50,
+  );
+  private static readonly OUTBOUND_DUPLICATE_WINDOW_MS = readPositiveInt(
+    "WA_SEND_DUPLICATE_WINDOW_MS",
+    5 * 60_000,
+  );
+  private static readonly OUTBOUND_ERROR_COOLDOWN_MS = readPositiveInt(
+    "WA_SEND_ERROR_COOLDOWN_MS",
+    60_000,
+  );
 
   constructor(
     private readonly prisma: PrismaService,
@@ -171,6 +228,7 @@ export class WhatsappReceiptService
     companyId: string,
     payload: {
       status: string;
+      stage?: SessionStage;
       hasQr?: boolean;
       phoneNumber?: string | null;
       deviceName?: string | null;
@@ -180,11 +238,207 @@ export class WhatsappReceiptService
     this.realtime.emit(EVENTS.WA_SESSION_UPDATED, {
       companyId,
       status: payload.status,
+      stage: payload.stage ?? undefined,
       hasQr: payload.hasQr ?? false,
       phoneNumber: payload.phoneNumber ?? null,
       deviceName: payload.deviceName ?? null,
       reason: payload.reason ?? null,
     });
+  }
+
+  private async enqueueOutbound<T>(
+    companyId: string,
+    target: string,
+    message: string,
+    source: OutboundSafetySource,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const now = Date.now();
+    this.cleanupOutboundDuplicateCache(now);
+    const duplicateKey = this.outboundDuplicateKey(companyId, target, message);
+    const duplicateUntil = this.outboundDuplicateSeen.get(duplicateKey) ?? 0;
+    if (duplicateUntil > now) {
+      waDebugLogSync({
+        event: "outboundSafety.duplicateRejected",
+        companyId,
+        source,
+        target,
+        duplicateWindowMs:
+          WhatsappReceiptService.OUTBOUND_DUPLICATE_WINDOW_MS,
+      });
+      throw new ConflictException(
+        "Pesan yang sama ke nomor ini baru saja dikirim. Tunggu beberapa menit sebelum mencoba lagi.",
+      );
+    }
+
+    const depth = this.outboundQueueDepth.get(companyId) ?? 0;
+    if (depth >= WhatsappReceiptService.OUTBOUND_MAX_QUEUE_SIZE) {
+      waDebugLogSync({
+        event: "outboundSafety.queueFull",
+        companyId,
+        source,
+        target,
+        depth,
+      });
+      throw new BadRequestException(
+        "Antrean WhatsApp sedang penuh. Coba lagi setelah beberapa pesan terkirim.",
+      );
+    }
+
+    this.outboundDuplicateSeen.set(
+      duplicateKey,
+      now + WhatsappReceiptService.OUTBOUND_DUPLICATE_WINDOW_MS,
+    );
+    this.outboundQueueDepth.set(companyId, depth + 1);
+
+    const previous = this.outboundQueues.get(companyId) ?? Promise.resolve();
+    const task = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await this.waitOutboundTurn(companyId, target, source);
+          const result = await work();
+          this.markOutboundSuccess(companyId);
+          return result;
+        } catch (err) {
+          this.outboundDuplicateSeen.delete(duplicateKey);
+          this.markOutboundFailure(companyId, err);
+          throw err;
+        } finally {
+          const currentDepth = this.outboundQueueDepth.get(companyId) ?? 1;
+          if (currentDepth <= 1) this.outboundQueueDepth.delete(companyId);
+          else this.outboundQueueDepth.set(companyId, currentDepth - 1);
+        }
+      });
+
+    this.outboundQueues.set(
+      companyId,
+      task.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return task;
+  }
+
+  private async waitOutboundTurn(
+    companyId: string,
+    target: string,
+    source: OutboundSafetySource,
+  ): Promise<void> {
+    const cooldownUntil = this.outboundCooldownUntil.get(companyId) ?? 0;
+    const cooldownWait = cooldownUntil - Date.now();
+    if (cooldownWait > 0) {
+      waDebugLogSync({
+        event: "outboundSafety.cooldownWait",
+        companyId,
+        source,
+        target,
+        waitMs: cooldownWait,
+      });
+      await delay(cooldownWait);
+    }
+
+    await this.waitOutboundRateLimit(companyId, target, source);
+
+    const jitter = randomIntInclusive(
+      WhatsappReceiptService.OUTBOUND_MIN_DELAY_MS,
+      Math.max(
+        WhatsappReceiptService.OUTBOUND_MIN_DELAY_MS,
+        WhatsappReceiptService.OUTBOUND_MAX_DELAY_MS,
+      ),
+    );
+    const lastSentAt = this.outboundLastSentAt.get(companyId) ?? 0;
+    const waitMs = Math.max(0, lastSentAt + jitter - Date.now());
+    if (waitMs > 0) {
+      waDebugLogSync({
+        event: "outboundSafety.spacingWait",
+        companyId,
+        source,
+        target,
+        waitMs,
+      });
+      await delay(waitMs);
+    }
+  }
+
+  private async waitOutboundRateLimit(
+    companyId: string,
+    target: string,
+    source: OutboundSafetySource,
+  ): Promise<void> {
+    while (true) {
+      const now = Date.now();
+      const history = this.pruneOutboundHistory(companyId, now);
+      const minuteCutoff = now - 60_000;
+      const minuteCount = history.filter((ts) => ts >= minuteCutoff).length;
+      const hourCount = history.length;
+      const minuteWait =
+        minuteCount >= WhatsappReceiptService.OUTBOUND_MAX_PER_MINUTE
+          ? history.find((ts) => ts >= minuteCutoff)! + 60_000 - now
+          : 0;
+      const hourWait =
+        hourCount >= WhatsappReceiptService.OUTBOUND_MAX_PER_HOUR
+          ? history[0]! + 60 * 60_000 - now
+          : 0;
+      const waitMs = Math.max(minuteWait, hourWait, 0);
+      if (waitMs <= 0) return;
+      waDebugLogSync({
+        event: "outboundSafety.rateLimitWait",
+        companyId,
+        source,
+        target,
+        minuteCount,
+        hourCount,
+        waitMs,
+      });
+      await delay(Math.min(waitMs, 60_000));
+    }
+  }
+
+  private markOutboundSuccess(companyId: string): void {
+    const now = Date.now();
+    const history = this.pruneOutboundHistory(companyId, now);
+    history.push(now);
+    this.outboundSentAt.set(companyId, history);
+    this.outboundLastSentAt.set(companyId, now);
+  }
+
+  private markOutboundFailure(companyId: string, err: unknown): void {
+    const cooldownMs = WhatsappReceiptService.OUTBOUND_ERROR_COOLDOWN_MS;
+    if (cooldownMs <= 0) return;
+    this.outboundCooldownUntil.set(companyId, Date.now() + cooldownMs);
+    waDebugLogSync({
+      event: "outboundSafety.errorCooldown",
+      companyId,
+      cooldownMs,
+      error: err instanceof Error ? err.message : "unknown",
+    });
+  }
+
+  private pruneOutboundHistory(companyId: string, now = Date.now()): number[] {
+    const hourCutoff = now - 60 * 60_000;
+    return (this.outboundSentAt.get(companyId) ?? []).filter(
+      (ts) => ts >= hourCutoff,
+    );
+  }
+
+  private cleanupOutboundDuplicateCache(now = Date.now()): void {
+    for (const [key, expiresAt] of this.outboundDuplicateSeen.entries()) {
+      if (expiresAt <= now) this.outboundDuplicateSeen.delete(key);
+    }
+  }
+
+  private outboundDuplicateKey(
+    companyId: string,
+    target: string,
+    message: string,
+  ): string {
+    const hash = createHash("sha256")
+      .update(message.trim().replace(/\s+/g, " "))
+      .digest("hex")
+      .slice(0, 24);
+    return `${companyId}:${target}:${hash}`;
   }
 
   /**
@@ -429,6 +683,8 @@ export class WhatsappReceiptService
       }
     }
     this.sockets.clear();
+    this.activeSocketTokens.clear();
+    this.connectLocks.clear();
   }
 
   async getSession(companyId: string): Promise<SessionView> {
@@ -447,16 +703,38 @@ export class WhatsappReceiptService
       hasSocket,
     });
 
+    if (sock?.user?.id && row.status !== "CONNECTED") {
+      const phone = extractPhoneFromJid(sock.user.id);
+      const updated = await this.prisma.whatsappSession.update({
+        where: { id: row.id },
+        data: {
+          status: "CONNECTED",
+          qrCode: null,
+          phoneNumber: phone,
+          deviceName: sock.user.name ?? null,
+          lastConnectedAt: row.lastConnectedAt ?? new Date(),
+          lastError: null,
+        },
+      });
+      this.setStage(companyId, "CONNECTED");
+      this.emitSessionUpdate(companyId, {
+        status: "CONNECTED",
+        stage: "CONNECTED",
+        hasQr: false,
+        phoneNumber: phone,
+        deviceName: sock.user.name ?? null,
+      });
+      return this.toSessionView(updated);
+    }
+
     // Ghost CONNECTING recovery — kalau status di DB CONNECTING (sisa dari
-    // attempt sebelumnya yang hang) tapi tidak ada socket di memory dan
-    // ada creds, trigger reconnect background. Tanpa ini, user yang refresh
-    // browser saat window resume in-flight bakal lihat PreparingView terus
-    // tanpa progress (kalau realtime socket hilang, polling fallback tetap
-    // perlu data baru — yang baru ada setelah reconnect jalan).
+    // attempt sebelumnya yang hang) tapi tidak ada socket di memory dan QR
+    // kosong, trigger connect background. Ini berlaku baik saat creds ada
+    // (resume session) maupun kosong (generate QR baru). Tanpa ini, UI bisa
+    // tersangkut di PreparingView selamanya dan tombol connect tidak muncul.
     if (
       row.status === "CONNECTING" &&
       !hasSocket &&
-      row.authCreds !== null &&
       !row.qrCode
     ) {
       // Fire-and-forget — tidak block response getSession.
@@ -473,6 +751,29 @@ export class WhatsappReceiptService
   }
 
   async connect(
+    companyId: string,
+    forceReconnect = false,
+  ): Promise<SessionView> {
+    const locked = this.connectLocks.get(companyId);
+    if (locked) {
+      waDebugLogSync({
+        event: "connect.joinExisting",
+        companyId,
+        forceReconnect,
+      });
+      return locked;
+    }
+
+    const task = this.connectInternal(companyId, forceReconnect).finally(() => {
+      if (this.connectLocks.get(companyId) === task) {
+        this.connectLocks.delete(companyId);
+      }
+    });
+    this.connectLocks.set(companyId, task);
+    return task;
+  }
+
+  private async connectInternal(
     companyId: string,
     forceReconnect = false,
   ): Promise<SessionView> {
@@ -505,6 +806,8 @@ export class WhatsappReceiptService
       }
     }
 
+    const socketToken = Symbol(`wa:${companyId}:${Date.now()}`);
+    this.activeSocketTokens.set(companyId, socketToken);
     const session = session0;
     this.setStage(companyId, "PREPARING");
     const baileys = await this.getBaileysRuntime();
@@ -549,6 +852,7 @@ export class WhatsappReceiptService
 
     // Track inbound + ack events untuk diagnose sendMessage hang.
     sock.ev.on("messages.upsert", (m) => {
+      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
       waDebugLogSync({
         event: "messages.upsert",
         companyId,
@@ -574,6 +878,7 @@ export class WhatsappReceiptService
       });
     });
     sock.ev.on("messages.update", (updates) => {
+      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
       for (const u of updates) {
         waDebugLogSync({
           event: "messages.update",
@@ -586,6 +891,7 @@ export class WhatsappReceiptService
     });
 
     sock.ev.on("creds.update", async () => {
+      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
       // PENTING: parameter event di Baileys v7 hanya partial-delta — TIDAK
       // berisi full creds. Ambil dari `auth.creds` (referensi yang Baileys
       // mutate in-place) — itu always full state setelah update.
@@ -615,6 +921,32 @@ export class WhatsappReceiptService
         where: { id: session.id },
         data: { authCreds: this.toDbJson(auth.creds) },
       });
+      const me = fullCreds.me as { id?: string; name?: string } | undefined;
+      const jid = me?.id;
+      if (jid) {
+        const phone = extractPhoneFromJid(jid);
+        const deviceName = me?.name ?? null;
+        const alreadyConnected = this.stages.get(companyId) === "CONNECTED";
+        const updated = await this.prisma.whatsappSession.updateMany({
+          where: { id: session.id, status: "CONNECTING" },
+          data: {
+            qrCode: null,
+            phoneNumber: phone,
+            deviceName,
+            lastError: null,
+          },
+        });
+        if (!alreadyConnected && updated.count > 0) {
+          this.setStage(companyId, "SCANNED");
+          this.emitSessionUpdate(companyId, {
+            status: "CONNECTING",
+            stage: "SCANNED",
+            hasQr: false,
+            phoneNumber: phone,
+            deviceName,
+          });
+        }
+      }
     });
 
     // Resolve segera setelah event `qr` pertama / connection open / close —
@@ -627,6 +959,15 @@ export class WhatsappReceiptService
     });
 
     sock.ev.on("connection.update", async (update) => {
+      if (this.activeSocketTokens.get(companyId) !== socketToken) {
+        waDebugLogSync({
+          event: "connection.update.staleIgnored",
+          companyId,
+          connection: update.connection ?? null,
+          hasQr: Boolean(update.qr),
+        });
+        return;
+      }
       const {
         connection,
         lastDisconnect,
@@ -672,14 +1013,49 @@ export class WhatsappReceiptService
       // isNewLogin TRUE saat user baru saja scan QR — device verified, mulai
       // handshake. Sebelum connection 'open', bisa beberapa detik.
       if (isNewLogin) {
+        await this.prisma.whatsappSession.update({
+          where: { id: session.id },
+          data: {
+            status: "CONNECTING",
+            qrCode: null,
+            lastError: null,
+          },
+        });
         this.setStage(companyId, "SCANNED");
+        this.emitSessionUpdate(companyId, {
+          status: "CONNECTING",
+          stage: "SCANNED",
+          hasQr: false,
+        });
+        if (resolveFirstQr) {
+          resolveFirstQr();
+          resolveFirstQr = null;
+        }
       }
 
       // receivedPendingNotifications: WA server kirim metadata sync setelah
       // device verified. Kalau masih CONNECTING tapi sudah dapat ini, berarti
       // tahap sync.
       if (receivedPendingNotifications && connection !== "open") {
-        this.setStage(companyId, "SYNCING");
+        const currentStage = this.stages.get(companyId);
+        if (currentStage !== "CONNECTED") {
+          const updated = await this.prisma.whatsappSession.updateMany({
+            where: { id: session.id, status: { not: "CONNECTED" } },
+            data: {
+              status: "CONNECTING",
+              qrCode: null,
+              lastError: null,
+            },
+          });
+          if (updated.count > 0 && this.stages.get(companyId) !== "CONNECTED") {
+            this.setStage(companyId, "SYNCING");
+            this.emitSessionUpdate(companyId, {
+              status: "CONNECTING",
+              stage: "SYNCING",
+              hasQr: false,
+            });
+          }
+        }
       }
 
       // 'connecting' setelah QR muncul tapi sebelum 'open' tanpa isNewLogin —
@@ -761,7 +1137,7 @@ export class WhatsappReceiptService
                 ? "Device tidak cocok. Scan QR ulang."
                 : `Koneksi gagal ${newFailures}x berturut. Sesi mungkin expired — scan QR ulang.`
           : reason;
-        this.setStage(companyId, shouldClearCreds ? "IDLE" : "FAILED");
+        this.setStage(companyId, shouldClearCreds ? "IDLE" : "SYNCING");
 
         waDebugLogSync({
           event: "connection.close",
@@ -778,23 +1154,33 @@ export class WhatsappReceiptService
 
         await this.prisma.whatsappSession.update({
           where: { id: session.id },
-          data: {
-            status: "DISCONNECTED",
-            qrCode: null,
-            lastDisconnectedAt: new Date(),
-            lastError: friendlyReason,
-            ...(shouldClearCreds ? { authCreds: Prisma.JsonNull } : {}),
-          },
+          data: shouldClearCreds
+            ? {
+                status: "DISCONNECTED",
+                qrCode: null,
+                lastDisconnectedAt: new Date(),
+                lastError: friendlyReason,
+                authCreds: Prisma.JsonNull,
+              }
+            : {
+                status: "CONNECTING",
+                qrCode: null,
+                lastError: null,
+              },
         });
         if (shouldClearCreds) {
           this.consecutiveFailures.delete(companyId);
         }
         this.emitSessionUpdate(companyId, {
-          status: "DISCONNECTED",
+          status: shouldClearCreds ? "DISCONNECTED" : "CONNECTING",
+          stage: shouldClearCreds ? "IDLE" : "SYNCING",
           hasQr: false,
-          reason: friendlyReason,
+          reason: shouldClearCreds ? friendlyReason : reason,
         });
         this.sockets.delete(companyId);
+        if (this.activeSocketTokens.get(companyId) === socketToken) {
+          this.activeSocketTokens.delete(companyId);
+        }
         if (resolveFirstQr) {
           resolveFirstQr();
           resolveFirstQr = null;
@@ -841,6 +1227,7 @@ export class WhatsappReceiptService
   async disconnect(companyId: string): Promise<SessionView> {
     const session = await this.ensureSession(companyId);
     const sock = this.sockets.get(companyId);
+    this.activeSocketTokens.delete(companyId);
     if (sock) {
       try {
         sock.end(new Error("Disconnected by user"));
@@ -865,6 +1252,7 @@ export class WhatsappReceiptService
   async logout(companyId: string): Promise<SessionView> {
     const session = await this.ensureSession(companyId);
     const sock = this.sockets.get(companyId);
+    this.activeSocketTokens.delete(companyId);
     if (sock) {
       try {
         sock.logout();
@@ -1193,72 +1581,80 @@ export class WhatsappReceiptService
       }
     }
 
-    waDebugLogSync({
-      event: "sendText.dispatch",
+    return this.enqueueOutbound(
       companyId,
-      jid,
       normalizedPhone,
-    });
+      message,
+      "sendText",
+      async () => {
+        waDebugLogSync({
+          event: "sendText.dispatch",
+          companyId,
+          jid,
+          normalizedPhone,
+        });
 
-    const t0 = Date.now();
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(
-        () =>
-          reject(
-            new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
-          ),
-        30_000,
-      );
-    });
-    const sendPromise = sock.sendMessage(jid, { text: message });
+        const t0 = Date.now();
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
+              ),
+            30_000,
+          );
+        });
+        const sendPromise = sock.sendMessage(jid, { text: message });
 
-    try {
-      const res = await Promise.race([sendPromise, timeoutPromise]);
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      const messageId = res?.key?.id || undefined;
-      waDebugLogSync({
-        event: "sendText.success",
-        companyId,
-        elapsedMs: Date.now() - t0,
-        messageId,
-        toJid: res?.key?.remoteJid ?? null,
-      });
-      await this.prisma.whatsappMessageLog.create({
-        data: {
-          sessionId: session.id,
-          direction: "OUTBOUND",
-          toNumber: normalizedPhone,
-          messageType: "text",
-          content: message,
-          status: "SENT",
-          providerMessageId: messageId ?? null,
-        },
-      });
-      return { success: true, messageId };
-    } catch (err) {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
-      waDebugLogSync({
-        event: "sendText.error",
-        companyId,
-        elapsedMs: Date.now() - t0,
-        errorMsg,
-        stack: err instanceof Error ? err.stack?.split("\n").slice(0, 5) : null,
-      });
-      await this.prisma.whatsappMessageLog.create({
-        data: {
-          sessionId: session.id,
-          direction: "OUTBOUND",
-          toNumber: normalizedPhone,
-          messageType: "text",
-          content: message,
-          status: "FAILED",
-          errorMessage: errorMsg,
-        },
-      });
-      throw err;
-    }
+        try {
+          const res = await Promise.race([sendPromise, timeoutPromise]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const messageId = res?.key?.id || undefined;
+          waDebugLogSync({
+            event: "sendText.success",
+            companyId,
+            elapsedMs: Date.now() - t0,
+            messageId,
+            toJid: res?.key?.remoteJid ?? null,
+          });
+          await this.prisma.whatsappMessageLog.create({
+            data: {
+              sessionId: session.id,
+              direction: "OUTBOUND",
+              toNumber: normalizedPhone,
+              messageType: "text",
+              content: message,
+              status: "SENT",
+              providerMessageId: messageId ?? null,
+            },
+          });
+          return { success: true, messageId };
+        } catch (err) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
+          waDebugLogSync({
+            event: "sendText.error",
+            companyId,
+            elapsedMs: Date.now() - t0,
+            errorMsg,
+            stack: err instanceof Error ? err.stack?.split("\n").slice(0, 5) : null,
+          });
+          await this.prisma.whatsappMessageLog.create({
+            data: {
+              sessionId: session.id,
+              direction: "OUTBOUND",
+              toNumber: normalizedPhone,
+              messageType: "text",
+              content: message,
+              status: "FAILED",
+              errorMessage: errorMsg,
+            },
+          });
+          throw err;
+        }
+      },
+    );
   }
 
   async sendReceipt(
@@ -1330,71 +1726,79 @@ export class WhatsappReceiptService
       );
     }
 
-    waDebugLogSync({
-      event: "sendTextToJid.dispatch",
+    return this.enqueueOutbound(
       companyId,
-      jid: jidOrPhone,
-      messageLen: message.length,
-    });
+      jidOrPhone,
+      message,
+      "sendTextToJid",
+      async () => {
+        waDebugLogSync({
+          event: "sendTextToJid.dispatch",
+          companyId,
+          jid: jidOrPhone,
+          messageLen: message.length,
+        });
 
-    const t0 = Date.now();
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(
-        () =>
-          reject(
-            new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
-          ),
-        30_000,
-      );
-    });
-    const sendPromise = sock.sendMessage(jidOrPhone, { text: message });
+        const t0 = Date.now();
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
+              ),
+            30_000,
+          );
+        });
+        const sendPromise = sock.sendMessage(jidOrPhone, { text: message });
 
-    try {
-      const res = await Promise.race([sendPromise, timeoutPromise]);
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      const messageId = res?.key?.id || undefined;
-      waDebugLogSync({
-        event: "sendTextToJid.success",
-        companyId,
-        elapsedMs: Date.now() - t0,
-        messageId,
-        toJid: res?.key?.remoteJid ?? null,
-      });
-      await this.prisma.whatsappMessageLog.create({
-        data: {
-          sessionId: session.id,
-          direction: "OUTBOUND",
-          toNumber: jidOrPhone.split("@")[0] ?? null,
-          messageType: "text",
-          content: message,
-          status: "SENT",
-          providerMessageId: messageId ?? null,
-        },
-      });
-      return { success: true, messageId };
-    } catch (err) {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
-      waDebugLogSync({
-        event: "sendTextToJid.error",
-        companyId,
-        elapsedMs: Date.now() - t0,
-        errorMsg,
-      });
-      await this.prisma.whatsappMessageLog.create({
-        data: {
-          sessionId: session.id,
-          direction: "OUTBOUND",
-          toNumber: jidOrPhone.split("@")[0] ?? null,
-          messageType: "text",
-          content: message,
-          status: "FAILED",
-          errorMessage: errorMsg,
-        },
-      });
-      throw err;
-    }
+        try {
+          const res = await Promise.race([sendPromise, timeoutPromise]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const messageId = res?.key?.id || undefined;
+          waDebugLogSync({
+            event: "sendTextToJid.success",
+            companyId,
+            elapsedMs: Date.now() - t0,
+            messageId,
+            toJid: res?.key?.remoteJid ?? null,
+          });
+          await this.prisma.whatsappMessageLog.create({
+            data: {
+              sessionId: session.id,
+              direction: "OUTBOUND",
+              toNumber: jidOrPhone.split("@")[0] ?? null,
+              messageType: "text",
+              content: message,
+              status: "SENT",
+              providerMessageId: messageId ?? null,
+            },
+          });
+          return { success: true, messageId };
+        } catch (err) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
+          waDebugLogSync({
+            event: "sendTextToJid.error",
+            companyId,
+            elapsedMs: Date.now() - t0,
+            errorMsg,
+          });
+          await this.prisma.whatsappMessageLog.create({
+            data: {
+              sessionId: session.id,
+              direction: "OUTBOUND",
+              toNumber: jidOrPhone.split("@")[0] ?? null,
+              messageType: "text",
+              content: message,
+              status: "FAILED",
+              errorMessage: errorMsg,
+            },
+          });
+          throw err;
+        }
+      },
+    );
   }
 
   async generateReceiptText(

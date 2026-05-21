@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { Response } from "express";
 import Pusher from "pusher";
 
 /**
@@ -49,6 +50,7 @@ export class RealtimeService {
   private readonly logger = new Logger(RealtimeService.name);
   private readonly pusher: Pusher | null;
   private readonly channel = "pos-events";
+  private readonly sseClients = new Set<Response>();
 
   constructor() {
     const appId = process.env.PUSHER_APP_ID;
@@ -85,16 +87,36 @@ export class RealtimeService {
     data?: Record<string, unknown> | unknown,
     branchId?: string,
   ): void {
-    if (!this.pusher) return;
     const payload = {
       ...(data && typeof data === "object" ? (data as Record<string, unknown>) : {}),
       branchId: branchId ?? undefined,
       timestamp: Date.now(),
     };
+    this.emitSse(event, payload);
+    if (!this.pusher) return;
     this.pusher.trigger(this.channel, event, payload).catch((err) => {
       this.logger.error(
         `Failed to emit "${event}": ${err instanceof Error ? err.message : err}`,
       );
     });
+  }
+
+  registerSseClient(res: Response): () => void {
+    this.sseClients.add(res);
+    return () => {
+      this.sseClients.delete(res);
+    };
+  }
+
+  private emitSse(event: string, data: Record<string, unknown>): void {
+    if (this.sseClients.size === 0) return;
+    const message = `data: ${JSON.stringify({ event, data })}\n\n`;
+    for (const client of this.sseClients) {
+      try {
+        client.write(message);
+      } catch {
+        this.sseClients.delete(client);
+      }
+    }
   }
 }

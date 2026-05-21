@@ -58,6 +58,89 @@ const INT32_MAX = 2_147_483_647;
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async computeRecipeStockByProduct(
+    companyId: string,
+    productIds: string[],
+    branchId?: string,
+  ): Promise<Map<string, number>> {
+    const uniqueProductIds = Array.from(
+      new Set(productIds.filter((id) => id)),
+    );
+    if (uniqueProductIds.length === 0) return new Map();
+
+    const recipes = await this.prisma.recipe.findMany({
+      where: {
+        productId: { in: uniqueProductIds },
+        product: { companyId, deletedAt: null, isActive: true },
+      },
+      select: {
+        productId: true,
+        yieldQty: true,
+        ingredients: {
+          select: {
+            ingredientId: true,
+            quantity: true,
+            ingredient: { select: { stock: true } },
+          },
+        },
+      },
+    });
+    if (recipes.length === 0) return new Map();
+
+    let branchStockMap: Map<string, number> | null = null;
+    if (branchId) {
+      const ingredientIds = Array.from(
+        new Set(
+          recipes.flatMap((recipe) =>
+            recipe.ingredients.map((ingredient) => ingredient.ingredientId),
+          ),
+        ),
+      );
+      if (ingredientIds.length > 0) {
+        const stocks = await this.prisma.branchStock.findMany({
+          where: {
+            branchId,
+            productId: { in: ingredientIds },
+            branch: { companyId },
+          },
+          select: { productId: true, quantity: true },
+        });
+        branchStockMap = new Map(
+          stocks.map((stock) => [stock.productId, stock.quantity]),
+        );
+      } else {
+        branchStockMap = new Map();
+      }
+    }
+
+    const stockByProduct = new Map<string, number>();
+    for (const recipe of recipes) {
+      const yieldQty = recipe.yieldQty || 1;
+      let maxPortions = Number.POSITIVE_INFINITY;
+      let hasIngredients = false;
+
+      for (const ingredient of recipe.ingredients) {
+        hasIngredients = true;
+        const currentStock = branchId
+          ? (branchStockMap?.get(ingredient.ingredientId) ?? 0)
+          : (ingredient.ingredient?.stock ?? 0);
+        const neededPerPortion = ingredient.quantity / yieldQty;
+        const portionsPossible =
+          neededPerPortion > 0
+            ? Math.floor(currentStock / neededPerPortion)
+            : 0;
+        if (portionsPossible < maxPortions) maxPortions = portionsPossible;
+      }
+
+      stockByProduct.set(
+        recipe.productId,
+        !hasIngredients || !Number.isFinite(maxPortions) ? 0 : maxPortions,
+      );
+    }
+
+    return stockByProduct;
+  }
+
   async list(
     companyId: string,
     query: ListProductsQueryDto,
@@ -933,9 +1016,14 @@ export class ProductsService {
           })
         )?.quantity ?? 0
       : undefined;
+    const recipeStock = (
+      await this.computeRecipeStockByProduct(companyId, [product.id], branchId)
+    ).get(product.id);
+    const effectiveStock = recipeStock ?? branchStock ?? product.stock;
     return {
       ...product,
-      ...(branchStock !== undefined ? { branchStock } : {}),
+      stock: effectiveStock,
+      ...(branchStock !== undefined ? { branchStock: effectiveStock } : {}),
       matchedUnit: matchedUnit
         ? {
             id: matchedUnit.id,
@@ -1019,6 +1107,126 @@ export class ProductsService {
     });
   }
 
+  async posSearch(
+    companyId: string,
+    params: {
+      branchId?: string;
+      search?: string;
+      categoryId?: string;
+      limit?: number;
+      offset?: number;
+      restrictToBranchAssigned?: boolean;
+    },
+  ): Promise<{ products: unknown[]; total: number }> {
+    const { rows, total } = await this.branchView(companyId, {
+      branchId: params.branchId,
+      search: params.search,
+      categoryId: params.categoryId,
+      isActive: true,
+      limit: params.limit ?? 10,
+      offset: params.offset ?? 0,
+      restrictToBranchAssigned: params.restrictToBranchAssigned ?? false,
+      excludeIngredient: true,
+    });
+    const rawRows = rows as Record<string, unknown>[];
+    const productIds = rawRows.map((row) => String(row.product_id));
+    if (productIds.length === 0) return { products: [], total };
+
+    const [units, branchSkus] = await Promise.all([
+      this.prisma.productUnit.findMany({
+        where: { productId: { in: productIds } },
+        select: {
+          id: true,
+          productId: true,
+          name: true,
+          conversionQty: true,
+          sellingPrice: true,
+          purchasePrice: true,
+          barcode: true,
+          sortOrder: true,
+        },
+        orderBy: [{ sortOrder: "asc" }, { conversionQty: "asc" }],
+      }),
+      params.branchId
+        ? this.prisma.productBranchSku.findMany({
+            where: {
+              branchId: params.branchId,
+              productId: { in: productIds },
+              isActive: true,
+            },
+            select: {
+              productId: true,
+              unitId: true,
+              variantId: true,
+              sellingPrice: true,
+              purchasePrice: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const unitsByProduct = new Map<string, typeof units>();
+    for (const unit of units) {
+      const current = unitsByProduct.get(unit.productId) ?? [];
+      current.push(unit);
+      unitsByProduct.set(unit.productId, current);
+    }
+
+    const baseSkuByProduct = new Map<string, (typeof branchSkus)[number]>();
+    const skuByProductUnit = new Map<string, (typeof branchSkus)[number]>();
+    for (const sku of branchSkus) {
+      if (sku.variantId) continue;
+      if (!sku.unitId) {
+        baseSkuByProduct.set(sku.productId, sku);
+      } else {
+        skuByProductUnit.set(`${sku.productId}:${sku.unitId}`, sku);
+      }
+    }
+
+    const products = rawRows.map((row) => {
+      const productId = String(row.product_id);
+      const baseSku = baseSkuByProduct.get(productId);
+      const productUnits = (unitsByProduct.get(productId) ?? [])
+        .filter((unit) => Number(unit.conversionQty) > 1)
+        .map((unit) => {
+          const sku = skuByProductUnit.get(`${productId}:${unit.id}`);
+          return {
+            id: unit.id,
+            name: unit.name,
+            conversionQty: Number(unit.conversionQty),
+            sellingPrice: Number(sku?.sellingPrice ?? unit.sellingPrice),
+            purchasePrice:
+              sku?.purchasePrice ??
+              (unit.purchasePrice === null
+                ? null
+                : Number(unit.purchasePrice)),
+            barcode: unit.barcode ?? null,
+          };
+        });
+
+      return {
+        id: productId,
+        code: String(row.product_code ?? ""),
+        name: String(row.product_name ?? ""),
+        categoryId: (row.category_id as string) ?? null,
+        category: {
+          id: (row.category_id as string) ?? "",
+          name: (row.category_name as string) ?? "",
+        },
+        sellingPrice: Number(baseSku?.sellingPrice ?? row.selling_price ?? 0),
+        purchasePrice: Number(baseSku?.purchasePrice ?? row.purchase_price ?? 0),
+        stock: Number(row.stock ?? 0),
+        minStock: Number(row.min_stock ?? 0),
+        unit: (row.base_unit as string) ?? "",
+        imageUrl: (row.image_url as string) ?? null,
+        barcode: (row.barcode as string) ?? null,
+        ...(productUnits.length > 0 ? { units: productUnits } : {}),
+      };
+    });
+
+    return { products, total };
+  }
+
   async branchView(
     companyId: string,
     params: {
@@ -1030,6 +1238,8 @@ export class ProductsService {
       stockStatus?: string;
       limit?: number;
       offset?: number;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
       onlyWithStock?: boolean;
       // POS mode: when branchId is set, only include products that were
       // explicitly assigned to that branch (have BranchStock or BranchPrice).
@@ -1053,6 +1263,8 @@ export class ProductsService {
       stockStatus,
       limit = 20,
       offset = 0,
+      sortBy,
+      sortDir = "desc",
       onlyWithStock = false,
       restrictToBranchAssigned = false,
       excludeIngredient = false,
@@ -1067,7 +1279,7 @@ export class ProductsService {
     }
     if (search) {
       conditions.push(
-        `(product_name ILIKE $${i} OR product_code ILIKE $${i} OR barcode ILIKE $${i})`,
+        `(product_name ILIKE $${i} OR product_code ILIKE $${i} OR barcode ILIKE $${i} OR category_name ILIKE $${i} OR description ILIKE $${i})`,
       );
       values.push(`%${search}%`);
       i++;
@@ -1109,9 +1321,26 @@ export class ProductsService {
     }
 
     const whereClause = conditions.join(" AND ");
+    const dir = sortDir === "asc" ? "ASC" : "DESC";
+    const sortColumnByKey: Record<string, string> = {
+      name: "product_name",
+      code: "product_code",
+      category: "category_name",
+      purchasePrice: "purchase_price",
+      sellingPrice: "selling_price",
+      stock: "stock",
+      createdAt: "created_at",
+    };
+    const sortColumn = sortBy ? sortColumnByKey[sortBy] : undefined;
+    const orderBy = sortColumn
+      ? `${sortColumn} ${dir}, product_name ASC`
+      : "created_at DESC";
+    const groupedOrderBy = sortColumn
+      ? `${sortColumn} ${dir}, product_name ASC`
+      : "created_at DESC";
     const countQuery = `SELECT COUNT(DISTINCT product_id)::int AS total FROM vw_product_branch WHERE ${whereClause}`;
     const dataQuery = branchId
-      ? `SELECT * FROM vw_product_branch WHERE ${whereClause} ORDER BY created_at DESC LIMIT $${i} OFFSET $${i + 1}`
+      ? `SELECT * FROM vw_product_branch WHERE ${whereClause} ORDER BY ${orderBy} LIMIT $${i} OFFSET $${i + 1}`
       : `SELECT product_id, product_code, product_name, category_id, category_name,
                 brand_id, company_id, base_unit, is_active, image_url, barcode, description,
                 MIN(branch_id) AS branch_id, '' AS branch_name, '' AS branch_code,
@@ -1128,7 +1357,7 @@ export class ProductsService {
            WHERE ${whereClause}
            GROUP BY product_id, product_code, product_name, category_id, category_name,
                     brand_id, company_id, base_unit, is_active, image_url, barcode, description
-           ORDER BY MIN(created_at) DESC
+           ORDER BY ${groupedOrderBy}
            LIMIT $${i} OFFSET $${i + 1}`;
     const [countRes, rawRows] = await Promise.all([
       this.prisma.$queryRawUnsafe<[{ total: number | bigint }]>(
@@ -1175,10 +1404,18 @@ export class ProductsService {
         rackInfoByProduct.set(p.id, p.defaultRack ?? null);
       }
     }
+    const recipeStockByProduct = await this.computeRecipeStockByProduct(
+      companyId,
+      productIds,
+      branchId,
+    );
     const rows = rawRows.map((r) => {
-      const rack = rackInfoByProduct.get(String(r.product_id)) ?? null;
+      const productId = String(r.product_id);
+      const rack = rackInfoByProduct.get(productId) ?? null;
+      const recipeStock = recipeStockByProduct.get(productId);
       return {
         ...r,
+        stock: recipeStock ?? r.stock,
         default_rack_id: rack?.id ?? null,
         default_rack: rack,
       };

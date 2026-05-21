@@ -42,12 +42,41 @@ export class CategoriesService {
     companyId: string,
     query: ListCategoriesQueryDto,
   ): Promise<CategoryListResponse> {
-    const { search, parentId, kind, brandId, page, perPage, sortBy, sortDir } = query;
+    const {
+      search,
+      parentId,
+      kind,
+      brandId,
+      sellableOnly,
+      branchId,
+      page,
+      perPage,
+      sortBy,
+      sortDir,
+    } = query;
     const where: Prisma.CategoryWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
     if (parentId !== undefined) where.parentId = parentId;
     if (kind) where.kind = kind;
     if (brandId) where.brandId = brandId;
+    if (sellableOnly) {
+      where.products = {
+        some: {
+          companyId,
+          isActive: true,
+          deletedAt: null,
+          itemType: { not: "INGREDIENT" },
+          ...(branchId
+            ? {
+                OR: [
+                  { branchStocks: { some: { branchId } } },
+                  { branchPrices: { some: { branchId } } },
+                ],
+              }
+            : {}),
+        },
+      };
+    }
 
     const dir: "asc" | "desc" = sortDir ?? "asc";
     let orderBy: Prisma.CategoryOrderByWithRelationInput = { name: "asc" };
