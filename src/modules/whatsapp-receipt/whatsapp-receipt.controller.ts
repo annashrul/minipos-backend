@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
 import {
   WhatsAppBaileysConnectBodySchema,
   WhatsAppBaileysSendReceiptBodySchema,
@@ -11,14 +11,51 @@ import {
   type WhatsAppReceiptLinkQueryDto,
   type WhatsAppReceiptTextParamsDto,
 } from "@/contracts";
+import { z } from "zod";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { WhatsappCompany } from "../auth/current-company.decorator";
 import { RequireAccess } from "../auth/require-access.decorator";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 
+// Setup credentials wa-service — admin minipos input setelah create tenant
+// manual di wa-service UI. Inline schema (bukan dari @/contracts) supaya
+// gampang iterate tanpa modif contracts package.
+const WaServiceSetupBodySchema = z.object({
+  tenantId: z.string().uuid({ message: "tenantId harus UUID dari wa-service" }),
+  apiKey: z.string().regex(/^wask_/, "API key harus diawali 'wask_'"),
+  webhookSecret: z.string().min(16, "webhookSecret terlalu pendek"),
+});
+type WaServiceSetupBodyDto = z.infer<typeof WaServiceSetupBodySchema>;
+
 @Controller("whatsapp-receipt")
 export class WhatsappReceiptController {
   constructor(private readonly receipt: WhatsappReceiptService) {}
+
+  // ─── Setup wa-service credentials (per company) ────────────────
+  @Get("setup")
+  @RequireAccess("whatsapp-bot", "view")
+  async getSetup(@WhatsappCompany() companyId: string) {
+    const data = await this.receipt.getSetupStatus(companyId);
+    return { data };
+  }
+
+  @Post("setup")
+  @RequireAccess("whatsapp-bot", "update")
+  async setup(
+    @WhatsappCompany() companyId: string,
+    @Body(new ZodValidationPipe(WaServiceSetupBodySchema))
+    body: WaServiceSetupBodyDto,
+  ) {
+    const data = await this.receipt.setupCredentials(companyId, body);
+    return { data };
+  }
+
+  @Delete("setup")
+  @RequireAccess("whatsapp-bot", "update")
+  async clearSetup(@WhatsappCompany() companyId: string) {
+    await this.receipt.clearCredentials(companyId);
+    return { data: { ok: true } };
+  }
 
   @Get("baileys/session")
   async session(@WhatsappCompany() companyId: string) {

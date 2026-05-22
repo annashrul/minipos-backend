@@ -1487,22 +1487,35 @@ model Setting {
   @@map("settings")
 }
 
+// WA gateway dipindah ke service eksternal `wa-service` (HTTP + webhook).
+// Tabel ini sekarang menyimpan:
+//   1. Mapping company → tenant credentials di wa-service
+//   2. Snapshot status terakhir (cache hasil webhook SESSION_UPDATED) supaya
+//      query dashboard tidak harus selalu round-trip ke wa-service
+// Kolom `authCreds` + tabel WhatsappSessionKey tetap ada untuk backward compat
+// (data lama tidak di-drop), tapi sudah tidak di-populate lagi.
 model WhatsappSession {
-  id                 String               @id @default(uuid())
-  companyId          String               @unique @map("company_id")
-  company            Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  status             String               @default("DISCONNECTED") // DISCONNECTED, CONNECTING, CONNECTED
-  phoneNumber        String?              @map("phone_number")
-  deviceName         String?              @map("device_name")
-  qrCode             String?              @map("qr_code")
-  authCreds          Json?                @map("auth_creds")
-  lastConnectedAt    DateTime?            @map("last_connected_at")
-  lastDisconnectedAt DateTime?            @map("last_disconnected_at")
-  lastError          String?              @map("last_error")
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
-  keys               WhatsappSessionKey[]
-  messages           WhatsappMessageLog[]
+  id                    String               @id @default(uuid())
+  companyId             String               @unique @map("company_id")
+  company               Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  status                String               @default("DISCONNECTED") // DISCONNECTED, CONNECTING, CONNECTED
+  stage                 String               @default("IDLE") // IDLE | PREPARING | QR_READY | SCANNED | SYNCING | CONNECTED | FAILED
+  phoneNumber           String?              @map("phone_number")
+  deviceName            String?              @map("device_name")
+  qrCode                String?              @map("qr_code")
+  authCreds             Json?                @map("auth_creds") // DEPRECATED: dulu Baileys creds; sekarang null. Tidak di-drop biar migration ringan.
+  // ── wa-service tenant credentials ─────────────────────────────────
+  waServiceTenantId     String?              @unique @map("wa_service_tenant_id")
+  waServiceApiKey       String?              @map("wa_service_api_key")
+  waServiceWebhookSecret String?             @map("wa_service_webhook_secret")
+  // ───────────────────────────────────────────────────────────────────
+  lastConnectedAt       DateTime?            @map("last_connected_at")
+  lastDisconnectedAt    DateTime?            @map("last_disconnected_at")
+  lastError             String?              @map("last_error")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+  keys                  WhatsappSessionKey[]
+  messages              WhatsappMessageLog[]
 
   @@index([status])
   @@map("whatsapp_sessions")

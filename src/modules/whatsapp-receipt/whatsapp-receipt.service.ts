@@ -1,42 +1,25 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
-import { createHash } from "crypto";
-import type {
-  AuthenticationCreds,
-  AuthenticationState,
-  SignalDataTypeMap,
-  WASocket,
-} from "@whiskeysockets/baileys";
-import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-import { waDebugLogSync } from "./wa-debug.logger";
+import { WaServiceClient } from "../../common/wa-service/wa-service.client";
+import type {
+  WaServiceInboundEvent,
+  WaServiceSession,
+  WaServiceSessionStage,
+} from "../../common/wa-service/wa-service.types";
+import { WaServiceSocketService } from "./wa-service-socket.service";
 
-/**
- * Generates digital receipt text for a transaction and a wa.me link.
- * The actual sending happens client-side by opening the wa.me URL in a new tab.
- *
- * Currently a thin proxy/builder. If a real WA gateway (e.g. Fonnte, Wablas,
- * Twilio) is added later, expose a `send()` method here.
- */
+// ─── Types eksternal (di-export buat kompatibilitas controller/chatbot) ──
 type SessionStatus = "DISCONNECTED" | "CONNECTING" | "CONNECTED";
 
-/** Tahap detail proses connect WA — UI tampilkan progress stepper. */
-export type SessionStage =
-  | "IDLE" // belum start connect
-  | "PREPARING" // backend init Baileys runtime + fetch protocol version
-  | "QR_READY" // QR code sudah ada, tunggu user scan
-  | "SCANNED" // user sudah scan, WA verify device
-  | "SYNCING" // device verified, sync metadata (chats, contacts)
-  | "CONNECTED" // siap pakai
-  | "FAILED"; // error / disconnected
+export type SessionStage = WaServiceSessionStage;
 
 type SessionView = {
   status: SessionStatus;
@@ -49,85 +32,9 @@ type SessionView = {
   lastError: string | null;
 };
 
-type OutboundSafetySource = "sendText" | "sendTextToJid";
-
-type BaileysModule = typeof import("@whiskeysockets/baileys");
-
-type BaileysRuntime = {
-  makeWASocket: BaileysModule["default"];
-  Browsers: BaileysModule["Browsers"];
-  DisconnectReason: BaileysModule["DisconnectReason"];
-  fetchLatestBaileysVersion: BaileysModule["fetchLatestBaileysVersion"];
-  initAuthCreds: BaileysModule["initAuthCreds"];
-  proto: BaileysModule["proto"];
-};
-
-// Baileys v7 adalah ESM-only. tsconfig backend pakai `module: "commonjs"`,
-// jadi TypeScript meng-emit `await import(...)` jadi `require(...)` —
-// itu meledak dengan ERR_REQUIRE_ESM. Trik `new Function` membuat dynamic
-// import lolos transpilasi sehingga tetap dieksekusi sebagai native ESM
-// `import()` saat runtime.
-const dynamicImport = new Function("specifier", "return import(specifier)") as <
-  T = unknown,
->(
-  specifier: string,
-) => Promise<T>;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randomIntInclusive(min: number, max: number): number {
-  const safeMin = Math.max(0, Math.floor(min));
-  const safeMax = Math.max(safeMin, Math.floor(max));
-  return safeMin + Math.floor(Math.random() * (safeMax - safeMin + 1));
-}
-
-function readPositiveInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-// ─── Buffer-aware JSON helpers ─────────────────────────────────────
-// Baileys auth creds menyimpan key material sebagai `Buffer` / `Uint8Array`.
-// Prisma `Json` column tidak preserve type info, jadi serialize manual
-// ke marker `{type:"Buffer",data:[byte[]]}` dan revive saat dibaca.
-function bufferReplacer(_key: string, value: unknown): unknown {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { type?: string }).type === "Buffer" &&
-    Array.isArray((value as { data?: unknown }).data)
-  ) {
-    // Sudah ter-marker — biarkan lewat tanpa double-wrap.
-    return value;
-  }
-  if (Buffer.isBuffer(value)) {
-    return { type: "Buffer", data: Array.from(value) };
-  }
-  if (value instanceof Uint8Array) {
-    return { type: "Buffer", data: Array.from(value) };
-  }
-  return value;
-}
-
-function bufferReviver(_key: string, value: unknown): unknown {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { type?: string }).type === "Buffer" &&
-    Array.isArray((value as { data?: unknown }).data)
-  ) {
-    return Buffer.from((value as { data: number[] }).data);
-  }
-  return value;
-}
-
-// Callback yang dipanggil setiap kali pesan inbound (bukan fromMe) sukses
-// di-persist. Dipakai oleh WhatsappChatbotService untuk auto-reply tanpa
-// bikin circular dependency antar module — chatbot module register handler
+// Callback yang dipanggil setiap kali pesan inbound (bukan fromMe) diterima
+// dari webhook wa-service. Dipakai WhatsappChatbotService untuk auto-reply
+// tanpa bikin circular dependency antar module — chatbot register handler
 // di onModuleInit.
 export type InboundMessageHandler = (params: {
   companyId: string;
@@ -138,1523 +45,165 @@ export type InboundMessageHandler = (params: {
   isGroup: boolean;
 }) => void | Promise<void>;
 
+type TenantCredentials = {
+  tenantId: string;
+  apiKey: string;
+  webhookSecret: string;
+};
+
+// WhatsappReceiptService versi baru: tipis HTTP client ke `wa-service`.
+// Semua interaksi Baileys (socket, signal keys, throttle, queue) pindah ke
+// wa-service. Service ini hanya:
+//   1. Resolve tenant credentials (yang sudah di-setup manual oleh admin)
+//   2. Forward call session/messages via WaServiceClient
+//   3. Terima webhook (inbound, session_updated) lewat WhatsappWebhookController
+//   4. Persist log pesan + cache snapshot status di tabel lokal supaya
+//      query history & dashboard tidak perlu round-trip ke wa-service
+//
+// Tenant per-company di-provision MANUAL di UI wa-service oleh admin (bukan
+// auto-provisioning lewat /admin/tenants), supaya minipos tidak perlu pegang
+// WA_SERVICE_ADMIN_TOKEN. Admin minipos input apiKey + webhookSecret lewat
+// endpoint POST /whatsapp-receipt/setup setelah create tenant di wa-service.
 @Injectable()
-export class WhatsappReceiptService
-  implements OnModuleInit, OnModuleDestroy
-{
+export class WhatsappReceiptService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WhatsappReceiptService.name);
-  private readonly sockets = new Map<string, WASocket>();
-  private readonly connectLocks = new Map<string, Promise<SessionView>>();
-  private readonly activeSocketTokens = new Map<string, symbol>();
-  private readonly outboundQueues = new Map<string, Promise<void>>();
-  private readonly outboundQueueDepth = new Map<string, number>();
-  private readonly outboundDuplicateSeen = new Map<string, number>();
-  private readonly outboundSentAt = new Map<string, number[]>();
-  private readonly outboundLastSentAt = new Map<string, number>();
-  private readonly outboundCooldownUntil = new Map<string, number>();
   private readonly inboundHandlers: InboundMessageHandler[] = [];
-
-  /** Register handler dipanggil setiap inbound message. Idempotent — handler
-   * dipanggil after-persist supaya log sudah ada saat handler query DB. */
-  registerInboundHandler(h: InboundMessageHandler): void {
-    this.inboundHandlers.push(h);
-  }
-
-  // Stage progress tracker per company. In-memory karena event-driven —
-  // hilang saat backend restart tapi akan re-derive dari DB status.
-  private readonly stages = new Map<string, SessionStage>();
-  // Hitung consecutive close fail per company. Kalau mencapai threshold,
-  // creds di-bersihkan supaya user scan QR ulang (creds stale / device
-  // di-unlink dari WA).
-  private readonly consecutiveFailures = new Map<string, number>();
-  private static readonly MAX_FAILURES_BEFORE_CLEAR = 3;
-  private baileysRuntime: BaileysRuntime | null = null;
-  // Cache WA version supaya tidak hit network call setiap connect.
-  // fetchLatestBaileysVersion() bisa 5-30 detik kalau network lambat — itu
-  // bottleneck utama saat user scan QR pertama kali. Cache 6 jam aman karena
-  // WA jarang naik versi protocol.
-  private cachedBaileysVersion: { version: number[]; cachedAt: number } | null = null;
-  private static readonly BAILEYS_VERSION_TTL_MS = 6 * 60 * 60 * 1000;
-  // Fallback hardcoded — dipakai kalau network call timeout/error.
-  // Sinkron dengan default di node_modules baileys 7.0.0-rc.9.
-  // Penting: versi yang TERLALU LAMA bikin WA reject device linking dengan
-  // pesan "perangkat tidak dapat ditautkan". Update saat upgrade Baileys.
-  private static readonly FALLBACK_BAILEYS_VERSION = [2, 3000, 1027934701];
-  // Timeout cukup longgar (8s) supaya kalau network OK tapi sedikit lambat,
-  // kita tetap dapat versi terbaru. Hanya fallback ke hardcoded saat real error.
-  private static readonly FETCH_VERSION_TIMEOUT_MS = 8_000;
-  private static readonly OUTBOUND_MIN_DELAY_MS = readPositiveInt(
-    "WA_SEND_MIN_DELAY_MS",
-    4_500,
-  );
-  private static readonly OUTBOUND_MAX_DELAY_MS = readPositiveInt(
-    "WA_SEND_MAX_DELAY_MS",
-    9_000,
-  );
-  private static readonly OUTBOUND_MAX_PER_MINUTE = readPositiveInt(
-    "WA_SEND_MAX_PER_MINUTE",
-    12,
-  );
-  private static readonly OUTBOUND_MAX_PER_HOUR = readPositiveInt(
-    "WA_SEND_MAX_PER_HOUR",
-    120,
-  );
-  private static readonly OUTBOUND_MAX_QUEUE_SIZE = readPositiveInt(
-    "WA_SEND_MAX_QUEUE_SIZE",
-    50,
-  );
-  private static readonly OUTBOUND_DUPLICATE_WINDOW_MS = readPositiveInt(
-    "WA_SEND_DUPLICATE_WINDOW_MS",
-    5 * 60_000,
-  );
-  private static readonly OUTBOUND_ERROR_COOLDOWN_MS = readPositiveInt(
-    "WA_SEND_ERROR_COOLDOWN_MS",
-    60_000,
-  );
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly wa: WaServiceClient,
+    private readonly socket: WaServiceSocketService,
   ) {}
 
-  /** Set + emit stage progress connect — dipakai UI untuk tampilkan stepper. */
-  private setStage(companyId: string, stage: SessionStage) {
-    this.stages.set(companyId, stage);
-    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, { companyId, stage });
-  }
-
-  /** Emit realtime event saat status sesi WA berubah supaya UI auto-refresh. */
-  private emitSessionUpdate(
-    companyId: string,
-    payload: {
-      status: string;
-      stage?: SessionStage;
-      hasQr?: boolean;
-      phoneNumber?: string | null;
-      deviceName?: string | null;
-      reason?: string | null;
-    },
-  ) {
-    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, {
-      companyId,
-      status: payload.status,
-      stage: payload.stage ?? undefined,
-      hasQr: payload.hasQr ?? false,
-      phoneNumber: payload.phoneNumber ?? null,
-      deviceName: payload.deviceName ?? null,
-      reason: payload.reason ?? null,
-    });
-  }
-
-  private async enqueueOutbound<T>(
-    companyId: string,
-    target: string,
-    message: string,
-    source: OutboundSafetySource,
-    work: () => Promise<T>,
-  ): Promise<T> {
-    const now = Date.now();
-    this.cleanupOutboundDuplicateCache(now);
-    const duplicateKey = this.outboundDuplicateKey(companyId, target, message);
-    const duplicateUntil = this.outboundDuplicateSeen.get(duplicateKey) ?? 0;
-    if (duplicateUntil > now) {
-      waDebugLogSync({
-        event: "outboundSafety.duplicateRejected",
-        companyId,
-        source,
-        target,
-        duplicateWindowMs:
-          WhatsappReceiptService.OUTBOUND_DUPLICATE_WINDOW_MS,
-      });
-      throw new ConflictException(
-        "Pesan yang sama ke nomor ini baru saja dikirim. Tunggu beberapa menit sebelum mencoba lagi.",
-      );
-    }
-
-    const depth = this.outboundQueueDepth.get(companyId) ?? 0;
-    if (depth >= WhatsappReceiptService.OUTBOUND_MAX_QUEUE_SIZE) {
-      waDebugLogSync({
-        event: "outboundSafety.queueFull",
-        companyId,
-        source,
-        target,
-        depth,
-      });
-      throw new BadRequestException(
-        "Antrean WhatsApp sedang penuh. Coba lagi setelah beberapa pesan terkirim.",
-      );
-    }
-
-    this.outboundDuplicateSeen.set(
-      duplicateKey,
-      now + WhatsappReceiptService.OUTBOUND_DUPLICATE_WINDOW_MS,
+  onModuleInit(): void {
+    // Register handler ke socket service. Saat wa-service push event lewat
+    // socket, handler ini di-invoke (sama dengan flow webhook lama).
+    this.socket.onSessionUpdated((tenantId, data) =>
+      this.handleSessionWebhook(tenantId, data),
     );
-    this.outboundQueueDepth.set(companyId, depth + 1);
-
-    const previous = this.outboundQueues.get(companyId) ?? Promise.resolve();
-    const task = previous
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          await this.waitOutboundTurn(companyId, target, source);
-          const result = await work();
-          this.markOutboundSuccess(companyId);
-          return result;
-        } catch (err) {
-          this.outboundDuplicateSeen.delete(duplicateKey);
-          this.markOutboundFailure(companyId, err);
-          throw err;
-        } finally {
-          const currentDepth = this.outboundQueueDepth.get(companyId) ?? 1;
-          if (currentDepth <= 1) this.outboundQueueDepth.delete(companyId);
-          else this.outboundQueueDepth.set(companyId, currentDepth - 1);
-        }
-      });
-
-    this.outboundQueues.set(
-      companyId,
-      task.then(
-        () => undefined,
-        () => undefined,
-      ),
+    this.socket.onInboundMessage((tenantId, data) =>
+      this.handleInboundWebhook(tenantId, data),
     );
-    return task;
-  }
-
-  private async waitOutboundTurn(
-    companyId: string,
-    target: string,
-    source: OutboundSafetySource,
-  ): Promise<void> {
-    const cooldownUntil = this.outboundCooldownUntil.get(companyId) ?? 0;
-    const cooldownWait = cooldownUntil - Date.now();
-    if (cooldownWait > 0) {
-      waDebugLogSync({
-        event: "outboundSafety.cooldownWait",
-        companyId,
-        source,
-        target,
-        waitMs: cooldownWait,
-      });
-      await delay(cooldownWait);
-    }
-
-    await this.waitOutboundRateLimit(companyId, target, source);
-
-    const jitter = randomIntInclusive(
-      WhatsappReceiptService.OUTBOUND_MIN_DELAY_MS,
-      Math.max(
-        WhatsappReceiptService.OUTBOUND_MIN_DELAY_MS,
-        WhatsappReceiptService.OUTBOUND_MAX_DELAY_MS,
-      ),
-    );
-    const lastSentAt = this.outboundLastSentAt.get(companyId) ?? 0;
-    const waitMs = Math.max(0, lastSentAt + jitter - Date.now());
-    if (waitMs > 0) {
-      waDebugLogSync({
-        event: "outboundSafety.spacingWait",
-        companyId,
-        source,
-        target,
-        waitMs,
-      });
-      await delay(waitMs);
-    }
-  }
-
-  private async waitOutboundRateLimit(
-    companyId: string,
-    target: string,
-    source: OutboundSafetySource,
-  ): Promise<void> {
-    while (true) {
-      const now = Date.now();
-      const history = this.pruneOutboundHistory(companyId, now);
-      const minuteCutoff = now - 60_000;
-      const minuteCount = history.filter((ts) => ts >= minuteCutoff).length;
-      const hourCount = history.length;
-      const minuteWait =
-        minuteCount >= WhatsappReceiptService.OUTBOUND_MAX_PER_MINUTE
-          ? history.find((ts) => ts >= minuteCutoff)! + 60_000 - now
-          : 0;
-      const hourWait =
-        hourCount >= WhatsappReceiptService.OUTBOUND_MAX_PER_HOUR
-          ? history[0]! + 60 * 60_000 - now
-          : 0;
-      const waitMs = Math.max(minuteWait, hourWait, 0);
-      if (waitMs <= 0) return;
-      waDebugLogSync({
-        event: "outboundSafety.rateLimitWait",
-        companyId,
-        source,
-        target,
-        minuteCount,
-        hourCount,
-        waitMs,
-      });
-      await delay(Math.min(waitMs, 60_000));
-    }
-  }
-
-  private markOutboundSuccess(companyId: string): void {
-    const now = Date.now();
-    const history = this.pruneOutboundHistory(companyId, now);
-    history.push(now);
-    this.outboundSentAt.set(companyId, history);
-    this.outboundLastSentAt.set(companyId, now);
-  }
-
-  private markOutboundFailure(companyId: string, err: unknown): void {
-    const cooldownMs = WhatsappReceiptService.OUTBOUND_ERROR_COOLDOWN_MS;
-    if (cooldownMs <= 0) return;
-    this.outboundCooldownUntil.set(companyId, Date.now() + cooldownMs);
-    waDebugLogSync({
-      event: "outboundSafety.errorCooldown",
-      companyId,
-      cooldownMs,
-      error: err instanceof Error ? err.message : "unknown",
-    });
-  }
-
-  private pruneOutboundHistory(companyId: string, now = Date.now()): number[] {
-    const hourCutoff = now - 60 * 60_000;
-    return (this.outboundSentAt.get(companyId) ?? []).filter(
-      (ts) => ts >= hourCutoff,
+    // Tenant dihapus di sisi wa-service → auto-clear credentials lokal
+    // supaya company minipos kembali ke state "belum setup".
+    this.socket.onTenantDeleted((tenantId) =>
+      this.handleTenantDeleted(tenantId),
     );
   }
 
-  private cleanupOutboundDuplicateCache(now = Date.now()): void {
-    for (const [key, expiresAt] of this.outboundDuplicateSeen.entries()) {
-      if (expiresAt <= now) this.outboundDuplicateSeen.delete(key);
-    }
+  onModuleDestroy(): void {
+    // No-op. Tidak ada socket lokal yang perlu di-close.
   }
 
-  private outboundDuplicateKey(
-    companyId: string,
-    target: string,
-    message: string,
-  ): string {
-    const hash = createHash("sha256")
-      .update(message.trim().replace(/\s+/g, " "))
-      .digest("hex")
-      .slice(0, 24);
-    return `${companyId}:${target}:${hash}`;
+  // ─── Inbound handler registry (dipanggil chatbot) ─────────────────
+  registerInboundHandler(h: InboundMessageHandler): void {
+    this.inboundHandlers.push(h);
   }
 
-  /**
-   * Simpan pesan inbound dari Baileys ke whatsapp_message_logs.
-   * Skip pesan fromMe (echo dari device kita). Idempotent terhadap
-   * providerMessageId.
-   */
-  private async persistInboundMessages(
-    sessionId: string,
-    messages: Array<{
-      key: {
-        remoteJid?: string | null;
-        fromMe?: boolean | null;
-        id?: string | null;
-        // Baileys 7.x kasih `senderPn` (sender phone number) saat source-nya
-        // adalah LID — berisi JID `62XXX@s.whatsapp.net` real. Kita prefer
-        // ini supaya throttle, role detection, dan tool customer phone
-        // tetap bekerja walaupun JID utamanya `@lid`.
-        senderPn?: string | null;
-      };
-      message?: Record<string, unknown> | null;
-      messageTimestamp?: number | Long | null;
-      pushName?: string | null;
-    }>,
-    companyId?: string,
-  ): Promise<void> {
-    for (const m of messages) {
-      if (m.key.fromMe) continue;
-      const providerId = m.key.id ?? null;
-      if (!providerId) continue;
-      const remoteJid = m.key.remoteJid ?? "";
-      // Prefer senderPn kalau ada — itu phone real (`62XXX@s.whatsapp.net`).
-      // remoteJid bisa berisi LID anonim (`<random>@lid`) untuk kontak yang
-      // belum tersimpan; LID tidak bisa di-match ke customer.phone di DB.
-      const phoneJid = m.key.senderPn ?? null;
-      const fromNumber =
-        (phoneJid ? phoneJid.split("@")[0] : null) ||
-        remoteJid.split("@")[0] ||
-        null;
-
-      // Idempotency: skip kalau sudah ada
-      const existing = await this.prisma.whatsappMessageLog.findFirst({
-        where: { sessionId, providerMessageId: providerId },
-        select: { id: true },
-      });
-      if (existing) continue;
-
-      const { content, messageType } = extractMessageContent(m.message ?? {});
-
-      await this.prisma.whatsappMessageLog.create({
-        data: {
-          sessionId,
-          direction: "INBOUND",
-          fromNumber,
-          messageType,
-          content,
-          status: "RECEIVED",
-          providerMessageId: providerId,
-        },
-      });
-
-      // Notify handlers (chatbot dll). Group chat (`@g.us`) di-skip supaya
-      // bot tidak ikut nimbrung di group bisnis. Status broadcast juga skip.
-      if (companyId && this.inboundHandlers.length > 0) {
-        const isGroup = remoteJid.endsWith("@g.us");
-        const isStatus = remoteJid === "status@broadcast";
-        if (!isStatus) {
-          for (const h of this.inboundHandlers) {
-            try {
-              const r = h({
-                companyId,
-                fromNumber,
-                remoteJid,
-                content,
-                fromMe: false,
-                isGroup,
-              });
-              if (r instanceof Promise) {
-                r.catch((err: unknown) => {
-                  this.logger.warn(
-                    `[wa] inbound handler error: ${
-                      err instanceof Error ? err.message : "unknown"
-                    }`,
-                  );
-                });
-              }
-            } catch (err) {
-              this.logger.warn(
-                `[wa] inbound handler sync error: ${
-                  err instanceof Error ? err.message : "unknown"
-                }`,
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Restore semua sesi yang status CONNECTED + punya authCreds saat startup.
-   * Tanpa ini, socket di Map hilang setiap kali Node restart (nodemon hot-
-   * reload, deploy baru, dst.) padahal DB masih CONNECTED → user dipaksa
-   * reconnect + scan ulang QR. Dengan creds tersimpan, Baileys langsung
-   * resume tanpa QR.
-   */
-  async onModuleInit(): Promise<void> {
-    try {
-      const sessions = await this.prisma.whatsappSession.findMany({
-        where: {
-          status: "CONNECTED",
-          authCreds: { not: Prisma.JsonNull },
-        },
-        select: { companyId: true },
-      });
-      if (sessions.length === 0) return;
-      this.logger.log(
-        `[wa] auto-restore ${sessions.length} session(s) on startup`,
-      );
-      waDebugLogSync({
-        event: "module.init.restore",
-        count: sessions.length,
-        companies: sessions.map((s) => s.companyId),
-      });
-      for (const s of sessions) {
-        // fire-and-forget — startup tidak boleh block boot kalau WA bermasalah
-        this.connect(s.companyId, false).catch((err: unknown) => {
-          this.logger.warn(
-            `Auto-restore WA failed company=${s.companyId}: ${
-              err instanceof Error ? err.message : "Unknown"
-            }`,
-          );
-        });
-      }
-    } catch (err) {
-      this.logger.warn(
-        `onModuleInit WA scan failed: ${
-          err instanceof Error ? err.message : "Unknown"
-        }`,
-      );
-    }
-  }
-
-  private async getBaileysRuntime(): Promise<BaileysRuntime> {
-    if (this.baileysRuntime) return this.baileysRuntime;
-    // Dynamic import via `new Function` membuat namespace ESM. Default
-    // export bisa nested ({ default: { default: fn } }) tergantung
-    // bagaimana bundler Baileys ekspor — handle dua-duanya.
-    const mod = (await dynamicImport<BaileysModule & { default: unknown }>(
-      "@whiskeysockets/baileys",
-    )) as Record<string, unknown>;
-    const ns = (
-      mod.default && typeof mod.default === "object"
-        ? (mod.default as Record<string, unknown>)
-        : mod
-    ) as Record<string, unknown>;
-
-    const makeWASocket =
-      typeof ns.default === "function"
-        ? (ns.default as BaileysModule["default"])
-        : typeof ns.makeWASocket === "function"
-          ? (ns.makeWASocket as unknown as BaileysModule["default"])
-          : (mod.default as BaileysModule["default"]);
-
-    if (typeof makeWASocket !== "function") {
-      this.logger.error(
-        `Baileys default export bukan function. Keys: ${Object.keys(ns).join(",")}`,
-      );
-      throw new Error("Baileys makeWASocket tidak ditemukan dari modul");
-    }
-
-    const pick = <T>(key: string): T =>
-      (ns[key] ?? (mod as Record<string, unknown>)[key]) as T;
-
-    this.baileysRuntime = {
-      makeWASocket,
-      Browsers: pick<BaileysModule["Browsers"]>("Browsers"),
-      DisconnectReason:
-        pick<BaileysModule["DisconnectReason"]>("DisconnectReason"),
-      fetchLatestBaileysVersion: pick<
-        BaileysModule["fetchLatestBaileysVersion"]
-      >("fetchLatestBaileysVersion"),
-      initAuthCreds: pick<BaileysModule["initAuthCreds"]>("initAuthCreds"),
-      proto: pick<BaileysModule["proto"]>("proto"),
-    };
-    return this.baileysRuntime;
-  }
-
-  /**
-   * Resolve WA protocol version dengan strategi (urutan):
-   *   1. Cache memory kalau masih < TTL (6 jam)
-   *   2. Network fetch via fetchLatestBaileysVersion(), capped 3 detik
-   *   3. Fallback hardcoded version (mostly compatible)
-   *
-   * Sebelumnya: panggil fetchLatestBaileysVersion() langsung, bisa hang
-   * 5-30 detik kalau jaringan ke server Baileys lambat → user nunggu QR lama.
-   */
-  private async resolveBaileysVersion(
-    baileys: BaileysRuntime,
-  ): Promise<number[]> {
-    const now = Date.now();
-    if (
-      this.cachedBaileysVersion &&
-      now - this.cachedBaileysVersion.cachedAt <
-        WhatsappReceiptService.BAILEYS_VERSION_TTL_MS
-    ) {
-      return this.cachedBaileysVersion.version;
-    }
-    try {
-      const result = await Promise.race([
-        baileys.fetchLatestBaileysVersion(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("fetch-version-timeout")),
-            WhatsappReceiptService.FETCH_VERSION_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const version = (result as { version: number[] }).version;
-      this.cachedBaileysVersion = { version, cachedAt: now };
-      return version;
-    } catch (err) {
-      this.logger.warn(
-        `[wa-receipt] fetchLatestBaileysVersion failed (${err instanceof Error ? err.message : String(err)}), pakai fallback ${WhatsappReceiptService.FALLBACK_BAILEYS_VERSION.join(".")}`,
-      );
-      // Cache fallback dengan TTL pendek (15 menit) supaya retry network call
-      // lebih cepat kalau jaringan sudah pulih.
-      this.cachedBaileysVersion = {
-        version: WhatsappReceiptService.FALLBACK_BAILEYS_VERSION,
-        cachedAt: now - WhatsappReceiptService.BAILEYS_VERSION_TTL_MS + 15 * 60 * 1000,
-      };
-      return WhatsappReceiptService.FALLBACK_BAILEYS_VERSION;
-    }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    for (const [companyId, sock] of this.sockets.entries()) {
-      try {
-        sock.end(new Error("App shutdown"));
-      } catch {
-        this.logger.warn(`Failed ending WA socket for company=${companyId}`);
-      }
-    }
-    this.sockets.clear();
-    this.activeSocketTokens.clear();
-    this.connectLocks.clear();
-  }
-
+  // ─── Session API ───────────────────────────────────────────────────
   async getSession(companyId: string): Promise<SessionView> {
-    const row = await this.ensureSession(companyId);
-    const sock = this.sockets.get(companyId);
-    const hasSocket = Boolean(sock);
-    waDebugLogSync({
-      event: "getSession",
-      companyId,
-      status: row.status,
-      hasQr: Boolean(row.qrCode),
-      qrLen: row.qrCode?.length ?? 0,
-      phoneNumber: row.phoneNumber,
-      lastError: row.lastError,
-      hasCreds: row.authCreds !== null,
-      hasSocket,
-    });
-
-    if (sock?.user?.id && row.status !== "CONNECTED") {
-      const phone = extractPhoneFromJid(sock.user.id);
-      const updated = await this.prisma.whatsappSession.update({
-        where: { id: row.id },
-        data: {
-          status: "CONNECTED",
-          qrCode: null,
-          phoneNumber: phone,
-          deviceName: sock.user.name ?? null,
-          lastConnectedAt: row.lastConnectedAt ?? new Date(),
-          lastError: null,
-        },
-      });
-      this.setStage(companyId, "CONNECTED");
-      this.emitSessionUpdate(companyId, {
-        status: "CONNECTED",
-        stage: "CONNECTED",
-        hasQr: false,
-        phoneNumber: phone,
-        deviceName: sock.user.name ?? null,
-      });
-      return this.toSessionView(updated);
+    const creds = await this.ensureTenantCredentials(companyId);
+    try {
+      const live = await this.wa.getSession(creds.apiKey);
+      // Best-effort cache supaya kalau wa-service down, kita masih bisa
+      // tampilkan snapshot terakhir di UI tanpa error.
+      await this.cacheSnapshot(companyId, live);
+      return this.toSessionView(live);
+    } catch (err) {
+      this.logger.warn(
+        `getSession company=${companyId} fallback ke DB snapshot: ${(err as Error).message}`,
+      );
+      return this.snapshotFromDb(companyId);
     }
-
-    // Ghost CONNECTING recovery — kalau status di DB CONNECTING (sisa dari
-    // attempt sebelumnya yang hang) tapi tidak ada socket di memory dan QR
-    // kosong, trigger connect background. Ini berlaku baik saat creds ada
-    // (resume session) maupun kosong (generate QR baru). Tanpa ini, UI bisa
-    // tersangkut di PreparingView selamanya dan tombol connect tidak muncul.
-    if (
-      row.status === "CONNECTING" &&
-      !hasSocket &&
-      !row.qrCode
-    ) {
-      // Fire-and-forget — tidak block response getSession.
-      this.connect(companyId, false).catch((err) => {
-        this.logger.warn(
-          `[wa] ghost-recovery reconnect failed company=${companyId}: ${
-            err instanceof Error ? err.message : "unknown"
-          }`,
-        );
-      });
-    }
-
-    return this.toSessionView(row);
   }
 
   async connect(
     companyId: string,
     forceReconnect = false,
   ): Promise<SessionView> {
-    const locked = this.connectLocks.get(companyId);
-    if (locked) {
-      waDebugLogSync({
-        event: "connect.joinExisting",
-        companyId,
-        forceReconnect,
-      });
-      return locked;
-    }
-
-    const task = this.connectInternal(companyId, forceReconnect).finally(() => {
-      if (this.connectLocks.get(companyId) === task) {
-        this.connectLocks.delete(companyId);
-      }
-    });
-    this.connectLocks.set(companyId, task);
-    return task;
-  }
-
-  private async connectInternal(
-    companyId: string,
-    forceReconnect = false,
-  ): Promise<SessionView> {
-    const existingSock = this.sockets.get(companyId);
-    const session0 = await this.ensureSession(companyId);
-    const isStaleConnecting =
-      session0.status === "CONNECTING" && !session0.qrCode;
-    waDebugLogSync({
-      event: "connect.enter",
-      companyId,
-      forceReconnect,
-      dbStatus: session0.status,
-      hasSocket: Boolean(existingSock),
-      hasCreds: session0.authCreds !== null,
-      isStaleConnecting,
-    });
-    // Short-circuit hanya kalau benar-benar connected; kalau status CONNECTING
-    // tanpa QR (mis. backend restart, socket lama mati silent), force re-create.
-    if (existingSock && !forceReconnect && session0.status === "CONNECTED") {
-      return this.toSessionView(session0);
-    }
-    if (existingSock || isStaleConnecting) {
-      if (existingSock) {
-        try {
-          existingSock.end(new Error("Reconnect requested"));
-        } catch {
-          /* noop */
-        }
-        this.sockets.delete(companyId);
-      }
-    }
-
-    const socketToken = Symbol(`wa:${companyId}:${Date.now()}`);
-    this.activeSocketTokens.set(companyId, socketToken);
-    const session = session0;
-    this.setStage(companyId, "PREPARING");
-    const baileys = await this.getBaileysRuntime();
-    const auth = await this.buildAuthState(
-      session.id,
-      session.authCreds as Record<string, unknown> | null,
-    );
-    const version = (await this.resolveBaileysVersion(baileys)) as [
-      number,
-      number,
-      number,
-    ];
-    waDebugLogSync({
-      event: "connect.makeSocket",
-      companyId,
-      baileysVersion: version.join("."),
-      hasCreds: session.authCreds !== null,
-    });
-    // Pakai `Browsers.ubuntu("Chrome")` — string identifier yang dikenal
-    // protocol WhatsApp.
-    // markOnlineOnConnect: TRUE — kalau false, server WA menganggap device
-    // offline & sendMessage hang menunggu ACK forever. Wajib true untuk
-    // outbound message yang reliable.
-    const sock = baileys.makeWASocket({
-      version,
-      auth,
-      markOnlineOnConnect: true,
-      syncFullHistory: false,
-      browser: baileys.Browsers.ubuntu("Chrome"),
-      connectTimeoutMs: 45_000,
-    });
-    this.sockets.set(companyId, sock);
-
-    await this.prisma.whatsappSession.update({
-      where: { id: session.id },
-      data: {
-        status: "CONNECTING",
-        qrCode: null,
-        lastError: null,
-      },
-    });
-
-    // Track inbound + ack events untuk diagnose sendMessage hang.
-    sock.ev.on("messages.upsert", (m) => {
-      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
-      waDebugLogSync({
-        event: "messages.upsert",
-        companyId,
-        type: m.type,
-        count: m.messages.length,
-        firstFrom: m.messages[0]?.key.remoteJid,
-        firstFromMe: m.messages[0]?.key.fromMe,
-        firstId: m.messages[0]?.key.id,
-      });
-      // Persist incoming messages (skip outbound — sudah di-log di sendText).
-      // type "notify" = realtime baru, "append" = catch-up. Persist keduanya
-      // tapi skip "fromMe" supaya tidak dobel-count outbound.
-      void this.persistInboundMessages(
-        session.id,
-        m.messages as unknown as Parameters<typeof this.persistInboundMessages>[1],
-        companyId,
-      ).catch((err) => {
-        waDebugLogSync({
-          event: "messages.upsert.persist.error",
-          companyId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    });
-    sock.ev.on("messages.update", (updates) => {
-      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
-      for (const u of updates) {
-        waDebugLogSync({
-          event: "messages.update",
-          companyId,
-          jid: u.key.remoteJid,
-          id: u.key.id,
-          status: u.update.status,
-        });
-      }
-    });
-
-    sock.ev.on("creds.update", async () => {
-      if (this.activeSocketTokens.get(companyId) !== socketToken) return;
-      // PENTING: parameter event di Baileys v7 hanya partial-delta — TIDAK
-      // berisi full creds. Ambil dari `auth.creds` (referensi yang Baileys
-      // mutate in-place) — itu always full state setelah update.
-      const fullCreds = auth.creds as Record<string, unknown>;
-      const noiseKey = fullCreds.noiseKey as
-        | { public?: unknown; private?: unknown }
-        | undefined;
-      waDebugLogSync({
-        event: "creds.update",
-        companyId,
-        source: "auth.creds (full)",
-        hasNoiseKey: Boolean(noiseKey),
-        noisePublicType: noiseKey?.public
-          ? typeof noiseKey.public === "object"
-            ? Buffer.isBuffer(noiseKey.public)
-              ? "Buffer"
-              : noiseKey.public instanceof Uint8Array
-                ? "Uint8Array"
-                : "object"
-            : typeof noiseKey.public
-          : "missing",
-        registrationId: fullCreds.registrationId,
-        platform: fullCreds.platform,
-        meHasId: Boolean((fullCreds.me as { id?: string } | undefined)?.id),
-      });
-      await this.prisma.whatsappSession.update({
-        where: { id: session.id },
-        data: { authCreds: this.toDbJson(auth.creds) },
-      });
-      const me = fullCreds.me as { id?: string; name?: string } | undefined;
-      const jid = me?.id;
-      if (jid) {
-        const phone = extractPhoneFromJid(jid);
-        const deviceName = me?.name ?? null;
-        const alreadyConnected = this.stages.get(companyId) === "CONNECTED";
-        const updated = await this.prisma.whatsappSession.updateMany({
-          where: { id: session.id, status: "CONNECTING" },
-          data: {
-            qrCode: null,
-            phoneNumber: phone,
-            deviceName,
-            lastError: null,
-          },
-        });
-        if (!alreadyConnected && updated.count > 0) {
-          this.setStage(companyId, "SCANNED");
-          this.emitSessionUpdate(companyId, {
-            status: "CONNECTING",
-            stage: "SCANNED",
-            hasQr: false,
-            phoneNumber: phone,
-            deviceName,
-          });
-        }
-      }
-    });
-
-    // Resolve segera setelah event `qr` pertama / connection open / close —
-    // pakai untuk wait pendek (max 3.5s) supaya response `connect()` sudah
-    // bawa QR di banyak kasus. Tapi tidak block kelamaan: kalau Baileys
-    // butuh waktu lebih, biarkan polling frontend ambil QR.
-    let resolveFirstQr: ((value: void) => void) | null = null;
-    const firstQrPromise = new Promise<void>((resolve) => {
-      resolveFirstQr = resolve;
-    });
-
-    sock.ev.on("connection.update", async (update) => {
-      if (this.activeSocketTokens.get(companyId) !== socketToken) {
-        waDebugLogSync({
-          event: "connection.update.staleIgnored",
-          companyId,
-          connection: update.connection ?? null,
-          hasQr: Boolean(update.qr),
-        });
-        return;
-      }
-      const {
-        connection,
-        lastDisconnect,
-        qr,
-        isNewLogin,
-        receivedPendingNotifications,
-      } = update;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const errAny = lastDisconnect?.error as any;
-      waDebugLogSync({
-        event: "connection.update",
-        companyId,
-        connection: connection ?? null,
-        qr: qr ? { len: qr.length, preview: qr.slice(0, 20) + "..." } : null,
-        isNewLogin: isNewLogin ?? null,
-        receivedPendingNotifications: receivedPendingNotifications ?? null,
-        disconnect: lastDisconnect
-          ? {
-              message: lastDisconnect.error?.message,
-              statusCode:
-                errAny?.output?.statusCode ?? errAny?.statusCode ?? null,
-              stack: lastDisconnect.error?.stack?.split("\n").slice(0, 3),
-            }
-          : null,
-      });
-      if (qr) {
-        await this.prisma.whatsappSession.update({
-          where: { id: session.id },
-          data: {
-            status: "CONNECTING",
-            qrCode: qr,
-            lastError: null,
-          },
-        });
-        this.setStage(companyId, "QR_READY");
-        this.emitSessionUpdate(companyId, { status: "CONNECTING", hasQr: true });
-        if (resolveFirstQr) {
-          resolveFirstQr();
-          resolveFirstQr = null;
-        }
-      }
-
-      // isNewLogin TRUE saat user baru saja scan QR — device verified, mulai
-      // handshake. Sebelum connection 'open', bisa beberapa detik.
-      if (isNewLogin) {
-        await this.prisma.whatsappSession.update({
-          where: { id: session.id },
-          data: {
-            status: "CONNECTING",
-            qrCode: null,
-            lastError: null,
-          },
-        });
-        this.setStage(companyId, "SCANNED");
-        this.emitSessionUpdate(companyId, {
-          status: "CONNECTING",
-          stage: "SCANNED",
-          hasQr: false,
-        });
-        if (resolveFirstQr) {
-          resolveFirstQr();
-          resolveFirstQr = null;
-        }
-      }
-
-      // receivedPendingNotifications: WA server kirim metadata sync setelah
-      // device verified. Kalau masih CONNECTING tapi sudah dapat ini, berarti
-      // tahap sync.
-      if (receivedPendingNotifications && connection !== "open") {
-        const currentStage = this.stages.get(companyId);
-        if (currentStage !== "CONNECTED") {
-          const updated = await this.prisma.whatsappSession.updateMany({
-            where: { id: session.id, status: { not: "CONNECTED" } },
-            data: {
-              status: "CONNECTING",
-              qrCode: null,
-              lastError: null,
-            },
-          });
-          if (updated.count > 0 && this.stages.get(companyId) !== "CONNECTED") {
-            this.setStage(companyId, "SYNCING");
-            this.emitSessionUpdate(companyId, {
-              status: "CONNECTING",
-              stage: "SYNCING",
-              hasQr: false,
-            });
-          }
-        }
-      }
-
-      // 'connecting' setelah QR muncul tapi sebelum 'open' tanpa isNewLogin —
-      // implicit user sudah scan & WA sedang sync. Jangan overwrite SCANNED
-      // (lebih informatif untuk user — biarkan visible sebentar).
-      if (connection === "connecting" && !qr && !isNewLogin) {
-        const currentStage = this.stages.get(companyId);
-        if (currentStage === "QR_READY") {
-          this.setStage(companyId, "SYNCING");
-        }
-      }
-
-      if (connection === "open") {
-        // Reset failure counter — koneksi sukses.
-        this.consecutiveFailures.delete(companyId);
-        const phone = extractPhoneFromJid(sock.user?.id);
-        waDebugLogSync({
-          event: "scan.success",
-          companyId,
-          phoneNumber: phone,
-          deviceName: sock.user?.name ?? null,
-          userJid: sock.user?.id,
-        });
-        await this.prisma.whatsappSession.update({
-          where: { id: session.id },
-          data: {
-            status: "CONNECTED",
-            qrCode: null,
-            phoneNumber: phone,
-            deviceName: sock.user?.name ?? null,
-            lastConnectedAt: new Date(),
-            lastError: null,
-          },
-        });
-        this.setStage(companyId, "CONNECTED");
-        this.emitSessionUpdate(companyId, {
-          status: "CONNECTED",
-          hasQr: false,
-          phoneNumber: phone,
-          deviceName: sock.user?.name ?? null,
-        });
-        if (resolveFirstQr) {
-          resolveFirstQr();
-          resolveFirstQr = null;
-        }
-      }
-
-      if (connection === "close") {
-        const statusCode = Number(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (lastDisconnect?.error as any)?.output?.statusCode ??
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (lastDisconnect?.error as any)?.statusCode ??
-            0,
-        );
-        const loggedOut = statusCode === baileys.DisconnectReason.loggedOut;
-        const badSession = statusCode === baileys.DisconnectReason.badSession;
-        const multideviceMismatch =
-          statusCode === baileys.DisconnectReason.multideviceMismatch;
-        // "Connection Failure" generic error code 0 — bisa karena creds stale
-        // (device di-unlink dari WA app) atau transient network. Track via
-        // counter consecutive failure.
-        const isTerminal = loggedOut || badSession || multideviceMismatch;
-        const prevFailures = this.consecutiveFailures.get(companyId) ?? 0;
-        const newFailures = isTerminal ? prevFailures : prevFailures + 1;
-        this.consecutiveFailures.set(companyId, newFailures);
-        const exceededFailures =
-          newFailures >= WhatsappReceiptService.MAX_FAILURES_BEFORE_CLEAR;
-        // Bersihkan creds + STOP auto-reconnect kalau terminal atau exceeded
-        // — supaya user scan QR ulang, tidak stuck di loop.
-        const shouldClearCreds = isTerminal || exceededFailures;
-        const reason = lastDisconnect?.error?.message || "Disconnected";
-        const friendlyReason = shouldClearCreds
-          ? loggedOut
-            ? "Sesi WhatsApp di-logout dari device. Scan QR ulang."
-            : badSession
-              ? "Sesi rusak. Scan QR ulang."
-              : multideviceMismatch
-                ? "Device tidak cocok. Scan QR ulang."
-                : `Koneksi gagal ${newFailures}x berturut. Sesi mungkin expired — scan QR ulang.`
-          : reason;
-        this.setStage(companyId, shouldClearCreds ? "IDLE" : "SYNCING");
-
-        waDebugLogSync({
-          event: "connection.close",
-          companyId,
-          statusCode,
-          loggedOut,
-          badSession,
-          multideviceMismatch,
-          consecutiveFailures: newFailures,
-          shouldClearCreds,
-          reason,
-          willAutoReconnect: !shouldClearCreds,
-        });
-
-        await this.prisma.whatsappSession.update({
-          where: { id: session.id },
-          data: shouldClearCreds
-            ? {
-                status: "DISCONNECTED",
-                qrCode: null,
-                lastDisconnectedAt: new Date(),
-                lastError: friendlyReason,
-                authCreds: Prisma.JsonNull,
-              }
-            : {
-                status: "CONNECTING",
-                qrCode: null,
-                lastError: null,
-              },
-        });
-        if (shouldClearCreds) {
-          this.consecutiveFailures.delete(companyId);
-        }
-        this.emitSessionUpdate(companyId, {
-          status: shouldClearCreds ? "DISCONNECTED" : "CONNECTING",
-          stage: shouldClearCreds ? "IDLE" : "SYNCING",
-          hasQr: false,
-          reason: shouldClearCreds ? friendlyReason : reason,
-        });
-        this.sockets.delete(companyId);
-        if (this.activeSocketTokens.get(companyId) === socketToken) {
-          this.activeSocketTokens.delete(companyId);
-        }
-        if (resolveFirstQr) {
-          resolveFirstQr();
-          resolveFirstQr = null;
-        }
-
-        if (!shouldClearCreds) {
-          // Backoff exponential: 2s, 4s, 8s.
-          const backoffMs = Math.min(8_000, 2_000 * Math.pow(2, newFailures - 1));
-          setTimeout(() => {
-            this.connect(companyId, false).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : "Unknown error";
-              this.logger.warn(
-                `Auto reconnect failed company=${companyId}: ${msg}`,
-              );
-            });
-          }, backoffMs);
-        }
-      }
-    });
-
-    // Wait pendek (max 3.5 detik) agar response sudah bawa QR di banyak
-    // kasus — tapi tidak block kelamaan: frontend juga polling 1.5s untuk
-    // pickup QR/status berikutnya secara cepat.
-    const t0 = Date.now();
-    await Promise.race([
-      firstQrPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 3_500)),
-    ]);
-    const waitMs = Date.now() - t0;
-
-    const latest = await this.ensureSession(companyId);
-    waDebugLogSync({
-      event: "connect.return",
-      companyId,
-      waitMs,
-      status: latest.status,
-      hasQr: Boolean(latest.qrCode),
-      qrLen: latest.qrCode?.length ?? 0,
-      lastError: latest.lastError,
-    });
-    return this.toSessionView(latest);
+    const creds = await this.ensureTenantCredentials(companyId);
+    const live = await this.wa.connectSession(creds.apiKey, forceReconnect);
+    await this.cacheSnapshot(companyId, live);
+    return this.toSessionView(live);
   }
 
   async disconnect(companyId: string): Promise<SessionView> {
-    const session = await this.ensureSession(companyId);
-    const sock = this.sockets.get(companyId);
-    this.activeSocketTokens.delete(companyId);
-    if (sock) {
-      try {
-        sock.end(new Error("Disconnected by user"));
-      } catch {
-        /* noop */
-      }
-      this.sockets.delete(companyId);
-    }
-    await this.prisma.whatsappSession.update({
-      where: { id: session.id },
-      data: {
-        status: "DISCONNECTED",
-        qrCode: null,
-        lastDisconnectedAt: new Date(),
-      },
-    });
-    this.emitSessionUpdate(companyId, { status: "DISCONNECTED", hasQr: false });
-    const latest = await this.ensureSession(companyId);
-    return this.toSessionView(latest);
+    const creds = await this.ensureTenantCredentials(companyId);
+    const live = await this.wa.disconnectSession(creds.apiKey);
+    await this.cacheSnapshot(companyId, live);
+    return this.toSessionView(live);
   }
 
   async logout(companyId: string): Promise<SessionView> {
-    const session = await this.ensureSession(companyId);
-    const sock = this.sockets.get(companyId);
-    this.activeSocketTokens.delete(companyId);
-    if (sock) {
-      try {
-        sock.logout();
-      } catch {
-        /* noop */
-      }
-      try {
-        sock.end(new Error("Logged out"));
-      } catch {
-        /* noop */
-      }
-      this.sockets.delete(companyId);
-    }
-    await this.prisma.$transaction([
-      this.prisma.whatsappSessionKey.deleteMany({
-        where: { sessionId: session.id },
-      }),
-      this.prisma.whatsappSession.update({
-        where: { id: session.id },
-        data: {
-          status: "DISCONNECTED",
-          qrCode: null,
-          authCreds: Prisma.JsonNull,
-          phoneNumber: null,
-          deviceName: null,
-          lastDisconnectedAt: new Date(),
-          lastError: null,
-        },
-      }),
-    ]);
-    this.emitSessionUpdate(companyId, { status: "DISCONNECTED", hasQr: false });
-    const latest = await this.ensureSession(companyId);
-    return this.toSessionView(latest);
+    const creds = await this.ensureTenantCredentials(companyId);
+    const live = await this.wa.logoutSession(creds.apiKey);
+    await this.cacheSnapshot(companyId, live);
+    return this.toSessionView(live);
   }
 
-  async listMessages(
-    companyId: string,
-    opts: { limit?: number; cursor?: string; phone?: string; direction?: "INBOUND" | "OUTBOUND" } = {},
-  ) {
-    const session = await this.ensureSession(companyId);
-    const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
-
-    const where: Record<string, unknown> = { sessionId: session.id };
-    if (opts.direction) where.direction = opts.direction;
-    if (opts.phone) {
-      const cleaned = opts.phone.replace(/[^\d]/g, "");
-      where.OR = [
-        { fromNumber: { contains: cleaned } },
-        { toNumber: { contains: cleaned } },
-      ];
-    }
-
-    const items = await this.prisma.whatsappMessageLog.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: limit + 1,
-      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    });
-    const hasMore = items.length > limit;
-    const slice = hasMore ? items.slice(0, limit) : items;
-
-    // ── Enrich: kumpulkan distinct phone (peer) + invoice numbers dari content,
-    // lalu lookup users / customers / transactions sekali jalan.
-    const peers = new Set<string>();
-    for (const it of slice) {
-      const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
-      if (peer) peers.add(peer);
-    }
-    const phoneVariants = (raw: string): string[] => {
-      const digits = raw.replace(/[^\d]/g, "");
-      const variants = new Set<string>();
-      variants.add(raw);
-      variants.add(digits);
-      if (digits.startsWith("62")) {
-        variants.add("0" + digits.slice(2));
-        variants.add("+" + digits);
-      } else if (digits.startsWith("0")) {
-        variants.add("62" + digits.slice(1));
-        variants.add("+62" + digits.slice(1));
-      }
-      return Array.from(variants);
-    };
-    const allVariants = new Set<string>();
-    peers.forEach((p) => phoneVariants(p).forEach((v) => allVariants.add(v)));
-    const variantList = Array.from(allVariants);
-
-    const [users, customers, sessionMeta] = await Promise.all([
-      variantList.length === 0
-        ? Promise.resolve([])
-        : this.prisma.user.findMany({
-            where: { phone: { in: variantList } },
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-              phone: true,
-              company: { select: { id: true, name: true } },
-            },
-          }),
-      variantList.length === 0
-        ? Promise.resolve([])
-        : this.prisma.customer.findMany({
-            where: { phone: { in: variantList } },
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-              email: true,
-              memberLevel: true,
-              company: { select: { id: true, name: true } },
-            },
-          }),
-      this.prisma.whatsappSession.findUnique({
-        where: { id: session.id },
-        select: {
-          companyId: true,
-          phoneNumber: true,
-          deviceName: true,
-          status: true,
-          company: { select: { name: true } },
-        },
-      }),
-    ]);
-
-    // Index by normalized digits — supaya "08123…" cocok dengan "62812…"
-    const normalize = (raw: string | null | undefined): string => {
-      if (!raw) return "";
-      const d = raw.replace(/[^\d]/g, "");
-      if (d.startsWith("0")) return "62" + d.slice(1);
-      return d;
-    };
-    const userByPhone = new Map<string, (typeof users)[number]>();
-    for (const u of users) {
-      const k = normalize(u.phone);
-      if (k) userByPhone.set(k, u);
-    }
-    const customerByPhone = new Map<string, (typeof customers)[number]>();
-    for (const c of customers) {
-      const k = normalize(c.phone);
-      if (k) customerByPhone.set(k, c);
-    }
-
-    return {
-      session: sessionMeta
-        ? {
-            companyId: sessionMeta.companyId,
-            companyName: sessionMeta.company?.name ?? null,
-            phoneNumber: sessionMeta.phoneNumber,
-            deviceName: sessionMeta.deviceName,
-            status: sessionMeta.status,
-          }
-        : null,
-      items: slice.map((it) => {
-        const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
-        const peerNorm = normalize(peer);
-        const matchedUser = peerNorm ? userByPhone.get(peerNorm) ?? null : null;
-        const matchedCustomer = peerNorm ? customerByPhone.get(peerNorm) ?? null : null;
-
-        return {
-          id: it.id,
-          direction: it.direction,
-          toNumber: it.toNumber,
-          fromNumber: it.fromNumber,
-          peer,
-          messageType: it.messageType,
-          content: it.content,
-          status: it.status,
-          providerMessageId: it.providerMessageId,
-          errorMessage: it.errorMessage,
-          createdAt: it.createdAt.toISOString(),
-          user: matchedUser
-            ? {
-                id: matchedUser.id,
-                name: matchedUser.name,
-                email: matchedUser.email,
-                role: matchedUser.role,
-                companyId: matchedUser.company?.id ?? null,
-                companyName: matchedUser.company?.name ?? null,
-              }
-            : null,
-          customer: matchedCustomer
-            ? {
-                id: matchedCustomer.id,
-                name: matchedCustomer.name,
-                email: matchedCustomer.email,
-                memberLevel: matchedCustomer.memberLevel,
-                companyId: matchedCustomer.company?.id ?? null,
-                companyName: matchedCustomer.company?.name ?? null,
-              }
-            : null,
-        };
-      }),
-      nextCursor: hasMore ? slice[slice.length - 1]?.id ?? null : null,
-    };
-  }
-
+  // ─── Outbound messages ─────────────────────────────────────────────
   async sendText(
     companyId: string,
     phone: string,
     message: string,
   ): Promise<{ success: true; messageId?: string }> {
-    let session = await this.ensureSession(companyId);
-    let sock = this.sockets.get(companyId);
-    waDebugLogSync({
-      event: "sendText.enter",
-      companyId,
-      hasSocket: Boolean(sock),
-      sessionStatus: session.status,
-      phoneRaw: phone,
-      messageLen: message.length,
-      socketUserJid: sock?.user?.id ?? null,
-      wsState: sock
-        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ((sock as any).ws?.readyState ?? null)
-        : null,
-    });
-
-    // Recover transparent kalau socket hilang dari memori (mis. setelah
-    // backend restart) tapi creds masih tersimpan di DB. Reconnect dulu,
-    // baru kirim — user tidak perlu klik "Hubungkan" manual.
-    if (!sock && session.authCreds !== null) {
-      waDebugLogSync({
-        event: "sendText.autoReconnect",
-        companyId,
-        reason: "socket missing, creds available",
-      });
-      try {
-        await this.connect(companyId, false);
-      } catch (err) {
-        waDebugLogSync({
-          event: "sendText.autoReconnect.error",
-          companyId,
-          msg: err instanceof Error ? err.message : "unknown",
-        });
-      }
-      // Tunggu sampai 12 detik untuk socket open (poll status setiap 500ms).
-      const deadline = Date.now() + 12_000;
-      while (Date.now() < deadline) {
-        await new Promise<void>((r) => setTimeout(r, 500));
-        sock = this.sockets.get(companyId);
-        session = await this.ensureSession(companyId);
-        if (sock && session.status === "CONNECTED") break;
-      }
-    }
-
-    if (!sock) {
-      throw new NotFoundException(
-        "Koneksi WhatsApp belum aktif. Silakan connect terlebih dahulu.",
-      );
-    }
-    if (session.status !== "CONNECTED") {
-      throw new BadRequestException(
-        `Sesi belum siap (status: ${session.status}). Tunggu hingga CONNECTED.`,
-      );
-    }
-
+    const creds = await this.ensureTenantCredentials(companyId);
     const normalizedPhone = normalizePhone(phone);
-    const jid = `${normalizedPhone}@s.whatsapp.net`;
-
-    // Reject self-send — WhatsApp tidak deliver pesan ke device yang sama
-    // dengan pengirim, jadi Baileys hang menunggu ACK forever.
-    const ownPhone = extractPhoneFromJid(sock.user?.id);
-    if (ownPhone && ownPhone === normalizedPhone) {
-      waDebugLogSync({
-        event: "sendText.rejected",
-        companyId,
-        reason: "self-send",
-        ownPhone,
-        targetPhone: normalizedPhone,
-      });
-      throw new BadRequestException(
-        "Tidak bisa kirim pesan ke nomor sendiri. Gunakan nomor lain untuk tes.",
-      );
-    }
-
-    // Verifikasi nomor target benar-benar terdaftar di WhatsApp.
+    const session = await this.ensureLocalSession(companyId);
     try {
-      const check = await Promise.race([
-        sock.onWhatsApp(normalizedPhone),
-        new Promise<undefined>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Timeout cek nomor WhatsApp")),
-            10_000,
-          ),
-        ),
-      ]);
-      const isOnWa = Array.isArray(check) && check[0]?.exists === true;
-      waDebugLogSync({
-        event: "sendText.onWhatsApp",
-        companyId,
+      const result = await this.wa.sendText(
+        creds.apiKey,
         normalizedPhone,
-        result: check,
-        isOnWa,
+        message,
+      );
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: normalizedPhone,
+          messageType: "text",
+          content: message,
+          status: result.status || "SENT",
+          providerMessageId: result.providerMessageId,
+        },
       });
-      if (!isOnWa) {
-        throw new BadRequestException(
-          `Nomor ${normalizedPhone} tidak terdaftar di WhatsApp.`,
-        );
-      }
+      return { success: true, messageId: result.messageId };
     } catch (err) {
-      if (err instanceof BadRequestException) throw err;
-      const msg = err instanceof Error ? err.message : "onWhatsApp error";
-      waDebugLogSync({
-        event: "sendText.onWhatsApp.error",
-        companyId,
-        msg,
+      const msg = (err as Error).message;
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: normalizedPhone,
+          messageType: "text",
+          content: message,
+          status: "FAILED",
+          errorMessage: msg.slice(0, 500),
+        },
       });
-      // Lanjutkan walaupun cek nomor gagal — beri kesempatan sendMessage
-      // tetap dicoba (timeout 25 detik akan tangkap kalau tidak deliver).
-    }
-
-    // Kalau scan baru < 8 detik, beri waktu Baileys upload pre-keys ke
-    // server WA — sendMessage sebelum itu bisa hang menunggu key bundle.
-    if (session.lastConnectedAt) {
-      const sinceConnect = Date.now() - session.lastConnectedAt.getTime();
-      if (sinceConnect < 8_000) {
-        const wait = 8_000 - sinceConnect;
-        waDebugLogSync({
-          event: "sendText.warmup-wait",
-          companyId,
-          sinceConnectMs: sinceConnect,
-          waitMs: wait,
-        });
-        await new Promise<void>((r) => setTimeout(r, wait));
+      // Surface error pakai exception sama seperti perilaku lama supaya
+      // controller / caller bisa convert ke HTTP error yang sesuai.
+      if (/belum aktif|tidak ditemukan|404/i.test(msg)) {
+        throw new NotFoundException(msg);
       }
+      throw new BadRequestException(msg);
     }
+  }
 
-    return this.enqueueOutbound(
-      companyId,
-      normalizedPhone,
-      message,
-      "sendText",
-      async () => {
-        waDebugLogSync({
-          event: "sendText.dispatch",
-          companyId,
-          jid,
-          normalizedPhone,
-        });
-
-        const t0 = Date.now();
-        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () =>
-              reject(
-                new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
-              ),
-            30_000,
-          );
-        });
-        const sendPromise = sock.sendMessage(jid, { text: message });
-
-        try {
-          const res = await Promise.race([sendPromise, timeoutPromise]);
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          const messageId = res?.key?.id || undefined;
-          waDebugLogSync({
-            event: "sendText.success",
-            companyId,
-            elapsedMs: Date.now() - t0,
-            messageId,
-            toJid: res?.key?.remoteJid ?? null,
-          });
-          await this.prisma.whatsappMessageLog.create({
-            data: {
-              sessionId: session.id,
-              direction: "OUTBOUND",
-              toNumber: normalizedPhone,
-              messageType: "text",
-              content: message,
-              status: "SENT",
-              providerMessageId: messageId ?? null,
-            },
-          });
-          return { success: true, messageId };
-        } catch (err) {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
-          waDebugLogSync({
-            event: "sendText.error",
-            companyId,
-            elapsedMs: Date.now() - t0,
-            errorMsg,
-            stack: err instanceof Error ? err.stack?.split("\n").slice(0, 5) : null,
-          });
-          await this.prisma.whatsappMessageLog.create({
-            data: {
-              sessionId: session.id,
-              direction: "OUTBOUND",
-              toNumber: normalizedPhone,
-              messageType: "text",
-              content: message,
-              status: "FAILED",
-              errorMessage: errorMsg,
-            },
-          });
-          throw err;
-        }
-      },
-    );
+  // Untuk kompatibilitas dengan chatbot yang kirim balasan pakai remoteJid
+  // (mendukung @lid). Kita extract bagian sebelum '@' lalu treat sebagai
+  // phone. Catatan: untuk @lid (LID anonymous, contact belum tersimpan di
+  // pengirim), delivery via wa-service masih best-effort sama seperti dulu.
+  async sendTextToJid(
+    companyId: string,
+    jidOrPhone: string,
+    message: string,
+  ): Promise<{ success: true; messageId?: string }> {
+    const cleaned = jidOrPhone.includes("@")
+      ? jidOrPhone.split("@")[0]?.split(":")[0] ?? jidOrPhone
+      : jidOrPhone;
+    return this.sendText(companyId, cleaned, message);
   }
 
   async sendReceipt(
@@ -1666,141 +215,7 @@ export class WhatsappReceiptService
     return this.sendText(companyId, phone, text);
   }
 
-  /**
-   * Kirim text ke JID lengkap apa adanya — dipakai oleh chatbot untuk balas
-   * inbound. Beda dengan `sendText` yang normalize phone ke
-   * `XXX@s.whatsapp.net`, method ini accept format apapun (mis. `@lid`,
-   * `@s.whatsapp.net`, `@g.us`) supaya kompatibel dengan kontak yang belum
-   * tersimpan (WA pakai LID anonymous untuk chat baru).
-   *
-   * Kalau input bukan JID (tidak ada `@`), fallback ke flow `sendText`
-   * normal supaya call site existing tidak rusak.
-   */
-  async sendTextToJid(
-    companyId: string,
-    jidOrPhone: string,
-    message: string,
-  ): Promise<{ success: true; messageId?: string }> {
-    if (!jidOrPhone.includes("@")) {
-      return this.sendText(companyId, jidOrPhone, message);
-    }
-
-    let session = await this.ensureSession(companyId);
-    let sock = this.sockets.get(companyId);
-
-    // Auto-reconnect kalau socket hilang dari memori (sama seperti sendText).
-    if (!sock && session.authCreds !== null) {
-      try {
-        await this.connect(companyId, false);
-      } catch (err) {
-        waDebugLogSync({
-          event: "sendTextToJid.autoReconnect.error",
-          companyId,
-          msg: err instanceof Error ? err.message : "unknown",
-        });
-      }
-      const deadline = Date.now() + 12_000;
-      while (Date.now() < deadline) {
-        await new Promise<void>((r) => setTimeout(r, 500));
-        sock = this.sockets.get(companyId);
-        session = await this.ensureSession(companyId);
-        if (sock && session.status === "CONNECTED") break;
-      }
-    }
-
-    if (!sock) {
-      throw new NotFoundException(
-        "Koneksi WhatsApp belum aktif. Silakan connect terlebih dahulu.",
-      );
-    }
-    if (session.status !== "CONNECTED") {
-      throw new BadRequestException(
-        `Sesi belum siap (status: ${session.status}). Tunggu hingga CONNECTED.`,
-      );
-    }
-
-    // Tolak group + status broadcast — bot tidak boleh nimbrung.
-    if (jidOrPhone.endsWith("@g.us") || jidOrPhone === "status@broadcast") {
-      throw new BadRequestException(
-        "Tidak bisa kirim ke group / status broadcast.",
-      );
-    }
-
-    return this.enqueueOutbound(
-      companyId,
-      jidOrPhone,
-      message,
-      "sendTextToJid",
-      async () => {
-        waDebugLogSync({
-          event: "sendTextToJid.dispatch",
-          companyId,
-          jid: jidOrPhone,
-          messageLen: message.length,
-        });
-
-        const t0 = Date.now();
-        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () =>
-              reject(
-                new Error("Timeout: WhatsApp tidak merespons dalam 30 detik."),
-              ),
-            30_000,
-          );
-        });
-        const sendPromise = sock.sendMessage(jidOrPhone, { text: message });
-
-        try {
-          const res = await Promise.race([sendPromise, timeoutPromise]);
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          const messageId = res?.key?.id || undefined;
-          waDebugLogSync({
-            event: "sendTextToJid.success",
-            companyId,
-            elapsedMs: Date.now() - t0,
-            messageId,
-            toJid: res?.key?.remoteJid ?? null,
-          });
-          await this.prisma.whatsappMessageLog.create({
-            data: {
-              sessionId: session.id,
-              direction: "OUTBOUND",
-              toNumber: jidOrPhone.split("@")[0] ?? null,
-              messageType: "text",
-              content: message,
-              status: "SENT",
-              providerMessageId: messageId ?? null,
-            },
-          });
-          return { success: true, messageId };
-        } catch (err) {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          const errorMsg = err instanceof Error ? err.message : "Gagal mengirim";
-          waDebugLogSync({
-            event: "sendTextToJid.error",
-            companyId,
-            elapsedMs: Date.now() - t0,
-            errorMsg,
-          });
-          await this.prisma.whatsappMessageLog.create({
-            data: {
-              sessionId: session.id,
-              direction: "OUTBOUND",
-              toNumber: jidOrPhone.split("@")[0] ?? null,
-              messageType: "text",
-              content: message,
-              status: "FAILED",
-              errorMessage: errorMsg,
-            },
-          });
-          throw err;
-        }
-      },
-    );
-  }
-
+  // ─── Receipt text + wa.me link (no Baileys touch) ──────────────────
   async generateReceiptText(
     companyId: string,
     transactionId: string,
@@ -1894,11 +309,17 @@ export class WhatsappReceiptService
     });
   }
 
-  /**
-   * Ambil receipt config dari Settings (key prefix `receipt.*`). Branch-
-   * specific dulu, fallback ke null branch (global), lalu default. Mirror
-   * logic di frontend `getReceiptConfig`.
-   */
+  async generateLink(
+    companyId: string,
+    transactionId: string,
+    phone: string,
+  ): Promise<string> {
+    const text = await this.generateReceiptText(companyId, transactionId);
+    const normalizedPhone = normalizePhone(phone);
+    const encodedText = encodeURIComponent(text);
+    return `https://wa.me/${normalizedPhone}?text=${encodedText}`;
+  }
+
   private async getReceiptConfig(
     branchId: string | null,
   ): Promise<ReceiptConfigShape> {
@@ -1909,7 +330,6 @@ export class WhatsappReceiptService
       },
       select: { key: true, value: true, branchId: true },
     });
-    // Branch-specific override null branch.
     const map = new Map<string, string>();
     for (const r of rows) {
       if (r.branchId === null && map.has(r.key)) continue;
@@ -1938,176 +358,541 @@ export class WhatsappReceiptService
     };
   }
 
-  async generateLink(
+  // ─── Message log query (lokal — wa-service tidak simpan history) ──
+  async listMessages(
     companyId: string,
-    transactionId: string,
-    phone: string,
-  ): Promise<string> {
-    const text = await this.generateReceiptText(companyId, transactionId);
-    const normalizedPhone = normalizePhone(phone);
-    const encodedText = encodeURIComponent(text);
-    return `https://wa.me/${normalizedPhone}?text=${encodedText}`;
-  }
+    opts: {
+      limit?: number;
+      cursor?: string;
+      phone?: string;
+      direction?: "INBOUND" | "OUTBOUND";
+    } = {},
+  ) {
+    const session = await this.ensureLocalSession(companyId);
+    const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
 
-  private async ensureSession(companyId: string) {
-    const found = await this.prisma.whatsappSession.findUnique({
-      where: { companyId },
-    });
-    if (found) return found;
-    return this.prisma.whatsappSession.create({
-      data: { companyId, status: "DISCONNECTED" },
-    });
-  }
+    const where: Record<string, unknown> = { sessionId: session.id };
+    if (opts.direction) where.direction = opts.direction;
+    if (opts.phone) {
+      const cleaned = opts.phone.replace(/[^\d]/g, "");
+      where.OR = [
+        { fromNumber: { contains: cleaned } },
+        { toNumber: { contains: cleaned } },
+      ];
+    }
 
-  private toSessionView(
-    row: Awaited<ReturnType<WhatsappReceiptService["ensureSession"]>>,
-  ): SessionView {
-    const status = (row.status as SessionStatus) ?? "DISCONNECTED";
-    // Combine: memory tracker (real-time, lebih advance kalau ada) + derive
-    // dari DB row (selalu konsisten, tapi terbatas info). Pilih yang stage-nya
-    // paling tinggi supaya stepper tidak mundur kalau memory hilang/stale.
-    const memStage = this.stages.get(row.companyId) ?? null;
-    const derivedStage: SessionStage = (() => {
-      if (status === "CONNECTED") return "CONNECTED";
-      if (status === "CONNECTING" && row.qrCode) return "QR_READY";
-      if (status === "CONNECTING") return "PREPARING";
-      return "IDLE";
-    })();
-    const stageOrder: Record<SessionStage, number> = {
-      IDLE: 0,
-      PREPARING: 1,
-      QR_READY: 2,
-      SCANNED: 3,
-      SYNCING: 4,
-      CONNECTED: 5,
-      FAILED: -1,
+    const items = await this.prisma.whatsappMessageLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    });
+    const hasMore = items.length > limit;
+    const slice = hasMore ? items.slice(0, limit) : items;
+
+    // Enrichment: cocokkan peer phone ke User / Customer + ambil session meta.
+    const peers = new Set<string>();
+    for (const it of slice) {
+      const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
+      if (peer) peers.add(peer);
+    }
+    const phoneVariants = (raw: string): string[] => {
+      const digits = raw.replace(/[^\d]/g, "");
+      const variants = new Set<string>();
+      variants.add(raw);
+      variants.add(digits);
+      if (digits.startsWith("62")) {
+        variants.add("0" + digits.slice(2));
+        variants.add("+" + digits);
+      } else if (digits.startsWith("0")) {
+        variants.add("62" + digits.slice(1));
+        variants.add("+62" + digits.slice(1));
+      }
+      return Array.from(variants);
     };
-    let stage: SessionStage;
-    if (memStage && memStage !== "FAILED") {
-      // Memory ada → ambil yang paling advance antara mem & derived.
-      stage =
-        stageOrder[memStage] >= stageOrder[derivedStage]
-          ? memStage
-          : derivedStage;
-    } else if (memStage === "FAILED") {
-      // Kalau gagal, prefer derived kalau status bukan DISCONNECTED.
-      stage = status === "DISCONNECTED" ? "FAILED" : derivedStage;
-    } else {
-      stage = derivedStage;
+    const allVariants = new Set<string>();
+    peers.forEach((p) => phoneVariants(p).forEach((v) => allVariants.add(v)));
+    const variantList = Array.from(allVariants);
+
+    const [users, customers, sessionMeta] = await Promise.all([
+      variantList.length === 0
+        ? Promise.resolve([])
+        : this.prisma.user.findMany({
+            where: { phone: { in: variantList } },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              phone: true,
+              company: { select: { id: true, name: true } },
+            },
+          }),
+      variantList.length === 0
+        ? Promise.resolve([])
+        : this.prisma.customer.findMany({
+            where: { phone: { in: variantList } },
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              email: true,
+              memberLevel: true,
+              company: { select: { id: true, name: true } },
+            },
+          }),
+      this.prisma.whatsappSession.findUnique({
+        where: { id: session.id },
+        select: {
+          companyId: true,
+          phoneNumber: true,
+          deviceName: true,
+          status: true,
+          company: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const normalize = (raw: string | null | undefined): string => {
+      if (!raw) return "";
+      const d = raw.replace(/[^\d]/g, "");
+      if (d.startsWith("0")) return "62" + d.slice(1);
+      return d;
+    };
+    const userByPhone = new Map<string, (typeof users)[number]>();
+    for (const u of users) {
+      const k = normalize(u.phone);
+      if (k) userByPhone.set(k, u);
+    }
+    const customerByPhone = new Map<string, (typeof customers)[number]>();
+    for (const c of customers) {
+      const k = normalize(c.phone);
+      if (k) customerByPhone.set(k, c);
+    }
+
+    return {
+      session: sessionMeta
+        ? {
+            companyId: sessionMeta.companyId,
+            companyName: sessionMeta.company?.name ?? null,
+            phoneNumber: sessionMeta.phoneNumber,
+            deviceName: sessionMeta.deviceName,
+            status: sessionMeta.status,
+          }
+        : null,
+      items: slice.map((it) => {
+        const peer = it.direction === "OUTBOUND" ? it.toNumber : it.fromNumber;
+        const peerNorm = normalize(peer);
+        const matchedUser = peerNorm ? userByPhone.get(peerNorm) ?? null : null;
+        const matchedCustomer = peerNorm
+          ? customerByPhone.get(peerNorm) ?? null
+          : null;
+
+        return {
+          id: it.id,
+          direction: it.direction,
+          toNumber: it.toNumber,
+          fromNumber: it.fromNumber,
+          peer,
+          messageType: it.messageType,
+          content: it.content,
+          status: it.status,
+          providerMessageId: it.providerMessageId,
+          errorMessage: it.errorMessage,
+          createdAt: it.createdAt.toISOString(),
+          user: matchedUser
+            ? {
+                id: matchedUser.id,
+                name: matchedUser.name,
+                email: matchedUser.email,
+                role: matchedUser.role,
+                companyId: matchedUser.company?.id ?? null,
+                companyName: matchedUser.company?.name ?? null,
+              }
+            : null,
+          customer: matchedCustomer
+            ? {
+                id: matchedCustomer.id,
+                name: matchedCustomer.name,
+                email: matchedCustomer.email,
+                memberLevel: matchedCustomer.memberLevel,
+                companyId: matchedCustomer.company?.id ?? null,
+                companyName: matchedCustomer.company?.name ?? null,
+              }
+            : null,
+        };
+      }),
+      nextCursor: hasMore ? slice[slice.length - 1]?.id ?? null : null,
+    };
+  }
+
+  // ═══ Webhook handlers (dipanggil dari WhatsappWebhookController) ══════
+
+  async handleInboundWebhook(
+    tenantId: string,
+    data: WaServiceInboundEvent,
+  ): Promise<void> {
+    const session = await this.prisma.whatsappSession.findUnique({
+      where: { waServiceTenantId: tenantId },
+      select: { id: true, companyId: true },
+    });
+    if (!session) {
+      this.logger.warn(
+        `INBOUND_MESSAGE diterima untuk tenant tidak dikenal: ${tenantId}`,
+      );
+      return;
+    }
+    if (data.fromMe) return;
+
+    // Persist log inbound dulu — handler chatbot mungkin query history.
+    await this.prisma.whatsappMessageLog.create({
+      data: {
+        sessionId: session.id,
+        direction: "INBOUND",
+        fromNumber: data.fromNumber,
+        messageType: "text",
+        content: data.content,
+        status: "RECEIVED",
+        providerMessageId: data.providerMessageId,
+      },
+    });
+
+    const handlerPayload = {
+      companyId: session.companyId,
+      fromNumber: data.fromNumber ?? null,
+      remoteJid: data.remoteJid,
+      content: data.content,
+      fromMe: data.fromMe ?? false,
+      isGroup: data.isGroup ?? false,
+    };
+
+    for (const h of this.inboundHandlers) {
+      try {
+        await h(handlerPayload);
+      } catch (err) {
+        this.logger.error(
+          `Inbound handler error: ${(err as Error).message}`,
+          (err as Error).stack,
+        );
+      }
+    }
+  }
+
+  async handleSessionWebhook(
+    tenantId: string,
+    data: WaServiceSession,
+  ): Promise<void> {
+    const session = await this.prisma.whatsappSession.findUnique({
+      where: { waServiceTenantId: tenantId },
+      select: { id: true, companyId: true },
+    });
+    if (!session) {
+      this.logger.warn(
+        `SESSION_UPDATED untuk tenant tidak dikenal: ${tenantId}`,
+      );
+      return;
+    }
+    await this.cacheSnapshot(session.companyId, data);
+    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, {
+      companyId: session.companyId,
+      status: data.status,
+      stage: data.stage,
+      hasQr: Boolean(data.qrCode),
+      phoneNumber: data.phoneNumber ?? null,
+      deviceName: data.deviceName ?? null,
+      reason: data.lastError ?? null,
+    });
+  }
+
+  // ═══ Setup flow (manual provisioning) ═════════════════════════════════
+  //
+  // Workflow:
+  //   1. Admin buka wa-service UI → create tenant → catat tenantId + apiKey + webhookSecret
+  //   2. Admin minipos input ketiganya lewat POST /whatsapp-receipt/setup
+  //   3. Service ini validasi via WaServiceClient.getMe(apiKey) — pastikan
+  //      apiKey valid dan tenantId yang di-input cocok
+  //   4. Simpan ke DB → semua call session/messages bisa jalan
+
+  async getSetupStatus(companyId: string): Promise<{
+    configured: boolean;
+    tenantId: string | null;
+    tenantName: string | null;
+  }> {
+    const row = await this.prisma.whatsappSession.findUnique({
+      where: { companyId },
+      select: {
+        waServiceTenantId: true,
+        waServiceApiKey: true,
+      },
+    });
+    const configured =
+      Boolean(row?.waServiceTenantId) && Boolean(row?.waServiceApiKey);
+    if (!configured) {
+      return { configured: false, tenantId: null, tenantName: null };
+    }
+    // Best-effort fetch nama tenant supaya UI bisa tampilkan "Connected to: X"
+    let tenantName: string | null = null;
+    try {
+      const me = await this.wa.getMe(row!.waServiceApiKey!);
+      tenantName = me.name;
+    } catch (err) {
+      this.logger.warn(
+        `getMe gagal saat getSetupStatus company=${companyId}: ${(err as Error).message}`,
+      );
     }
     return {
-      status,
-      stage,
-      phoneNumber: row.phoneNumber ?? null,
-      deviceName: row.deviceName ?? null,
-      qrCode: row.qrCode ?? null,
-      lastConnectedAt: row.lastConnectedAt?.toISOString() ?? null,
-      lastDisconnectedAt: row.lastDisconnectedAt?.toISOString() ?? null,
-      lastError: row.lastError ?? null,
+      configured: true,
+      tenantId: row!.waServiceTenantId,
+      tenantName,
     };
   }
 
-  // Baileys creds berisi Buffer instances + Uint8Array. Prisma JSON column
-  // serialize Buffer ke `{type:"Buffer",data:[...]}` tapi tidak revive saat
-  // dibaca — harus manual. Implementasi independen dari `BufferJSON` Baileys
-  // (yang export-nya inkonsisten antar versi/bundler — v7 RC kadang ekspor
-  // sebagai property bukan callable).
-  private toDbJson(value: unknown): Prisma.InputJsonValue {
-    return JSON.parse(
-      JSON.stringify(value, bufferReplacer),
-    ) as Prisma.InputJsonValue;
+  async setupCredentials(
+    companyId: string,
+    input: { tenantId: string; apiKey: string; webhookSecret: string },
+  ): Promise<{ tenantId: string; tenantName: string }> {
+    // 1. Validasi apiKey + tenantId via wa-service /api/me
+    let me: { id: string; name: string; status: string };
+    try {
+      me = await this.wa.getMe(input.apiKey);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 401) {
+        throw new BadRequestException("API key tidak valid di wa-service");
+      }
+      throw new BadRequestException(
+        `Gagal verify ke wa-service: ${(err as Error).message}`,
+      );
+    }
+    if (me.id !== input.tenantId) {
+      throw new BadRequestException(
+        `Tenant ID tidak cocok dengan API key. API key milik tenant "${me.id}", bukan "${input.tenantId}".`,
+      );
+    }
+    if (me.status !== "ACTIVE") {
+      throw new BadRequestException(
+        `Tenant "${me.name}" status ${me.status} di wa-service. Aktifkan dulu.`,
+      );
+    }
+
+    // 2. Simpan credentials
+    await this.prisma.whatsappSession.upsert({
+      where: { companyId },
+      create: {
+        companyId,
+        waServiceTenantId: input.tenantId,
+        waServiceApiKey: input.apiKey,
+        waServiceWebhookSecret: input.webhookSecret,
+      },
+      update: {
+        waServiceTenantId: input.tenantId,
+        waServiceApiKey: input.apiKey,
+        waServiceWebhookSecret: input.webhookSecret,
+      },
+    });
+
+    // Open socket connection ke wa-service buat company ini (idempotent —
+    // disconnect existing dulu kalau ada).
+    this.socket.connectTenant(companyId, input.tenantId, input.apiKey);
+
+    this.logger.log(
+      `Wa-service credentials ter-setup untuk company=${companyId} → tenant ${input.tenantId} (${me.name})`,
+    );
+    return { tenantId: input.tenantId, tenantName: me.name };
   }
 
-  private fromDbJson<T>(value: unknown): T {
-    return JSON.parse(JSON.stringify(value), bufferReviver) as T;
+  async clearCredentials(companyId: string): Promise<void> {
+    await this.prisma.whatsappSession.updateMany({
+      where: { companyId },
+      data: {
+        waServiceTenantId: null,
+        waServiceApiKey: null,
+        waServiceWebhookSecret: null,
+      },
+    });
+    this.socket.disconnectTenant(companyId);
+    this.logger.log(`Wa-service credentials cleared untuk company=${companyId}`);
   }
 
-  private async buildAuthState(
-    sessionId: string,
-    authCreds: Record<string, unknown> | null,
-  ): Promise<AuthenticationState> {
-    const baileys = await this.getBaileysRuntime();
-    const creds = authCreds
-      ? this.fromDbJson<AuthenticationCreds>(authCreds)
-      : baileys.initAuthCreds();
+  // Dipanggil saat socket service terima event `tenant.deleted` dari
+  // wa-service — tenant dihapus admin di sana, kita auto-cleanup di sini.
+  // Lookup companyId dari tenantId, clear credentials, lalu reset session
+  // snapshot supaya UI minipos kembali ke "DISCONNECTED" + setup form.
+  async handleTenantDeleted(tenantId: string): Promise<void> {
+    const row = await this.prisma.whatsappSession.findUnique({
+      where: { waServiceTenantId: tenantId },
+      select: { companyId: true },
+    });
+    if (!row) {
+      this.logger.warn(
+        `handleTenantDeleted: tidak ada company untuk tenantId=${tenantId}`,
+      );
+      return;
+    }
+    const { companyId } = row;
+    this.logger.warn(
+      `Tenant ${tenantId} dihapus di wa-service — auto force-logout company=${companyId}`,
+    );
 
-    const keys: AuthenticationState["keys"] = {
-      get: async <T extends keyof SignalDataTypeMap>(
-        type: T,
-        ids: string[],
-      ) => {
-        const rows = await this.prisma.whatsappSessionKey.findMany({
-          where: {
-            sessionId,
-            keyType: String(type),
-            keyId: { in: ids },
-          },
-        });
-        const out: Record<string, SignalDataTypeMap[T]> = {};
-        for (const id of ids) {
-          const row = rows.find((r) => r.keyId === id);
-          if (!row) continue;
-          const parsed = this.fromDbJson<SignalDataTypeMap[T]>(row.value);
-          if (type === "app-state-sync-key") {
-            out[id] = baileys.proto.Message.AppStateSyncKeyData.fromObject(
-              parsed as Record<string, unknown>,
-            ) as unknown as SignalDataTypeMap[T];
-            continue;
-          }
-          out[id] = parsed;
-        }
-        return out;
+    // Clear credentials + reset snapshot session.
+    await this.prisma.whatsappSession.update({
+      where: { companyId },
+      data: {
+        waServiceTenantId: null,
+        waServiceApiKey: null,
+        waServiceWebhookSecret: null,
+        status: "DISCONNECTED",
+        stage: "IDLE",
+        qrCode: null,
+        phoneNumber: null,
+        deviceName: null,
+        lastDisconnectedAt: new Date(),
+        lastError: "Tenant dihapus dari wa-service oleh admin.",
       },
-      set: async (
-        data: Partial<{
-          [T in keyof SignalDataTypeMap]: {
-            [id: string]: SignalDataTypeMap[T] | null;
-          };
-        }>,
-      ) => {
-        const tx: Prisma.PrismaPromise<unknown>[] = [];
-        for (const [keyType, entries] of Object.entries(data)) {
-          if (!entries) continue;
-          for (const [keyId, val] of Object.entries(entries)) {
-            if (val) {
-              tx.push(
-                this.prisma.whatsappSessionKey.upsert({
-                  where: {
-                    sessionId_keyType_keyId: {
-                      sessionId,
-                      keyType,
-                      keyId,
-                    },
-                  },
-                  create: {
-                    sessionId,
-                    keyType,
-                    keyId,
-                    value: this.toDbJson(val),
-                  },
-                  update: {
-                    value: this.toDbJson(val),
-                  },
-                }),
-              );
-            } else {
-              tx.push(
-                this.prisma.whatsappSessionKey.deleteMany({
-                  where: { sessionId, keyType, keyId },
-                }),
-              );
-            }
-          }
-        }
-        if (tx.length > 0) {
-          await this.prisma.$transaction(tx);
-        }
+    });
+
+    // Disconnect socket subscription untuk company ini.
+    this.socket.disconnectTenant(companyId);
+
+    // Push update ke frontend supaya UI auto-redirect ke setup form.
+    this.realtime.emit(EVENTS.WA_SESSION_UPDATED, {
+      companyId,
+      status: "DISCONNECTED",
+      stage: "IDLE",
+      hasQr: false,
+      phoneNumber: null,
+      deviceName: null,
+      reason: "Tenant dihapus dari wa-service.",
+    });
+  }
+
+  // ═══ Internal: tenant credentials lookup + snapshot ═══════════════════
+
+  private async ensureTenantCredentials(
+    companyId: string,
+  ): Promise<TenantCredentials> {
+    const existing = await this.prisma.whatsappSession.findUnique({
+      where: { companyId },
+      select: {
+        waServiceTenantId: true,
+        waServiceApiKey: true,
+        waServiceWebhookSecret: true,
       },
+    });
+    if (
+      !existing?.waServiceTenantId ||
+      !existing.waServiceApiKey ||
+      !existing.waServiceWebhookSecret
+    ) {
+      throw new BadRequestException(
+        "WhatsApp belum di-setup. Admin perlu create tenant di wa-service UI " +
+          "lalu input credentials lewat POST /whatsapp-receipt/setup.",
+      );
+    }
+    return {
+      tenantId: existing.waServiceTenantId,
+      apiKey: existing.waServiceApiKey,
+      webhookSecret: existing.waServiceWebhookSecret,
     };
+  }
 
-    return { creds, keys };
+  // Pastikan row WhatsappSession ada (untuk simpan log pesan via FK).
+  // Sebelum berhasil provisioning tenant credentials biasanya
+  // ensureTenantCredentials sudah upsert row — tapi handleInbound bisa kena
+  // race kalau row baru tanpa credentials. Defensive saja.
+  private async ensureLocalSession(
+    companyId: string,
+  ): Promise<{ id: string }> {
+    const row = await this.prisma.whatsappSession.findUnique({
+      where: { companyId },
+      select: { id: true },
+    });
+    if (row) return row;
+    return this.prisma.whatsappSession.create({
+      data: { companyId },
+      select: { id: true },
+    });
+  }
+
+  private async cacheSnapshot(
+    companyId: string,
+    data: WaServiceSession,
+  ): Promise<void> {
+    await this.prisma.whatsappSession.upsert({
+      where: { companyId },
+      create: {
+        companyId,
+        status: data.status,
+        stage: data.stage,
+        phoneNumber: data.phoneNumber,
+        deviceName: data.deviceName,
+        qrCode: data.qrCode,
+        lastConnectedAt: data.lastConnectedAt
+          ? new Date(data.lastConnectedAt)
+          : null,
+        lastDisconnectedAt: data.lastDisconnectedAt
+          ? new Date(data.lastDisconnectedAt)
+          : null,
+        lastError: data.lastError,
+      },
+      update: {
+        status: data.status,
+        stage: data.stage,
+        phoneNumber: data.phoneNumber,
+        deviceName: data.deviceName,
+        qrCode: data.qrCode,
+        lastConnectedAt: data.lastConnectedAt
+          ? new Date(data.lastConnectedAt)
+          : null,
+        lastDisconnectedAt: data.lastDisconnectedAt
+          ? new Date(data.lastDisconnectedAt)
+          : null,
+        lastError: data.lastError,
+      },
+    });
+  }
+
+  private toSessionView(data: WaServiceSession): SessionView {
+    return {
+      status: data.status,
+      stage: data.stage,
+      phoneNumber: data.phoneNumber,
+      deviceName: data.deviceName,
+      qrCode: data.qrCode,
+      lastConnectedAt: data.lastConnectedAt,
+      lastDisconnectedAt: data.lastDisconnectedAt,
+      lastError: data.lastError,
+    };
+  }
+
+  private async snapshotFromDb(companyId: string): Promise<SessionView> {
+    const row = await this.prisma.whatsappSession.findUnique({
+      where: { companyId },
+      select: {
+        status: true,
+        stage: true,
+        phoneNumber: true,
+        deviceName: true,
+        qrCode: true,
+        lastConnectedAt: true,
+        lastDisconnectedAt: true,
+        lastError: true,
+      },
+    });
+    return {
+      status: (row?.status ?? "DISCONNECTED") as SessionStatus,
+      stage: (row?.stage ?? "IDLE") as SessionStage,
+      phoneNumber: row?.phoneNumber ?? null,
+      deviceName: row?.deviceName ?? null,
+      qrCode: row?.qrCode ?? null,
+      lastConnectedAt: row?.lastConnectedAt?.toISOString() ?? null,
+      lastDisconnectedAt: row?.lastDisconnectedAt?.toISOString() ?? null,
+      lastError: row?.lastError ?? null,
+    };
   }
 }
+
+// ═══ Helpers (no Baileys) ═════════════════════════════════════════════
 
 function formatRupiah(amount: number): string {
   return new Intl.NumberFormat("id-ID", {
@@ -2142,11 +927,6 @@ function paymentMethodLabel(method: string): string {
   };
   return labels[method] || method;
 }
-
-// ─── Thermal-style receipt text builder ───────────────────────────
-// Layout monospace agar di WhatsApp render rapi seperti struk kertas.
-// Wrap dalam triple-backtick (code block) untuk memastikan font monospace
-// di WA mobile & desktop.
 
 type ReceiptConfigShape = {
   storeName: string;
@@ -2262,16 +1042,7 @@ function buildThermalReceiptText(input: {
   }
   lines.push(rule("-"));
 
-  // Items — layout adaptif:
-  //   - qty=1 tanpa diskon-item: `Name` ⇄ `subtotal` (1 baris, atau name di-
-  //     wrap kalau panjang dengan subtotal di baris terakhir).
-  //   - qty>1 atau unit non-default: nama di baris atas, lalu
-  //     `qty UNIT x price` ⇄ `subtotal` di baris kedua.
-  //   - Kalau qty-line + subtotal overflow lebar struk (mis. unit panjang
-  //     "Dus (12 x 1L)"), pisah jadi 2 baris (qty-line sendiri + subtotal
-  //     rata kanan) — ini mencegah `harga harga` keliatan kayak duplikat.
   const safeRow = (left: string, right: string) => {
-    // 1 = minimal space pemisah
     if (left.length + 1 + right.length <= W) {
       return [row(left, right)];
     }
@@ -2287,8 +1058,6 @@ function buildThermalReceiptText(input: {
       item.qty === 1 && !unit && item.discount === 0 && !item.notes;
 
     if (isSingleSimple) {
-      // Layout ringkas: nama ⇄ subtotal. Kalau overflow, name di-wrap dan
-      // subtotal di baris baru rata kanan.
       const nameMax = W - subtotalStr.length - 1;
       if (item.name.length <= nameMax) {
         lines.push(row(item.name, subtotalStr));
@@ -2300,7 +1069,6 @@ function buildThermalReceiptText(input: {
       continue;
     }
 
-    // Layout 2-baris: nama (bisa multi-line) + qty-line.
     lines.push(...wrap(item.name, 0));
     const qtyLine = `  ${item.qty}${unit} x ${fmt(item.unitPrice)}`;
     lines.push(...safeRow(qtyLine, subtotalStr));
@@ -2314,7 +1082,6 @@ function buildThermalReceiptText(input: {
 
   lines.push(rule("-"));
 
-  // Totals
   lines.push(row("Subtotal", fmt(tx.subtotal)));
   if (tx.discountAmount > 0) {
     lines.push(row("Diskon", `-${fmt(tx.discountAmount)}`));
@@ -2324,7 +1091,6 @@ function buildThermalReceiptText(input: {
   lines.push(row("TOTAL", `Rp ${fmt(tx.grandTotal)}`));
   lines.push(rule("="));
 
-  // Payment
   if (input.showPaymentMethod) {
     const payments =
       tx.payments.length > 0
@@ -2333,28 +1099,26 @@ function buildThermalReceiptText(input: {
     if (payments.length > 1) {
       lines.push("Pembayaran:");
       for (const p of payments) {
-        lines.push(row(`  ${paymentMethodLabel(p.method)}`, `Rp ${fmt(p.amount)}`));
+        lines.push(
+          row(`  ${paymentMethodLabel(p.method)}`, `Rp ${fmt(p.amount)}`),
+        );
       }
       const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
       lines.push(row("  Total Bayar", `Rp ${fmt(totalPaid)}`));
     } else {
       const p = payments[0]!;
-      lines.push(
-        row(paymentMethodLabel(p.method), `Rp ${fmt(p.amount)}`),
-      );
+      lines.push(row(paymentMethodLabel(p.method), `Rp ${fmt(p.amount)}`));
     }
   }
   if (tx.changeAmount > 0) {
     lines.push(row("Kembali", `Rp ${fmt(tx.changeAmount)}`));
   }
 
-  // Promo
   if (tx.promoApplied) {
     lines.push(rule("-"));
     for (const ln of wrap(`Promo: ${tx.promoApplied}`)) lines.push(ln);
   }
 
-  // Footer
   lines.push(rule("-"));
   if (input.footerText.trim()) {
     for (const ln of input.footerText.split("\n")) {
@@ -2368,17 +1132,13 @@ function buildThermalReceiptText(input: {
     }
   }
 
-  // Pakai U+2007 FIGURE SPACE — lebar persis = digit, NEVER di-collapse
-  // oleh WA mobile/desktop. NBSP (U+00A0) ternyata juga di-collapse atau
-  // di-render lebih sempit dari ASCII space di font monospace WA mobile.
-  const FIG = " ";
+  // FIGURE SPACE U+2007 — lebar persis = digit, NEVER di-collapse oleh WA.
+  const FIG = " ";
   const fixed = lines.map((ln) => {
     const padded = ln.length >= W ? ln : ln + FIG.repeat(W - ln.length);
-    // Replace SEMUA ASCII space dengan FIG agar lebar konsisten.
     return padded.replace(/ /g, FIG);
   });
 
-  // Wrap dalam code block agar WA render monospace (alignment terjaga).
   return "```\n" + fixed.join("\n") + "\n```";
 }
 
@@ -2400,68 +1160,6 @@ export function normalizePhone(phone: string): string {
   return cleaned;
 }
 
-/**
- * Extract human-readable text content + type dari message proto Baileys.
- * Mendukung text, conversation, extendedText, image+caption, video+caption,
- * document, audio, sticker. Untuk media tanpa caption, content = `[image]`,
- * `[video]`, dst.
- */
-function extractMessageContent(
-  msg: Record<string, unknown>,
-): { content: string | null; messageType: string } {
-  if (!msg) return { content: null, messageType: "unknown" };
-  const get = (k: string) => msg[k] as Record<string, unknown> | undefined;
-
-  if (typeof msg.conversation === "string") {
-    return { content: msg.conversation, messageType: "text" };
-  }
-  const ext = get("extendedTextMessage");
-  if (ext && typeof ext.text === "string") {
-    return { content: ext.text, messageType: "text" };
-  }
-  const img = get("imageMessage");
-  if (img) {
-    return {
-      content: typeof img.caption === "string" ? img.caption : "[image]",
-      messageType: "image",
-    };
-  }
-  const vid = get("videoMessage");
-  if (vid) {
-    return {
-      content: typeof vid.caption === "string" ? vid.caption : "[video]",
-      messageType: "video",
-    };
-  }
-  const doc = get("documentMessage");
-  if (doc) {
-    const fileName = typeof doc.fileName === "string" ? doc.fileName : "";
-    return { content: `[document] ${fileName}`.trim(), messageType: "document" };
-  }
-  const aud = get("audioMessage");
-  if (aud) {
-    return { content: "[audio]", messageType: "audio" };
-  }
-  const sticker = get("stickerMessage");
-  if (sticker) {
-    return { content: "[sticker]", messageType: "sticker" };
-  }
-  const loc = get("locationMessage");
-  if (loc) {
-    return { content: "[location]", messageType: "location" };
-  }
-  const contact = get("contactMessage");
-  if (contact) {
-    return { content: "[contact]", messageType: "contact" };
-  }
-  // Fallback: detect first sub-key
-  const keys = Object.keys(msg);
-  return { content: null, messageType: keys[0] ?? "unknown" };
-}
-
-function extractPhoneFromJid(jid?: string | null): string | null {
-  if (!jid) return null;
-  const [raw] = jid.split(":");
-  const phone = raw.split("@")[0] ?? "";
-  return phone || null;
-}
+// formatRupiah dipakai di tempat lain? Tidak — internal only. Tapi tetap
+// di-export jaga-jaga untuk caller eksternal yang sudah pakai.
+export { formatRupiah };
