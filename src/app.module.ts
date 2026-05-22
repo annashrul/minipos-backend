@@ -75,6 +75,7 @@ import { PublicBookingsModule } from "./modules/public-bookings/public-bookings.
 import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatbot.module";
+import { WaServiceModule } from "./common/wa-service/wa-service.module";
 import { MarketplaceShopeeModule } from "./modules/marketplace-shopee/marketplace-shopee.module";
 import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-grab.module";
 
@@ -154,6 +155,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     BookingsModule,
     PublicBookingsModule,
     VouchersModule,
+    WaServiceModule,
     WhatsappReceiptModule,
     WhatsappChatbotModule,
     MarketplaceShopeeModule,

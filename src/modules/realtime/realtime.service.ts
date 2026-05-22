@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { Response } from "express";
 import Pusher from "pusher";
+import { RealtimeGateway } from "./realtime.gateway";
 
 /**
  * Stable event names — diimport di service lain saat emit.
@@ -52,7 +53,7 @@ export class RealtimeService {
   private readonly channel = "pos-events";
   private readonly sseClients = new Set<Response>();
 
-  constructor() {
+  constructor(private readonly gateway: RealtimeGateway) {
     const appId = process.env.PUSHER_APP_ID;
     const key = process.env.PUSHER_KEY;
     const secret = process.env.PUSHER_SECRET;
@@ -92,7 +93,19 @@ export class RealtimeService {
       branchId: branchId ?? undefined,
       timestamp: Date.now(),
     };
+    // Socket.IO gateway — push langsung ke browser yang terhubung.
+    // Tidak butuh 3rd-party broker, latency rendah.
+    try {
+      this.gateway.emit(event, payload);
+    } catch (err) {
+      this.logger.warn(
+        `Gateway emit "${event}" gagal: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    // SSE fallback (untuk client yang prefer SSE)
     this.emitSse(event, payload);
+    // Pusher (legacy / 3rd-party fallback). Boleh di-disable kalau semua
+    // client sudah pakai socket — set PUSHER_* kosong.
     if (!this.pusher) return;
     this.pusher.trigger(this.channel, event, payload).catch((err) => {
       this.logger.error(

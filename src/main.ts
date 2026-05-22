@@ -7,6 +7,10 @@ import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ["log", "error", "warn", "debug"],
+    // Raw body wajib untuk verifikasi HMAC signature webhook dari wa-service
+    // (lihat WhatsappWebhookController). Tidak menonaktifkan JSON parsing —
+    // Nest tetap parse + expose body, hanya menyimpan raw buffer di samping.
+    rawBody: true,
   });
 
   app.setGlobalPrefix("api");
