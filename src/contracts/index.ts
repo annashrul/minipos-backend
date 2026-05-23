@@ -31,7 +31,7 @@ export * from "./dtos/product-extensions";
 export * from "./dtos/product-variants";
 export * from "./dtos/product-branch-skus";
 export * from "../modules/vouchers/dto/vouchers.dto";
-export * from "./dtos/gift-cards";
+export * from "../modules/gift-cards/dto/gift-cards.dto";
 export * from "./dtos/audit-logs";
 export * from "./dtos/accounting";
 export * from "./dtos/accounting-periods";
