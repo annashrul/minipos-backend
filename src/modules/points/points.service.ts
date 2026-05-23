@@ -14,7 +14,7 @@ import type {
   PointHistoryResponse,
   RedeemPointsDto,
   RedeemResultResponse,
-} from "@/contracts";
+} from "./dto/points.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const POINTS_PER_RUPIAH = 10000;

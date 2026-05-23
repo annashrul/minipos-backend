@@ -22,7 +22,7 @@ export * from "../modules/debts/dto/debts.dto";
 export * from "./dtos/returns";
 export * from "./dtos/purchases";
 export * from "./dtos/goods-receipts";
-export * from "./dtos/points";
+export * from "../modules/points/dto/points.dto";
 export * from "../modules/roles/dto/roles.dto";
 export * from "./dtos/closing-reports";
 export * from "./dtos/stock-transfers";
