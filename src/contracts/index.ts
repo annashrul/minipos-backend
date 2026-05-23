@@ -30,7 +30,7 @@ export * from "./dtos/stock-opname";
 export * from "./dtos/product-extensions";
 export * from "./dtos/product-variants";
 export * from "./dtos/product-branch-skus";
-export * from "./dtos/vouchers";
+export * from "../modules/vouchers/dto/vouchers.dto";
 export * from "./dtos/gift-cards";
 export * from "./dtos/audit-logs";
 export * from "./dtos/accounting";
