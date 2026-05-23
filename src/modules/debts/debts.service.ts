@@ -15,7 +15,7 @@ import type {
   InstallmentResponse,
   ListDebtsQueryDto,
   PayDebtDto,
-} from "@/contracts";
+} from "./dto/debts.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const DEBT_SELECT = {

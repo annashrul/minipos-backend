@@ -8,15 +8,15 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CreateDebtSchema,
   ListDebtsQuerySchema,
   PayDebtSchema,
-  type AuthUser,
   type CreateDebtDto,
   type ListDebtsQueryDto,
   type PayDebtDto,
-} from "@/contracts";
+} from "./dto/debts.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

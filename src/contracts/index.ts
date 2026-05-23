@@ -18,7 +18,7 @@ export * from "./dtos/bundles";
 export * from "./dtos/recipes";
 export * from "./dtos/modifiers";
 export * from "../modules/expenses/dto/expenses.dto";
-export * from "./dtos/debts";
+export * from "../modules/debts/dto/debts.dto";
 export * from "./dtos/returns";
 export * from "./dtos/purchases";
 export * from "./dtos/goods-receipts";
