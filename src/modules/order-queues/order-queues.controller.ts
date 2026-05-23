@@ -19,7 +19,7 @@ import {
   type ListOrderQueuesQueryDto,
   type UpdateOrderQueueItemStatusDto,
   type UpdateOrderQueueStatusDto,
-} from "@/contracts";
+} from "./dto/order-queues.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

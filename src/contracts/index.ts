@@ -9,7 +9,7 @@ export * from "../modules/branches/dto/branches.dto";
 export * from "../modules/customers/dto/customers.dto";
 export * from "./dtos/stock";
 export * from "../modules/tables/dto/tables.dto";
-export * from "./dtos/order-queues";
+export * from "../modules/order-queues/dto/order-queues.dto";
 export * from "./dtos/table-orders";
 export * from "../modules/settings/dto/settings.dto";
 export * from "../modules/promotions/dto/promotions.dto";

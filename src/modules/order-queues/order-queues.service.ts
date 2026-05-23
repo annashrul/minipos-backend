@@ -12,7 +12,7 @@ import type {
   OrderQueueListResponse,
   OrderQueueResponse,
   OrderQueueStatusDto,
-} from "@/contracts";
+} from "./dto/order-queues.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const QUEUE_SELECT = {
