@@ -2,7 +2,7 @@
 import type {
   LogPosActivityDto,
   LogPosActivityResponse,
-} from "@/contracts";
+} from "./dto/pos-activity.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 /**
