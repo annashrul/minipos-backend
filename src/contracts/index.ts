@@ -13,7 +13,7 @@ export * from "./dtos/order-queues";
 export * from "./dtos/table-orders";
 export * from "./dtos/settings";
 export * from "./dtos/promotions";
-export * from "./dtos/shifts";
+export * from "../modules/shifts/dto/shifts.dto";
 export * from "./dtos/bundles";
 export * from "./dtos/recipes";
 export * from "./dtos/modifiers";

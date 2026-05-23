@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -14,53 +14,18 @@ import type {
   ShiftDetailResponse,
   ShiftListResponse,
   ShiftResponse,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
+} from "./dto/shifts.dto";
+import {
+  ShiftsRepository,
+  type RawShift,
+  type RawShiftDetail,
+} from "./shifts.repository";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-
-const SHIFT_SELECT = {
-  id: true,
-  userId: true,
-  user: { select: { id: true, name: true, companyId: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  openedAt: true,
-  closedAt: true,
-  openingCash: true,
-  closingCash: true,
-  expectedCash: true,
-  cashDifference: true,
-  totalSales: true,
-  totalTransactions: true,
-  notes: true,
-  isOpen: true,
-} satisfies Prisma.CashierShiftSelect;
-
-const SHIFT_DETAIL_SELECT = {
-  ...SHIFT_SELECT,
-  cashMovements: {
-    select: {
-      id: true,
-      shiftId: true,
-      type: true,
-      amount: true,
-      reason: true,
-      reference: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.CashierShiftSelect;
-
-type RawShift = Prisma.CashierShiftGetPayload<{ select: typeof SHIFT_SELECT }>;
-type RawShiftDetail = Prisma.CashierShiftGetPayload<{
-  select: typeof SHIFT_DETAIL_SELECT;
-}>;
 
 @Injectable()
 export class ShiftsService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: ShiftsRepository,
     private readonly realtime: RealtimeService,
   ) {}
 
@@ -82,7 +47,6 @@ export class ShiftsService {
       if (to) where.openedAt.lte = new Date(to);
     }
 
-    // OrderBy dinamis dengan whitelist + default fallback openedAt desc.
     const dir: "asc" | "desc" = sortDir ?? "desc";
     let orderBy: Prisma.CashierShiftOrderByWithRelationInput = {
       openedAt: "desc",
@@ -105,14 +69,8 @@ export class ShiftsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.cashierShift.findMany({
-        where,
-        select: SHIFT_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.cashierShift.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -126,10 +84,7 @@ export class ShiftsService {
     companyId: string,
     id: string,
   ): Promise<ShiftDetailResponse> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { id, user: { companyId } },
-      select: SHIFT_DETAIL_SELECT,
-    });
+    const shift = await this.repo.findDetail({ id, user: { companyId } });
     if (!shift) throw new NotFoundException("Shift not found");
     return toShiftDetailResponse(shift);
   }
@@ -138,11 +93,10 @@ export class ShiftsService {
     companyId: string,
     userId: string,
   ): Promise<ShiftDetailResponse | null> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { userId, isOpen: true, user: { companyId } },
-      select: SHIFT_DETAIL_SELECT,
-      orderBy: { openedAt: "desc" },
-    });
+    const shift = await this.repo.findDetail(
+      { userId, isOpen: true, user: { companyId } },
+      { openedAt: "desc" },
+    );
     return shift ? toShiftDetailResponse(shift) : null;
   }
 
@@ -153,24 +107,18 @@ export class ShiftsService {
   ): Promise<ShiftResponse> {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
-    const existing = await this.prisma.cashierShift.findFirst({
-      where: { userId, isOpen: true },
-      select: { id: true },
-    });
+    const existing = await this.repo.findOne({ userId, isOpen: true });
     if (existing) {
       throw new ConflictException(
         "Shift sudah terbuka, tutup terlebih dahulu sebelum membuka shift baru",
       );
     }
 
-    const created = await this.prisma.cashierShift.create({
-      data: {
-        userId,
-        branchId: dto.branchId ?? null,
-        openingCash: dto.openingCash,
-        notes: dto.notes ?? null,
-      },
-      select: SHIFT_SELECT,
+    const created = await this.repo.create({
+      userId,
+      branchId: dto.branchId ?? null,
+      openingCash: dto.openingCash,
+      notes: dto.notes ?? null,
     });
     this.realtime.emit(
       EVENTS.SHIFT_OPENED,
@@ -186,17 +134,7 @@ export class ShiftsService {
     id: string,
     dto: CloseShiftDto,
   ): Promise<ShiftResponse> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { id, user: { companyId } },
-      select: {
-        id: true,
-        userId: true,
-        branchId: true,
-        openingCash: true,
-        openedAt: true,
-        isOpen: true,
-      },
-    });
+    const shift = await this.repo.findForClose({ id, user: { companyId } });
     if (!shift) throw new NotFoundException("Shift not found");
     if (!shift.isOpen) throw new BadRequestException("Shift sudah ditutup");
     if (shift.userId !== userId) {
@@ -213,22 +151,14 @@ export class ShiftsService {
     if (shift.branchId) txWhere.branchId = shift.branchId;
 
     const [salesAgg, txCount, cashMovements] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: txWhere,
-        _sum: { grandTotal: true },
+      this.repo.aggregateTransactions(txWhere),
+      this.repo.countTransactions({
+        userId: shift.userId,
+        status: "COMPLETED",
+        createdAt: { gte: shift.openedAt, lte: closedAt },
+        ...(shift.branchId ? { branchId: shift.branchId } : {}),
       }),
-      this.prisma.transaction.count({
-        where: {
-          userId: shift.userId,
-          status: "COMPLETED",
-          createdAt: { gte: shift.openedAt, lte: closedAt },
-          ...(shift.branchId ? { branchId: shift.branchId } : {}),
-        },
-      }),
-      this.prisma.cashMovement.findMany({
-        where: { shiftId: id },
-        select: { type: true, amount: true },
-      }),
+      this.repo.findCashMovements(id),
     ]);
 
     const cashSales = salesAgg._sum.grandTotal ?? 0;
@@ -241,19 +171,15 @@ export class ShiftsService {
     const expectedCash = shift.openingCash + cashSales + cashIn - cashOut;
     const cashDifference = dto.closingCash - expectedCash;
 
-    const updated = await this.prisma.cashierShift.update({
-      where: { id },
-      data: {
-        closedAt,
-        closingCash: dto.closingCash,
-        expectedCash,
-        cashDifference,
-        totalSales: cashSales,
-        totalTransactions: txCount,
-        notes: dto.notes ?? undefined,
-        isOpen: false,
-      },
-      select: SHIFT_SELECT,
+    const updated = await this.repo.update(id, {
+      closedAt,
+      closingCash: dto.closingCash,
+      expectedCash,
+      cashDifference,
+      totalSales: cashSales,
+      totalTransactions: txCount,
+      notes: dto.notes ?? undefined,
+      isOpen: false,
     });
     this.realtime.emit(
       EVENTS.SHIFT_CLOSED,
@@ -269,9 +195,9 @@ export class ShiftsService {
     shiftId: string,
     dto: CashMovementDto,
   ): Promise<CashMovementResponse> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { id: shiftId, user: { companyId } },
-      select: { id: true, userId: true, isOpen: true },
+    const shift = await this.repo.findForClose({
+      id: shiftId,
+      user: { companyId },
     });
     if (!shift) throw new NotFoundException("Shift not found");
     if (!shift.isOpen) {
@@ -283,23 +209,12 @@ export class ShiftsService {
       );
     }
 
-    const movement = await this.prisma.cashMovement.create({
-      data: {
-        shiftId,
-        type: dto.type,
-        amount: dto.amount,
-        reason: dto.reason,
-        reference: dto.reference ?? null,
-      },
-      select: {
-        id: true,
-        shiftId: true,
-        type: true,
-        amount: true,
-        reason: true,
-        reference: true,
-        createdAt: true,
-      },
+    const movement = await this.repo.createCashMovement({
+      shiftId,
+      type: dto.type,
+      amount: dto.amount,
+      reason: dto.reason,
+      reference: dto.reference ?? null,
     });
     return {
       id: movement.id,
@@ -313,10 +228,7 @@ export class ShiftsService {
   }
 
   private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(companyId, branchId);
     if (!branch) throw new NotFoundException("Branch not found");
   }
 }
