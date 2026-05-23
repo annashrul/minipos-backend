@@ -10,7 +10,7 @@ import type {
   PromotionListResponse,
   PromotionResponse,
   UpdatePromotionDto,
-} from "@/contracts";
+} from "./dto/promotions.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PROMOTION_SELECT = {

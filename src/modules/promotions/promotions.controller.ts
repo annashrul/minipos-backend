@@ -18,7 +18,7 @@ import {
   type ListPromotionsQueryDto,
   type TogglePromotionDto,
   type UpdatePromotionDto,
-} from "@/contracts";
+} from "./dto/promotions.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
