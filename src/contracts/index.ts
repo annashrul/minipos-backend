@@ -11,7 +11,7 @@ export * from "./dtos/stock";
 export * from "../modules/tables/dto/tables.dto";
 export * from "./dtos/order-queues";
 export * from "./dtos/table-orders";
-export * from "./dtos/settings";
+export * from "../modules/settings/dto/settings.dto";
 export * from "../modules/promotions/dto/promotions.dto";
 export * from "../modules/shifts/dto/shifts.dto";
 export * from "../modules/bundles/dto/bundles.dto";

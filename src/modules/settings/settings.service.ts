@@ -6,7 +6,7 @@ import type {
   SettingResponse,
   UpsertSettingDto,
   UpsertSettingsBulkDto,
-} from "@/contracts";
+} from "./dto/settings.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
