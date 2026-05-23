@@ -14,7 +14,7 @@ export * from "./dtos/table-orders";
 export * from "./dtos/settings";
 export * from "./dtos/promotions";
 export * from "../modules/shifts/dto/shifts.dto";
-export * from "./dtos/bundles";
+export * from "../modules/bundles/dto/bundles.dto";
 export * from "./dtos/recipes";
 export * from "./dtos/modifiers";
 export * from "../modules/expenses/dto/expenses.dto";

@@ -16,7 +16,7 @@ import {
   type CreateBundleDto,
   type ListBundlesQueryDto,
   type UpdateBundleDto,
-} from "@/contracts";
+} from "./dto/bundles.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

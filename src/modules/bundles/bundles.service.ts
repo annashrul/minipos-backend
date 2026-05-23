@@ -11,7 +11,7 @@ import type {
   CreateBundleDto,
   ListBundlesQueryDto,
   UpdateBundleDto,
-} from "@/contracts";
+} from "./dto/bundles.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
