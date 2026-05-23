@@ -9,15 +9,15 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CreateExpenseSchema,
   ListExpensesQuerySchema,
   UpdateExpenseSchema,
-  type AuthUser,
   type CreateExpenseDto,
   type ListExpensesQueryDto,
   type UpdateExpenseDto,
-} from "@/contracts";
+} from "./dto/expenses.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

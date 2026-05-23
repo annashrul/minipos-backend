@@ -2,13 +2,15 @@
 import { z } from "zod";
 import {
   MeAccessMatrixQuerySchema,
-  VerifyAuthorizationSchema,
   type AuthUser,
   type MeAccessMatrixQueryDto,
   type MeAccessMatrixResponse,
   type MeMenusResponse,
-  type VerifyAuthorizationDto,
 } from "@/contracts";
+import {
+  VerifyAuthorizationSchema,
+  type VerifyAuthorizationDto,
+} from "../users/dto/users.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 
 const UpdateBusinessUnitSchema = z.object({

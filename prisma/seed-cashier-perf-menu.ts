@@ -10,8 +10,8 @@ async function main() {
             key: "cashier-performance",
             name: "Performa Kasir",
             path: "/cashier-performance",
-            group: "Laporan",
-            sortOrder: 42,
+            group: "Analitik",
+            sortOrder: 4,
             actions: { create: [
                 { key: "view", name: "Lihat", sortOrder: 0 },
             ] },

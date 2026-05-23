@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -10,29 +10,12 @@ import type {
   CustomerResponse,
   ListCustomersQueryDto,
   UpdateCustomerDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-
-const CUSTOMER_SELECT = {
-  id: true,
-  name: true,
-  phone: true,
-  email: true,
-  address: true,
-  memberLevel: true,
-  totalSpending: true,
-  points: true,
-  memberCardCode: true,
-  dateOfBirth: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.CustomerSelect;
-
-type RawCustomer = Prisma.CustomerGetPayload<{ select: typeof CUSTOMER_SELECT }>;
+} from "./dto/customers.dto";
+import { CustomersRepository, type RawCustomer } from "./customers.repository";
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: CustomersRepository) {}
 
   async list(
     companyId: string,
@@ -71,14 +54,8 @@ export class CustomersService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.customer.findMany({
-        where,
-        select: CUSTOMER_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.customer.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -89,10 +66,7 @@ export class CustomersService {
   }
 
   async findById(companyId: string, id: string): Promise<CustomerResponse> {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id, companyId },
-      select: CUSTOMER_SELECT,
-    });
+    const customer = await this.repo.findOne({ id, companyId });
     if (!customer) throw new NotFoundException("Customer not found");
     return toCustomerResponse(customer);
   }
@@ -102,18 +76,15 @@ export class CustomersService {
     dto: CreateCustomerDto,
   ): Promise<CustomerResponse> {
     try {
-      const created = await this.prisma.customer.create({
-        data: {
-          name: dto.name,
-          phone: dto.phone ?? null,
-          email: dto.email ?? null,
-          address: dto.address ?? null,
-          memberLevel: dto.memberLevel ?? "REGULAR",
-          memberCardCode: dto.memberCardCode ?? null,
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-          companyId,
-        },
-        select: CUSTOMER_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        phone: dto.phone ?? null,
+        email: dto.email ?? null,
+        address: dto.address ?? null,
+        memberLevel: dto.memberLevel ?? "REGULAR",
+        memberCardCode: dto.memberCardCode ?? null,
+        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+        companyId,
       });
       return toCustomerResponse(created);
     } catch (err) {
@@ -127,10 +98,7 @@ export class CustomersService {
     id: string,
     dto: UpdateCustomerDto,
   ): Promise<CustomerResponse> {
-    const existing = await this.prisma.customer.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Customer not found");
 
     const data: Prisma.CustomerUpdateInput = {};
@@ -145,11 +113,7 @@ export class CustomersService {
     }
 
     try {
-      const updated = await this.prisma.customer.update({
-        where: { id },
-        data,
-        select: CUSTOMER_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toCustomerResponse(updated);
     } catch (err) {
       throwOnDupCustomer(err);
@@ -158,12 +122,9 @@ export class CustomersService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.customer.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Customer not found");
-    await this.prisma.customer.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   CreateExpenseDto,
@@ -7,27 +7,12 @@ import type {
   ExpenseSummaryResponse,
   ListExpensesQueryDto,
   UpdateExpenseDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-
-const EXPENSE_SELECT = {
-  id: true,
-  category: true,
-  description: true,
-  amount: true,
-  date: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.ExpenseSelect;
-
-type RawExpense = Prisma.ExpenseGetPayload<{ select: typeof EXPENSE_SELECT }>;
+} from "./dto/expenses.dto";
+import { ExpensesRepository, type RawExpense } from "./expenses.repository";
 
 @Injectable()
 export class ExpensesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: ExpensesRepository) {}
 
   async list(
     companyId: string,
@@ -51,14 +36,8 @@ export class ExpensesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.expense.findMany({
-        where,
-        select: EXPENSE_SELECT,
-        orderBy: { date: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.expense.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -69,9 +48,9 @@ export class ExpensesService {
   }
 
   async findById(companyId: string, id: string): Promise<ExpenseResponse> {
-    const expense = await this.prisma.expense.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: EXPENSE_SELECT,
+    const expense = await this.repo.findOne({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!expense) throw new NotFoundException("Expense not found");
     return toExpenseResponse(expense);
@@ -84,17 +63,14 @@ export class ExpensesService {
   ): Promise<ExpenseResponse> {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
-    const created = await this.prisma.expense.create({
-      data: {
-        category: dto.category,
-        description: dto.description,
-        amount: dto.amount,
-        date: dto.date ? new Date(dto.date) : new Date(),
-        branchId: dto.branchId ?? null,
-        companyId,
-        createdBy: userId,
-      },
-      select: EXPENSE_SELECT,
+    const created = await this.repo.create({
+      category: dto.category,
+      description: dto.description,
+      amount: dto.amount,
+      date: dto.date ? new Date(dto.date) : new Date(),
+      branchId: dto.branchId ?? null,
+      companyId,
+      createdBy: userId,
     });
     return toExpenseResponse(created);
   }
@@ -104,9 +80,9 @@ export class ExpensesService {
     id: string,
     dto: UpdateExpenseDto,
   ): Promise<ExpenseResponse> {
-    const existing = await this.prisma.expense.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findById({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Expense not found");
 
@@ -123,21 +99,17 @@ export class ExpensesService {
         : { disconnect: true };
     }
 
-    const updated = await this.prisma.expense.update({
-      where: { id },
-      data,
-      select: EXPENSE_SELECT,
-    });
+    const updated = await this.repo.update(id, data);
     return toExpenseResponse(updated);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.expense.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findById({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Expense not found");
-    await this.prisma.expense.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -156,17 +128,8 @@ export class ExpensesService {
     }
 
     const [agg, grouped] = await Promise.all([
-      this.prisma.expense.aggregate({
-        where,
-        _sum: { amount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.expense.groupBy({
-        by: ["category"],
-        where,
-        _sum: { amount: true },
-        _count: { _all: true },
-      }),
+      this.repo.aggregate(where),
+      this.repo.groupByCategory(where),
     ]);
 
     return {
@@ -189,10 +152,7 @@ export class ExpensesService {
   }
 
   private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(companyId, branchId);
     if (!branch) throw new NotFoundException("Branch not found");
   }
 }

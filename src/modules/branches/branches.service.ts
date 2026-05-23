@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -11,30 +11,14 @@ import type {
   CreateBranchDto,
   ListBranchesQueryDto,
   UpdateBranchDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
+} from "./dto/branches.dto";
+import { BranchesRepository, type RawBranch } from "./branches.repository";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-
-const BRANCH_SELECT = {
-  id: true,
-  name: true,
-  code: true,
-  address: true,
-  phone: true,
-  latitude: true,
-  longitude: true,
-  isActive: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { users: true, transactions: true } },
-} satisfies Prisma.BranchSelect;
-
-type RawBranch = Prisma.BranchGetPayload<{ select: typeof BRANCH_SELECT }>;
 
 @Injectable()
 export class BranchesService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: BranchesRepository,
     private readonly realtime: RealtimeService,
   ) {}
 
@@ -53,14 +37,8 @@ export class BranchesService {
     if (isActive !== undefined) where.isActive = isActive;
 
     const [rows, total] = await Promise.all([
-      this.prisma.branch.findMany({
-        where,
-        select: BRANCH_SELECT,
-        orderBy: { name: "asc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.branch.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -71,10 +49,7 @@ export class BranchesService {
   }
 
   async findById(companyId: string, id: string): Promise<BranchResponse> {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id, companyId },
-      select: BRANCH_SELECT,
-    });
+    const branch = await this.repo.findOne({ id, companyId });
     if (!branch) throw new NotFoundException("Branch not found");
     return toBranchResponse(branch);
   }
@@ -84,18 +59,15 @@ export class BranchesService {
     dto: CreateBranchDto,
   ): Promise<BranchResponse> {
     try {
-      const created = await this.prisma.branch.create({
-        data: {
-          name: dto.name,
-          code: dto.code ?? null,
-          address: dto.address ?? null,
-          phone: dto.phone ?? null,
-          latitude: dto.latitude ?? null,
-          longitude: dto.longitude ?? null,
-          isActive: dto.isActive ?? true,
-          companyId,
-        },
-        select: BRANCH_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        code: dto.code ?? null,
+        address: dto.address ?? null,
+        phone: dto.phone ?? null,
+        latitude: dto.latitude ?? null,
+        longitude: dto.longitude ?? null,
+        isActive: dto.isActive ?? true,
+        companyId,
       });
       this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: created.id });
       return toBranchResponse(created);
@@ -110,10 +82,7 @@ export class BranchesService {
     id: string,
     dto: UpdateBranchDto,
   ): Promise<BranchResponse> {
-    const existing = await this.prisma.branch.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Branch not found");
 
     const data: Prisma.BranchUpdateInput = {};
@@ -126,11 +95,7 @@ export class BranchesService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     try {
-      const updated = await this.prisma.branch.update({
-        where: { id },
-        data,
-        select: BRANCH_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: updated.id });
       return toBranchResponse(updated);
     } catch (err) {
@@ -140,13 +105,7 @@ export class BranchesService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.branch.findFirst({
-      where: { id, companyId },
-      select: {
-        id: true,
-        _count: { select: { users: true, transactions: true } },
-      },
-    });
+    const existing = await this.repo.findWithCounts(companyId, id);
     if (!existing) throw new NotFoundException("Branch not found");
     if (existing._count.users > 0) {
       throw new BadRequestException(
@@ -158,7 +117,7 @@ export class BranchesService {
         `Branch memiliki ${existing._count.transactions} transaksi, tidak bisa dihapus`,
       );
     }
-    await this.prisma.branch.delete({ where: { id } });
+    await this.repo.delete(id);
     this.realtime.emit(EVENTS.BRANCH_UPDATED, { branchId: id });
     return { success: true };
   }

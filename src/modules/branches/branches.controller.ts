@@ -16,7 +16,7 @@ import {
   type CreateBranchDto,
   type ListBranchesQueryDto,
   type UpdateBranchDto,
-} from "@/contracts";
+} from "./dto/branches.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

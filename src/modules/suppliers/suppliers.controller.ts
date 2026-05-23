@@ -16,7 +16,7 @@ import {
   type CreateSupplierDto,
   type ListSuppliersQueryDto,
   type UpdateSupplierDto,
-} from "@/contracts";
+} from "./dto/suppliers.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

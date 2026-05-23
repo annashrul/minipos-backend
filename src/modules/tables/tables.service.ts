@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -11,30 +11,12 @@ import type {
   TableResponse,
   TableStatusDto,
   UpdateTableDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-
-const TABLE_SELECT = {
-  id: true,
-  number: true,
-  name: true,
-  capacity: true,
-  status: true,
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  section: true,
-  sortOrder: true,
-  isActive: true,
-  qrToken: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.RestaurantTableSelect;
-
-type RawTable = Prisma.RestaurantTableGetPayload<{ select: typeof TABLE_SELECT }>;
+} from "./dto/tables.dto";
+import { TablesRepository, type RawTable } from "./tables.repository";
 
 @Injectable()
 export class TablesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: TablesRepository) {}
 
   async list(
     companyId: string,
@@ -58,14 +40,8 @@ export class TablesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.restaurantTable.findMany({
-        where,
-        select: TABLE_SELECT,
-        orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.restaurantTable.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -76,10 +52,7 @@ export class TablesService {
   }
 
   async findById(companyId: string, id: string): Promise<TableResponse> {
-    const table = await this.prisma.restaurantTable.findFirst({
-      where: { id, branch: { companyId } },
-      select: TABLE_SELECT,
-    });
+    const table = await this.repo.findOne({ id, branch: { companyId } });
     if (!table) throw new NotFoundException("Table not found");
     return toTableResponse(table);
   }
@@ -91,17 +64,14 @@ export class TablesService {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
     try {
-      const created = await this.prisma.restaurantTable.create({
-        data: {
-          number: dto.number,
-          name: dto.name ?? null,
-          capacity: dto.capacity ?? 4,
-          branchId: dto.branchId ?? null,
-          section: dto.section ?? null,
-          sortOrder: dto.sortOrder ?? 0,
-          isActive: dto.isActive ?? true,
-        },
-        select: TABLE_SELECT,
+      const created = await this.repo.create({
+        number: dto.number,
+        name: dto.name ?? null,
+        capacity: dto.capacity ?? 4,
+        branchId: dto.branchId ?? null,
+        section: dto.section ?? null,
+        sortOrder: dto.sortOrder ?? 0,
+        isActive: dto.isActive ?? true,
       });
       return toTableResponse(created);
     } catch (err) {
@@ -139,11 +109,7 @@ export class TablesService {
     }
 
     try {
-      const updated = await this.prisma.restaurantTable.update({
-        where: { id },
-        data,
-        select: TABLE_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toTableResponse(updated);
     } catch (err) {
       if (
@@ -164,32 +130,23 @@ export class TablesService {
     status: TableStatusDto,
   ): Promise<TableResponse> {
     await this.ensureOwned(companyId, id);
-    const updated = await this.prisma.restaurantTable.update({
-      where: { id },
-      data: { status },
-      select: TABLE_SELECT,
-    });
+    const updated = await this.repo.update(id, { status });
     return toTableResponse(updated);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     await this.ensureOwned(companyId, id);
-    await this.prisma.restaurantTable.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
-  /** Generate (or rotate) a QR token used by tablet ordering URL. */
   async generateQrToken(companyId: string, id: string): Promise<TableResponse> {
     await this.ensureOwned(companyId, id);
     let attempts = 0;
     while (attempts < 5) {
       const token = randomToken();
       try {
-        const updated = await this.prisma.restaurantTable.update({
-          where: { id },
-          data: { qrToken: token },
-          select: TABLE_SELECT,
-        });
+        const updated = await this.repo.update(id, { qrToken: token });
         return toTableResponse(updated);
       } catch (err) {
         if (
@@ -206,18 +163,12 @@ export class TablesService {
   }
 
   private async ensureOwned(companyId: string, id: string) {
-    const existing = await this.prisma.restaurantTable.findFirst({
-      where: { id, branch: { companyId } },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Table not found");
   }
 
   private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(companyId, branchId);
     if (!branch) throw new NotFoundException("Branch not found");
   }
 }
@@ -241,7 +192,6 @@ function toTableResponse(t: RawTable): TableResponse {
 }
 
 function randomToken(): string {
-  // 24 chars URL-safe — easy to embed in QR + short URL
   const alphabet =
     "ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghijkmnpqrstuvwxyz";
   let out = "";

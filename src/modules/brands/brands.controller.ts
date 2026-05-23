@@ -16,7 +16,7 @@ import {
   type CreateBrandDto,
   type ListBrandsQueryDto,
   type UpdateBrandDto,
-} from "@/contracts";
+} from "./dto/brands.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
