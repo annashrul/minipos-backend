@@ -7,17 +7,17 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   AuditSummaryQuerySchema,
   CreateActivityLogSchema,
   ListActivityLogsQuerySchema,
   ListAuditLogsQuerySchema,
   type AuditSummaryQueryDto,
-  type AuthUser,
   type CreateActivityLogDto,
   type ListActivityLogsQueryDto,
   type ListAuditLogsQueryDto,
-} from "@/contracts";
+} from "./dto/audit-logs.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

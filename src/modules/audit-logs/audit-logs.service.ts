@@ -10,7 +10,7 @@ import type {
   CreateActivityLogDto,
   ListActivityLogsQueryDto,
   ListAuditLogsQueryDto,
-} from "@/contracts";
+} from "./dto/audit-logs.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const AUDIT_LOG_SELECT = {

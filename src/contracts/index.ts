@@ -32,7 +32,7 @@ export * from "./dtos/product-variants";
 export * from "./dtos/product-branch-skus";
 export * from "../modules/vouchers/dto/vouchers.dto";
 export * from "../modules/gift-cards/dto/gift-cards.dto";
-export * from "./dtos/audit-logs";
+export * from "../modules/audit-logs/dto/audit-logs.dto";
 export * from "./dtos/accounting";
 export * from "./dtos/accounting-periods";
 export * from "./dtos/accounting-reports";
