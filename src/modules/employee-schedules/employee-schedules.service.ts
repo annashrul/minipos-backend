@@ -13,7 +13,7 @@ import type {
   ListEmployeeSchedulesQueryDto,
   ScheduleStatusDto,
   UpdateEmployeeScheduleDto,
-} from "@/contracts";
+} from "./dto/employee-schedules.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const SCHEDULE_SELECT = {

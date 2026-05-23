@@ -9,19 +9,19 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   BulkCreateEmployeeSchedulesSchema,
   CreateEmployeeScheduleSchema,
   ListEmployeeSchedulesQuerySchema,
   UpdateEmployeeScheduleSchema,
   UpdateScheduleStatusSchema,
-  type AuthUser,
   type BulkCreateEmployeeSchedulesDto,
   type CreateEmployeeScheduleDto,
   type ListEmployeeSchedulesQueryDto,
   type UpdateEmployeeScheduleDto,
   type UpdateScheduleStatusDto,
-} from "@/contracts";
+} from "./dto/employee-schedules.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

@@ -41,7 +41,7 @@ export * from "./dtos/recurring-journals";
 export * from "./dtos/reports";
 export * from "./dtos/cashier";
 export * from "./dtos/dashboard";
-export * from "./dtos/employee-schedules";
+export * from "../modules/employee-schedules/dto/employee-schedules.dto";
 export * from "./dtos/plans";
 export * from "./dtos/sales-targets";
 export * from "./dtos/subscriptions";
