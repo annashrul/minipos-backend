@@ -11,7 +11,7 @@ import type {
   RecipeYieldSummaryResponse,
   UpsertRecipeDto,
   YieldEstimateQueryDto,
-} from "@/contracts";
+} from "./dto/recipes.dto";
 
 const RECIPE_INCLUDE = {
   ingredients: {

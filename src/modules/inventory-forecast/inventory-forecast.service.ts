@@ -12,7 +12,7 @@ import type {
   RiskLevelDto,
   SalesTrendDto,
   SupplierReorderGroupResponse,
-} from "@/contracts";
+} from "./dto/inventory-forecast.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const DEFAULT_LEAD_TIME_DAYS = 7;
