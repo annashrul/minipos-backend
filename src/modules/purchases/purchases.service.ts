@@ -1266,7 +1266,12 @@ export class PurchasesService {
     const { search, status, supplierId, branchId, from, to } = query;
     const where: Prisma.PurchaseOrderWhereInput = this.tenantWhere(companyId);
     if (status) {
-      where.status = Array.isArray(status) ? { in: status } : status;
+      const statuses = typeof status === "string" && status.includes(",")
+        ? status.split(",").map((s) => s.trim())
+        : Array.isArray(status) ? status : [status];
+      where.status = statuses.length > 1
+        ? { in: statuses as Prisma.EnumPurchaseOrderStatusFilter["in"] }
+        : (statuses[0] as Prisma.EnumPurchaseOrderStatusFilter);
     }
     if (supplierId) where.supplierId = supplierId;
     if (branchId) where.branchId = branchId;
