@@ -4,13 +4,14 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   CreateStockTransferDto,
   ListStockTransfersQueryDto,
   ReceiveStockTransferDto,
   StockTransferDetailResponse,
   StockTransferItemResponse,
-  StockTransferListResponse,
   StockTransferResponse,
   StockTransferStatusDto,
 } from "@/contracts";
@@ -72,24 +73,46 @@ export class StockTransfersService {
   async list(
     companyId: string,
     query: ListStockTransfersQueryDto,
-  ): Promise<StockTransferListResponse> {
+  ): Promise<PaginatedResponse<StockTransferResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
       this.prisma.stockTransfer.findMany({
         where,
         select: TRANSFER_SELECT,
         orderBy: { requestedAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.stockTransfer.count({ where }),
     ]);
 
+    return paginate(rows.map(toTransferResponse), total, page, perPage);
+  }
+
+  async summary(companyId: string, branchId?: string) {
+    const where: Prisma.StockTransferWhereInput = this.tenantWhere(companyId);
+    if (branchId) {
+      where.AND = [
+        { OR: [{ fromBranchId: branchId }, { toBranchId: branchId }] },
+      ];
+    }
+
+    const grouped = await this.prisma.stockTransfer.groupBy({
+      by: ["status"],
+      where,
+      _count: { _all: true },
+    });
+
+    const map = new Map(grouped.map((g) => [g.status, g._count._all]));
     return {
-      transfers: rows.map(toTransferResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
+      total: grouped.reduce((s, g) => s + g._count._all, 0),
+      pending: map.get("PENDING") ?? 0,
+      approved: map.get("APPROVED") ?? 0,
+      inTransit: map.get("IN_TRANSIT") ?? 0,
+      received: map.get("RECEIVED") ?? 0,
+      rejected: map.get("REJECTED") ?? 0,
     };
   }
 
@@ -489,9 +512,14 @@ export class StockTransfersService {
     companyId: string,
     query: ListStockTransfersQueryDto,
   ): Prisma.StockTransferWhereInput {
-    const { search, status, fromBranchId, toBranchId, from, to } = query;
+    const { search, status, branchId, fromBranchId, toBranchId, from, to } = query;
     const where: Prisma.StockTransferWhereInput = this.tenantWhere(companyId);
     if (status) where.status = status;
+    if (branchId) {
+      where.AND = [
+        { OR: [{ fromBranchId: branchId }, { toBranchId: branchId }] },
+      ];
+    }
     if (fromBranchId) where.fromBranchId = fromBranchId;
     if (toBranchId) where.toBranchId = toBranchId;
     if (search) {

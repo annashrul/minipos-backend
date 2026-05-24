@@ -41,6 +41,16 @@ export class StockTransfersController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("stock-transfers", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.transfers.summary(companyId, branchId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("stock-transfers", "view")
   async findOne(

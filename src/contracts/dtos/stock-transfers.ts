@@ -12,6 +12,7 @@ export type StockTransferStatusDto = z.infer<typeof StockTransferStatusSchema>;
 export const ListStockTransfersQuerySchema = z.object({
   search: z.string().optional(),
   status: StockTransferStatusSchema.optional(),
+  branchId: z.string().optional(),
   fromBranchId: z.string().optional(),
   toBranchId: z.string().optional(),
   from: z.string().datetime().optional(),
