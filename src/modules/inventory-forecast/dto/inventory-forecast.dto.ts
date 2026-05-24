@@ -35,6 +35,8 @@ export const InventoryForecastQuerySchema = z.object({
   sortBy: ForecastSortBySchema.optional(),
   sortDir: ForecastSortDirSchema.optional(),
   leadTimeDays: z.coerce.number().int().min(0).max(365).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  perPage: z.coerce.number().int().min(1).max(200).optional(),
 });
 export type InventoryForecastQueryDto = z.infer<
   typeof InventoryForecastQuerySchema

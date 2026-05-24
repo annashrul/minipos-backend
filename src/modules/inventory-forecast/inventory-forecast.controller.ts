@@ -71,8 +71,13 @@ export class InventoryForecastController {
     @Query(new ZodValidationPipe(InventoryForecastQuerySchema))
     query: InventoryForecastQueryDto,
   ) {
-    const all = await this.service.getForecast(companyId, query);
-    const data = all.filter(
+    const result = await this.service.getForecast(companyId, {
+      ...query,
+      riskLevel: undefined,
+      page: undefined,
+      perPage: undefined,
+    });
+    const data = result.items.filter(
       (p) => p.riskLevel === "CRITICAL" || p.riskLevel === "WARNING",
     );
     return { data };

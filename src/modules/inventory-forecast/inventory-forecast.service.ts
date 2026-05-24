@@ -1,5 +1,7 @@
 ﻿import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   AutoReorderQueryDto,
   DailySalesPointResponse,
@@ -40,7 +42,7 @@ export class InventoryForecastService {
   async getForecast(
     companyId: string,
     query: InventoryForecastQueryDto,
-  ): Promise<ForecastProductResponse[]> {
+  ): Promise<PaginatedResponse<ForecastProductResponse>> {
     const {
       branchId,
       riskLevel,
@@ -219,14 +221,18 @@ export class InventoryForecastService {
       return sortDir === "desc" ? -cmp : cmp;
     });
 
-    return results;
+    const page = query.page ?? 1;
+    const perPage = query.perPage ?? (results.length || 1);
+    const total = results.length;
+    const paged = results.slice((page - 1) * perPage, page * perPage);
+    return paginate(paged, total, page, perPage);
   }
 
   async getSummary(
     companyId: string,
     query: ForecastSummaryQueryDto,
   ): Promise<ForecastSummaryResponse> {
-    const all = await this.getForecast(companyId, {
+    const result = await this.getForecast(companyId, {
       branchId: query.branchId,
     } as InventoryForecastQueryDto);
 
@@ -237,7 +243,7 @@ export class InventoryForecastService {
     let totalStockValueAtRisk = 0;
     let productsNeedingReorder = 0;
 
-    for (const p of all) {
+    for (const p of result.items) {
       switch (p.riskLevel) {
         case "CRITICAL":
           criticalCount++;
@@ -267,7 +273,7 @@ export class InventoryForecastService {
       safeCount,
       totalStockValueAtRisk,
       productsNeedingReorder,
-      totalProducts: all.length,
+      totalProducts: result.meta.total,
     };
   }
 
@@ -329,13 +335,13 @@ export class InventoryForecastService {
     companyId: string,
     query: AutoReorderQueryDto,
   ): Promise<SupplierReorderGroupResponse[]> {
-    const all = await this.getForecast(companyId, {
+    const result = await this.getForecast(companyId, {
       branchId: query.branchId,
       sortBy: "daysLeft",
       sortDir: "asc",
     } as InventoryForecastQueryDto);
 
-    const needsReorder = all.filter(
+    const needsReorder = result.items.filter(
       (p) => p.recommendedReorderQty > 0 && p.daysUntilStockout < 14,
     );
 
