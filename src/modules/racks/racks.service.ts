@@ -20,7 +20,7 @@ import type {
   SetRackStockDto,
   TransferRackStockDto,
   UpdateRackDto,
-} from "@/contracts";
+} from "./dto/racks.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const RACK_SELECT = {

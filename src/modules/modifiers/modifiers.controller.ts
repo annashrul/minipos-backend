@@ -19,7 +19,7 @@ import {
   type ListModifierGroupsQueryDto,
   type UpdateModifierGroupDto,
   type AttachProductModifierDto,
-} from "@/contracts";
+} from "./dto/modifiers.dto";
 import { ModifiersService } from "./modifiers.service";
 
 @Controller("modifiers")

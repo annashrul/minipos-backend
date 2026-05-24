@@ -12,7 +12,7 @@ import type {
   ModifierGroupResponse,
   UpdateModifierGroupDto,
   AttachProductModifierDto,
-} from "@/contracts";
+} from "./dto/modifiers.dto";
 
 const GROUP_INCLUDE = {
   options: {

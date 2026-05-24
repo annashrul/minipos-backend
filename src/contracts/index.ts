@@ -16,7 +16,7 @@ export * from "../modules/promotions/dto/promotions.dto";
 export * from "../modules/shifts/dto/shifts.dto";
 export * from "../modules/bundles/dto/bundles.dto";
 export * from "./dtos/recipes";
-export * from "./dtos/modifiers";
+export * from "../modules/modifiers/dto/modifiers.dto";
 export * from "../modules/expenses/dto/expenses.dto";
 export * from "../modules/debts/dto/debts.dto";
 export * from "./dtos/returns";
@@ -63,7 +63,7 @@ export * from "./dtos/auto-journal";
 export * from "./dtos/vehicle";
 export * from "./dtos/service-order";
 export * from "./dtos/bookings";
-export * from "./dtos/racks";
+export * from "../modules/racks/dto/racks.dto";
 
 export type ApiSuccess<T> = { data: T };
 
