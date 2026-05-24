@@ -4,11 +4,12 @@ import type {
   GoodsReceiptDetailItemResponse,
   GoodsReceiptDetailResponse,
   GoodsReceiptListItemResponse,
-  GoodsReceiptListResponse,
   GoodsReceiptStatsQueryDto,
   GoodsReceiptStatsResponse,
   ListGoodsReceiptsQueryDto,
 } from "@/contracts";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const LIST_SELECT = {
@@ -83,25 +84,22 @@ export class GoodsReceiptsService {
   async list(
     companyId: string,
     query: ListGoodsReceiptsQueryDto,
-  ): Promise<GoodsReceiptListResponse> {
+  ): Promise<PaginatedResponse<GoodsReceiptListItemResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
       this.prisma.goodsReceipt.findMany({
         where,
         select: LIST_SELECT,
         orderBy: { receivedAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.goodsReceipt.count({ where }),
     ]);
 
-    return {
-      receipts: rows.map(toListItemResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toListItemResponse), total, page, perPage);
   }
 
   async findById(
