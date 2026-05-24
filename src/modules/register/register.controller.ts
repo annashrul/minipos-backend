@@ -10,7 +10,7 @@ import {
   type ResendPhoneOtpDto,
   type ResetPasswordDto,
   type VerifyPhoneOtpDto,
-} from "@/contracts";
+} from "./dto/register.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { Public } from "../auth/public.decorator";
 import { RegisterService } from "./register.service";

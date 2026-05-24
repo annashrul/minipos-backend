@@ -1,12 +1,12 @@
 ﻿import { Body, Controller, Get, Patch, Post, Query } from "@nestjs/common";
 import { z } from "zod";
+import { type AuthUser } from "@/contracts";
 import {
   MeAccessMatrixQuerySchema,
-  type AuthUser,
   type MeAccessMatrixQueryDto,
   type MeAccessMatrixResponse,
   type MeMenusResponse,
-} from "@/contracts";
+} from "./dto/me.dto";
 import {
   VerifyAuthorizationSchema,
   type VerifyAuthorizationDto,
