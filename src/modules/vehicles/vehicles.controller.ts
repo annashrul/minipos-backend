@@ -16,7 +16,7 @@ import {
   type CreateVehicleDto,
   type ListVehiclesQueryDto,
   type UpdateVehicleDto,
-} from "@/contracts";
+} from "./dto/vehicle.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

@@ -1,6 +1,6 @@
 ﻿import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { AiChatMessageDto, AiChatResponse } from "@/contracts";
+import type { AiChatMessageDto, AiChatResponse } from "./dto/ai-assistant.dto";
 import Groq from "groq-sdk";
 import { PrismaService } from "../prisma/prisma.service";
 import { CashierService } from "../cashier/cashier.service";

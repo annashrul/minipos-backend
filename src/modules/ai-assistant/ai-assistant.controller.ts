@@ -2,8 +2,8 @@
 import {
   AiChatRequestSchema,
   type AiChatRequestDto,
-  type AuthUser,
-} from "@/contracts";
+} from "./dto/ai-assistant.dto";
+import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentUser } from "../auth/current-user.decorator";

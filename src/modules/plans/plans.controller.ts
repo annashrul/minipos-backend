@@ -19,7 +19,7 @@ import {
   type SetPlanActionAccessDto,
   type SetPlanMenuAccessDto,
   type UpdatePlanAccessDto,
-} from "@/contracts";
+} from "./dto/plans.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { RequireAccess } from "../auth/require-access.decorator";

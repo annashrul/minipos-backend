@@ -4,7 +4,7 @@ import type {
   ListPlatformActivityLogsQueryDto,
   PlatformActivityLogListResponse,
   PlatformNotificationListResponse,
-} from "@/contracts";
+} from "./dto/platform-notifications.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

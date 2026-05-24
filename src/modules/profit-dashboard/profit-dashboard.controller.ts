@@ -12,7 +12,7 @@ import {
   type ProfitByProductQueryDto,
   type ProfitOverviewQueryDto,
   type ProfitTrendQueryDto,
-} from "@/contracts";
+} from "./dto/profit-dashboard.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompanyOrNull } from "../auth/current-company.decorator";

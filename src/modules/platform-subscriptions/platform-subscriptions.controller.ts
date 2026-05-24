@@ -8,17 +8,17 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CreatePlatformSubscriptionSchema,
   ListPlatformCompaniesQuerySchema,
   ListPlatformSubscriptionsQuerySchema,
   MarkPlatformSubscriptionPaidSchema,
-  type AuthUser,
   type CreatePlatformSubscriptionDto,
   type ListPlatformCompaniesQueryDto,
   type ListPlatformSubscriptionsQueryDto,
   type MarkPlatformSubscriptionPaidDto,
-} from "@/contracts";
+} from "./dto/platform-subscriptions.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformOwnerGuard } from "./platform-owner.guard";

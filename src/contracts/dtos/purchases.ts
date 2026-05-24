@@ -12,7 +12,10 @@ export type PurchaseOrderStatusDto = z.infer<typeof PurchaseOrderStatusSchema>;
 
 export const ListPurchasesQuerySchema = z.object({
   search: z.string().optional(),
-  status: PurchaseOrderStatusSchema.optional(),
+  status: z.union([
+    PurchaseOrderStatusSchema,
+    z.string().transform((s) => s.split(",")).pipe(z.array(PurchaseOrderStatusSchema)),
+  ]).optional(),
   supplierId: z.string().optional(),
   branchId: z.string().optional(),
   from: z.string().datetime().optional(),

@@ -4,8 +4,8 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { AuthUser } from "@/contracts";
 import type {
-  AuthUser,
   CreatePlatformSubscriptionDto,
   ListPlatformCompaniesQueryDto,
   ListPlatformSubscriptionsQueryDto,
@@ -14,7 +14,7 @@ import type {
   PlatformSubscriptionListResponse,
   PlatformSubscriptionResponse,
   PlatformSubscriptionStatsResponse,
-} from "@/contracts";
+} from "./dto/platform-subscriptions.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const SUBSCRIPTION_SELECT = {

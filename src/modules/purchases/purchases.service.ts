@@ -1267,7 +1267,9 @@ export class PurchasesService {
   ): Prisma.PurchaseOrderWhereInput {
     const { search, status, supplierId, branchId, from, to } = query;
     const where: Prisma.PurchaseOrderWhereInput = this.tenantWhere(companyId);
-    if (status) where.status = status;
+    if (status) {
+      where.status = Array.isArray(status) ? { in: status } : status;
+    }
     if (supplierId) where.supplierId = supplierId;
     if (branchId) where.branchId = branchId;
     if (search) {

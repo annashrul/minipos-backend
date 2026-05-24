@@ -11,7 +11,7 @@ import type {
   UpdateVehicleDto,
   VehicleListResponse,
   VehicleResponse,
-} from "@/contracts";
+} from "./dto/vehicle.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

@@ -26,7 +26,7 @@ import type {
   LowStockBranchEntry,
   LowStockListResponse,
   LowStockProductResponse,
-} from "@/contracts";
+} from "./dto/dashboard.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 type RangeBounds = { from: Date; to: Date };

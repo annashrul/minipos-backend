@@ -6,7 +6,7 @@ import {
   type DashboardExtendedStatsQueryDto,
   type DashboardListQueryDto,
   type DashboardStatsQueryDto,
-} from "@/contracts";
+} from "./dto/dashboard.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

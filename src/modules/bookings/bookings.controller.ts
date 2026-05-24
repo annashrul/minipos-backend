@@ -14,12 +14,12 @@ import {
   ListBookingsQuerySchema,
   TransitionBookingStatusSchema,
   UpdateBookingSchema,
-  type AuthUser,
   type CreateBookingDto,
   type ListBookingsQueryDto,
   type TransitionBookingStatusDto,
   type UpdateBookingDto,
-} from "@/contracts";
+} from "./dto/bookings.dto";
+import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

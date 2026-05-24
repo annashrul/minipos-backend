@@ -19,7 +19,7 @@ import type {
   SalesTargetStatusDto,
   SalesTargetTypeDto,
   UpdateSalesTargetDto,
-} from "@/contracts";
+} from "./dto/sales-targets.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 // Definisi badge (port dari apps/web/src/server/actions/sales-targets-types.ts).
