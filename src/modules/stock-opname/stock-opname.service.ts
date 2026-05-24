@@ -4,13 +4,14 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   CreateStockOpnameDto,
   ListStockOpnameQueryDto,
   SetOpnameItemsDto,
   StockOpnameDetailResponse,
   StockOpnameItemResponse,
-  StockOpnameListResponse,
   StockOpnameResponse,
   StockOpnameStatusDto,
 } from "@/contracts";
@@ -74,25 +75,22 @@ export class StockOpnameService {
   async list(
     companyId: string,
     query: ListStockOpnameQueryDto,
-  ): Promise<StockOpnameListResponse> {
+  ): Promise<PaginatedResponse<StockOpnameResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
       this.prisma.stockOpname.findMany({
         where,
         select: OPNAME_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.stockOpname.count({ where }),
     ]);
 
-    return {
-      opnames: rows.map(toOpnameResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toOpnameResponse), total, page, perPage);
   }
 
   async findById(
