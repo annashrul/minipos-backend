@@ -4,6 +4,8 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   ClosePurchaseDto,
   ClosePurchaseResponse,
@@ -12,7 +14,6 @@ import type {
   GoodsReceiptResponse,
   ListPurchaseTransactionLogQueryDto,
   ListPurchasesQueryDto,
-  PurchaseListResponse,
   PurchaseOrderDetailResponse,
   PurchaseOrderItemResponse,
   PurchaseOrderResponse,
@@ -142,25 +143,22 @@ export class PurchasesService {
   async list(
     companyId: string,
     query: ListPurchasesQueryDto,
-  ): Promise<PurchaseListResponse> {
+  ): Promise<PaginatedResponse<PurchaseOrderResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
       this.prisma.purchaseOrder.findMany({
         where,
         select: PO_SELECT,
         orderBy: { orderDate: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.purchaseOrder.count({ where }),
     ]);
 
-    return {
-      purchases: rows.map(toPurchaseResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toPurchaseResponse), total, page, perPage);
   }
 
   async summary(
