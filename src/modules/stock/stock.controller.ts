@@ -41,6 +41,16 @@ export class StockController {
     return { data };
   }
 
+  @Get("movements/summary")
+  @RequireAccess("stock", "view")
+  async movementSummary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.stock.movementSummary(companyId, branchId);
+    return { data };
+  }
+
   @Get("branch")
   @RequireAccess("stock", "view")
   async listBranchStock(

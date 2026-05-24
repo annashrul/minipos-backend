@@ -3,7 +3,7 @@
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, type StockMovementType } from "@prisma/client";
 import type {
   AdjustStockDto,
   BranchStockListResponse,
@@ -105,6 +105,41 @@ export class StockService {
       movements: rows.map(toMovementResponse),
       total,
       totalPages: Math.ceil(total / perPage),
+    };
+  }
+
+  async movementSummary(
+    companyId: string,
+    branchId?: string,
+  ) {
+    const where: Prisma.StockMovementWhereInput = {
+      product: { companyId },
+      ...(branchId ? { branchId } : {}),
+    };
+
+    const inTypes: StockMovementType[] = ["IN", "MANUAL_IN", "PURCHASE_RECEIVE", "RETURN_IN"];
+    const outTypes: StockMovementType[] = ["OUT", "MANUAL_OUT", "SALE", "RETURN_OUT", "WASTE", "RECIPE_DEDUCT", "RTV"];
+    const adjTypes: StockMovementType[] = ["ADJUSTMENT", "OPNAME_ADJUSTMENT"];
+    const transferTypes: StockMovementType[] = ["TRANSFER", "TRANSFER_IN", "TRANSFER_OUT"];
+    const opnameTypes: StockMovementType[] = ["OPNAME"];
+
+    const [inCount, outCount, adjCount, transferCount, opnameCount, total] =
+      await Promise.all([
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: inTypes } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: outTypes } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: adjTypes } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: transferTypes } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: opnameTypes } } }),
+        this.prisma.stockMovement.count({ where }),
+      ]);
+
+    return {
+      total,
+      inCount,
+      outCount,
+      adjCount,
+      transferCount,
+      opnameCount,
     };
   }
 
