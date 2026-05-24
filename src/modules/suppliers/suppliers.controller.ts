@@ -39,6 +39,13 @@ export class SuppliersController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("suppliers", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.suppliers.summary(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("suppliers", "view")
   async findOne(

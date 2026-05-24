@@ -2,12 +2,13 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   CreateExpenseDto,
-  ExpenseListResponse,
   ExpenseResponse,
   ExpenseSummaryResponse,
   ListExpensesQueryDto,
   UpdateExpenseDto,
 } from "./dto/expenses.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { ExpensesRepository, type RawExpense } from "./expenses.repository";
 
 @Injectable()
@@ -17,7 +18,7 @@ export class ExpensesService {
   async list(
     companyId: string,
     query: ListExpensesQueryDto,
-  ): Promise<ExpenseListResponse> {
+  ): Promise<PaginatedResponse<ExpenseResponse>> {
     const { search, category, branchId, from, to, page, perPage } = query;
 
     const where = this.tenantWhere(companyId);
@@ -40,11 +41,7 @@ export class ExpensesService {
       this.repo.count(where),
     ]);
 
-    return {
-      expenses: rows.map(toExpenseResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toExpenseResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<ExpenseResponse> {

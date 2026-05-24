@@ -6,22 +6,36 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  BrandListResponse,
   BrandResponse,
   CreateBrandDto,
   ListBrandsQueryDto,
   UpdateBrandDto,
 } from "./dto/brands.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { BrandsRepository, type RawBrand } from "./brands.repository";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class BrandsService {
-  constructor(private readonly repo: BrandsRepository) {}
+  constructor(
+    private readonly repo: BrandsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, withProducts] = await Promise.all([
+      this.prisma.brand.count({ where }),
+      this.prisma.brand.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, withProducts, withoutProducts: total - withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListBrandsQueryDto,
-  ): Promise<BrandListResponse> {
+  ): Promise<PaginatedResponse<BrandResponse>> {
     const { search, kind, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.BrandWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
@@ -46,11 +60,7 @@ export class BrandsService {
       this.repo.count(where),
     ]);
 
-    return {
-      brands: rows.map(toBrandResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBrandResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<BrandResponse> {

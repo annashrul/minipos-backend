@@ -7,7 +7,6 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateDebtDto,
   DebtDetailResponse,
-  DebtListResponse,
   DebtPaymentResponse,
   DebtResponse,
   DebtSummaryResponse,
@@ -16,6 +15,8 @@ import type {
   ListDebtsQueryDto,
   PayDebtDto,
 } from "./dto/debts.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const DEBT_SELECT = {
@@ -84,7 +85,8 @@ export class DebtsService {
   async list(
     companyId: string,
     query: ListDebtsQueryDto,
-  ): Promise<DebtListResponse> {
+  ): Promise<PaginatedResponse<DebtResponse>> {
+    const { page, perPage } = query;
     const where = await this.buildListWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
@@ -92,17 +94,13 @@ export class DebtsService {
         where,
         select: DEBT_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.debt.count({ where }),
     ]);
 
-    return {
-      debts: rows.map(toDebtResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toDebtResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<DebtDetailResponse> {

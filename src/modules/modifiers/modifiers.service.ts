@@ -8,11 +8,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import type {
   CreateModifierGroupDto,
   ListModifierGroupsQueryDto,
-  ModifierGroupListResponse,
   ModifierGroupResponse,
   UpdateModifierGroupDto,
   AttachProductModifierDto,
 } from "./dto/modifiers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 
 const GROUP_INCLUDE = {
   options: {
@@ -57,7 +58,7 @@ export class ModifiersService {
   async list(
     companyId: string,
     query: ListModifierGroupsQueryDto,
-  ): Promise<ModifierGroupListResponse> {
+  ): Promise<PaginatedResponse<ModifierGroupResponse>> {
     const { search, isActive, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.ModifierGroupWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
@@ -88,11 +89,7 @@ export class ModifiersService {
       this.prisma.modifierGroup.count({ where }),
     ]);
 
-    return {
-      groups: rows.map(toGroupResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toGroupResponse), total, page, perPage);
   }
 
   async findById(

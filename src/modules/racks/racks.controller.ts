@@ -50,6 +50,16 @@ export class RacksController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("racks", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.racks.summary(companyId, branchId);
+    return { data };
+  }
+
   @Get("product/:productId")
   @RequireAccess("racks", "view")
   async productLookup(

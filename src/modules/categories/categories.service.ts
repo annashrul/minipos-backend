@@ -6,26 +6,38 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  CategoryListResponse,
   CategoryResponse,
   CreateCategoryDto,
   ListCategoriesQueryDto,
   UpdateCategoryDto,
 } from "./dto/categories.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { CategoriesRepository, type RawCategory } from "./categories.repository";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class CategoriesService {
   constructor(
     private readonly repo: CategoriesRepository,
     private readonly realtime: RealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, withProducts] = await Promise.all([
+      this.prisma.category.count({ where }),
+      this.prisma.category.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, withProducts, empty: total - withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListCategoriesQueryDto,
-  ): Promise<CategoryListResponse> {
+  ): Promise<PaginatedResponse<CategoryResponse>> {
     const {
       search,
       parentId,
@@ -81,11 +93,7 @@ export class CategoriesService {
       this.repo.count(where),
     ]);
 
-    return {
-      categories: rows.map(toCategoryResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toCategoryResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<CategoryResponse> {

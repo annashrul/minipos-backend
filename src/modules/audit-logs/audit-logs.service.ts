@@ -1,9 +1,7 @@
 ﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  ActivityLogListResponse,
   ActivityLogResponse,
-  AuditLogListResponse,
   AuditLogResponse,
   AuditLogSummaryResponse,
   AuditSummaryQueryDto,
@@ -11,6 +9,8 @@ import type {
   ListActivityLogsQueryDto,
   ListAuditLogsQueryDto,
 } from "./dto/audit-logs.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const AUDIT_LOG_SELECT = {
@@ -57,7 +57,8 @@ export class AuditLogsService {
   async listAuditLogs(
     companyId: string,
     query: ListAuditLogsQueryDto,
-  ): Promise<AuditLogListResponse> {
+  ): Promise<PaginatedResponse<AuditLogResponse>> {
+    const { page, perPage } = query;
     const where = this.buildAuditWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
@@ -65,17 +66,13 @@ export class AuditLogsService {
         where,
         select: AUDIT_LOG_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.auditLog.count({ where }),
     ]);
 
-    return {
-      logs: rows.map(toAuditLogResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toAuditLogResponse), total, page, perPage);
   }
 
   async findAuditLog(
@@ -176,7 +173,8 @@ export class AuditLogsService {
   async listActivityLogs(
     companyId: string,
     query: ListActivityLogsQueryDto,
-  ): Promise<ActivityLogListResponse> {
+  ): Promise<PaginatedResponse<ActivityLogResponse>> {
+    const { page, perPage } = query;
     const where = this.buildActivityWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
@@ -184,17 +182,13 @@ export class AuditLogsService {
         where,
         select: ACTIVITY_LOG_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.activityLog.count({ where }),
     ]);
 
-    return {
-      logs: rows.map(toActivityLogResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toActivityLogResponse), total, page, perPage);
   }
 
   async findActivityLog(

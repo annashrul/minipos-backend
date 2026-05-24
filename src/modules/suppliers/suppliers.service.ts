@@ -7,20 +7,35 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateSupplierDto,
   ListSuppliersQueryDto,
-  SupplierListResponse,
   SupplierResponse,
   UpdateSupplierDto,
 } from "./dto/suppliers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { SuppliersRepository, type RawSupplier } from "./suppliers.repository";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class SuppliersService {
-  constructor(private readonly repo: SuppliersRepository) {}
+  constructor(
+    private readonly repo: SuppliersRepository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, active, withProducts] = await Promise.all([
+      this.prisma.supplier.count({ where }),
+      this.prisma.supplier.count({ where: { ...where, isActive: true } }),
+      this.prisma.supplier.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, active, inactive: total - active, withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListSuppliersQueryDto,
-  ): Promise<SupplierListResponse> {
+  ): Promise<PaginatedResponse<SupplierResponse>> {
     const { search, isActive, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.SupplierWhereInput = { companyId };
     if (search) {
@@ -54,11 +69,7 @@ export class SuppliersService {
       this.repo.count(where),
     ]);
 
-    return {
-      suppliers: rows.map(toSupplierResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toSupplierResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<SupplierResponse> {

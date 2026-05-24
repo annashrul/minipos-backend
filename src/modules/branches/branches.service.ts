@@ -6,12 +6,13 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  BranchListResponse,
   BranchResponse,
   CreateBranchDto,
   ListBranchesQueryDto,
   UpdateBranchDto,
 } from "./dto/branches.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { BranchesRepository, type RawBranch } from "./branches.repository";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
@@ -25,7 +26,7 @@ export class BranchesService {
   async list(
     companyId: string,
     query: ListBranchesQueryDto,
-  ): Promise<BranchListResponse> {
+  ): Promise<PaginatedResponse<BranchResponse>> {
     const { search, isActive, page, perPage } = query;
     const where: Prisma.BranchWhereInput = { companyId };
     if (search) {
@@ -41,11 +42,7 @@ export class BranchesService {
       this.repo.count(where),
     ]);
 
-    return {
-      branches: rows.map(toBranchResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBranchResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<BranchResponse> {

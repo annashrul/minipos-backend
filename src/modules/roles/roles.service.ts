@@ -10,12 +10,13 @@ import type {
   ListRolesQueryDto,
   MenuTreeResponse,
   RoleDetailResponse,
-  RoleListResponse,
   RoleResponse,
   ToggleRoleActionPermissionDto,
   ToggleRoleMenuPermissionDto,
   UpdateRoleDto,
 } from "./dto/roles.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { RolesRepository, type RawRole } from "./roles.repository";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
@@ -29,7 +30,7 @@ export class RolesService {
   async list(
     companyId: string,
     query: ListRolesQueryDto,
-  ): Promise<RoleListResponse> {
+  ): Promise<PaginatedResponse<RoleResponse>> {
     const { search, page, perPage } = query;
     const where: Prisma.AppRoleWhereInput = {};
     if (search) where.name = { contains: search, mode: "insensitive" };
@@ -44,11 +45,12 @@ export class RolesService {
       rows.map((r) => r.key),
     );
 
-    return {
-      roles: rows.map((r) => toRoleResponse(r, userCounts.get(r.key) ?? 0)),
+    return paginate(
+      rows.map((r) => toRoleResponse(r, userCounts.get(r.key) ?? 0)),
       total,
-      totalPages: Math.ceil(total / perPage),
-    };
+      page,
+      perPage,
+    );
   }
 
   async findById(

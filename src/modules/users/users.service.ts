@@ -10,16 +10,17 @@ import type {
   CreateUserDto,
   ListUsersQueryDto,
   UpdateUserDto,
-  UserListResponse,
   UserResponse,
 } from "./dto/users.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { UsersRepository, type RawUser } from "./users.repository";
 
 @Injectable()
 export class UsersService {
   constructor(private readonly repo: UsersRepository) {}
 
-  async list(companyId: string, query: ListUsersQueryDto): Promise<UserListResponse> {
+  async list(companyId: string, query: ListUsersQueryDto): Promise<PaginatedResponse<UserResponse>> {
     const { search, role, branchId, isMechanic, page, perPage } = query;
     const where: Prisma.UserWhereInput = { companyId };
     if (search) {
@@ -37,11 +38,7 @@ export class UsersService {
       this.repo.count(where),
     ]);
 
-    return {
-      users: rows.map(toUserResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toUserResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<UserResponse> {

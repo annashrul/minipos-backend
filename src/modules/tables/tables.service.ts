@@ -7,11 +7,12 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateTableDto,
   ListTablesQueryDto,
-  TableListResponse,
   TableResponse,
   TableStatusDto,
   UpdateTableDto,
 } from "./dto/tables.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { TablesRepository, type RawTable } from "./tables.repository";
 
 @Injectable()
@@ -21,7 +22,7 @@ export class TablesService {
   async list(
     companyId: string,
     query: ListTablesQueryDto,
-  ): Promise<TableListResponse> {
+  ): Promise<PaginatedResponse<TableResponse>> {
     const { branchId, status, section, isActive, search, page, perPage } =
       query;
 
@@ -44,11 +45,7 @@ export class TablesService {
       this.repo.count(where),
     ]);
 
-    return {
-      tables: rows.map(toTableResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toTableResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<TableResponse> {

@@ -11,9 +11,10 @@ import type {
   ListVouchersQueryDto,
   RedeemVoucherDto,
   VoucherGenerateResponse,
-  VoucherListResponse,
   VoucherResponse,
 } from "./dto/vouchers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { VouchersRepository, type RawVoucher } from "./vouchers.repository";
 
 const MAX_GENERATE_ATTEMPTS = 5;
@@ -25,7 +26,7 @@ export class VouchersService {
   async list(
     companyId: string,
     query: ListVouchersQueryDto,
-  ): Promise<VoucherListResponse> {
+  ): Promise<PaginatedResponse<VoucherResponse>> {
     const { promotionId, isUsed, search, page, perPage } = query;
 
     const where: Prisma.VoucherWhereInput = {
@@ -42,11 +43,7 @@ export class VouchersService {
       this.repo.count(where),
     ]);
 
-    return {
-      vouchers: rows.map(toVoucherResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toVoucherResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<VoucherResponse> {

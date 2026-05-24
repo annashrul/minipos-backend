@@ -39,6 +39,13 @@ export class CustomersController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("customers", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.customers.summary(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("customers", "view")
   async findOne(

@@ -39,6 +39,13 @@ export class BrandsController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("brands", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.brands.summary(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("brands", "view")
   async findOne(

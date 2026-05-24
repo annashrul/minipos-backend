@@ -6,21 +6,52 @@ import {
 import { Prisma } from "@prisma/client";
 import type {
   CreateCustomerDto,
-  CustomerListResponse,
   CustomerResponse,
   ListCustomersQueryDto,
   UpdateCustomerDto,
 } from "./dto/customers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { CustomersRepository, type RawCustomer } from "./customers.repository";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly repo: CustomersRepository) {}
+  constructor(
+    private readonly repo: CustomersRepository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, grouped, agg] = await Promise.all([
+      this.prisma.customer.count({ where }),
+      this.prisma.customer.groupBy({
+        by: ["memberLevel"],
+        where,
+        _count: { _all: true },
+      }),
+      this.prisma.customer.aggregate({
+        where,
+        _sum: { totalSpending: true, points: true },
+      }),
+    ]);
+    const map = new Map(grouped.map((g) => [g.memberLevel, g._count._all]));
+    return {
+      total,
+      regular: map.get("REGULAR") ?? 0,
+      silver: map.get("SILVER") ?? 0,
+      gold: map.get("GOLD") ?? 0,
+      platinum: map.get("PLATINUM") ?? 0,
+      totalSpending: agg._sum.totalSpending ?? 0,
+      totalPoints: agg._sum.points ?? 0,
+    };
+  }
 
   async list(
     companyId: string,
     query: ListCustomersQueryDto,
-  ): Promise<CustomerListResponse> {
+  ): Promise<PaginatedResponse<CustomerResponse>> {
     const { search, memberLevel, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.CustomerWhereInput = { companyId };
     if (search) {
@@ -58,11 +89,7 @@ export class CustomersService {
       this.repo.count(where),
     ]);
 
-    return {
-      customers: rows.map(toCustomerResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toCustomerResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<CustomerResponse> {

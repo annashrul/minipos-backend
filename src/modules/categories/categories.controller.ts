@@ -39,6 +39,13 @@ export class CategoriesController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("categories", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.categories.summary(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("categories", "view")
   async findOne(

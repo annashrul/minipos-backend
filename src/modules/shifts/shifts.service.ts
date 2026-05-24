@@ -12,9 +12,10 @@ import type {
   ListShiftsQueryDto,
   OpenShiftDto,
   ShiftDetailResponse,
-  ShiftListResponse,
   ShiftResponse,
 } from "./dto/shifts.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import {
   ShiftsRepository,
   type RawShift,
@@ -32,7 +33,7 @@ export class ShiftsService {
   async list(
     companyId: string,
     query: ListShiftsQueryDto,
-  ): Promise<ShiftListResponse> {
+  ): Promise<PaginatedResponse<ShiftResponse>> {
     const { userId, branchId, isOpen, from, to, page, perPage, sortBy, sortDir } =
       query;
     const where: Prisma.CashierShiftWhereInput = {
@@ -73,11 +74,7 @@ export class ShiftsService {
       this.repo.count(where),
     ]);
 
-    return {
-      shifts: rows.map(toShiftResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toShiftResponse), total, page, perPage);
   }
 
   async findById(

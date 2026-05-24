@@ -9,7 +9,6 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateGiftCardDto,
   GiftCardDetailResponse,
-  GiftCardListResponse,
   GiftCardResponse,
   GiftCardTransactionResponse,
   ListGiftCardsQueryDto,
@@ -17,6 +16,8 @@ import type {
   TopupGiftCardDto,
   UpdateGiftCardDto,
 } from "./dto/gift-cards.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import {
   GiftCardsRepository,
   GIFT_CARD_DETAIL_SELECT,
@@ -33,7 +34,7 @@ export class GiftCardsService {
   async list(
     companyId: string,
     query: ListGiftCardsQueryDto,
-  ): Promise<GiftCardListResponse> {
+  ): Promise<PaginatedResponse<GiftCardResponse>> {
     const {
       customerId,
       branchId,
@@ -79,11 +80,7 @@ export class GiftCardsService {
       this.repo.count(where),
     ]);
 
-    return {
-      giftCards: rows.map(toGiftCardResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toGiftCardResponse), total, page, perPage);
   }
 
   async findById(

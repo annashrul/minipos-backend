@@ -7,10 +7,11 @@ import { Prisma } from "@prisma/client";
 import type {
   CreatePromotionDto,
   ListPromotionsQueryDto,
-  PromotionListResponse,
   PromotionResponse,
   UpdatePromotionDto,
 } from "./dto/promotions.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PROMOTION_SELECT = {
@@ -58,7 +59,7 @@ export class PromotionsService {
   async list(
     companyId: string,
     query: ListPromotionsQueryDto,
-  ): Promise<PromotionListResponse> {
+  ): Promise<PaginatedResponse<PromotionResponse>> {
     const {
       search,
       type,
@@ -109,13 +110,14 @@ export class PromotionsService {
     ]);
 
     const getProductMap = await this.fetchGetProducts(rows);
-    return {
-      promotions: rows.map((row) =>
+    return paginate(
+      rows.map((row) =>
         toPromotionResponse(row, getProductMap.get(row.getProductId ?? "") ?? null),
       ),
       total,
-      totalPages: Math.ceil(total / perPage),
-    };
+      page,
+      perPage,
+    );
   }
 
   async findById(companyId: string, id: string): Promise<PromotionResponse> {
