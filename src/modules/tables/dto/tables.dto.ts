@@ -22,6 +22,11 @@ export const ListTablesQuerySchema = z.object({
 });
 export type ListTablesQueryDto = z.infer<typeof ListTablesQuerySchema>;
 
+export const TableSummaryQuerySchema = z.object({
+  branchId: z.string().optional(),
+});
+export type TableSummaryQueryDto = z.infer<typeof TableSummaryQuerySchema>;
+
 export const CreateTableSchema = z.object({
   number: z.number().int().min(1),
   name: z.string().nullable().optional(),

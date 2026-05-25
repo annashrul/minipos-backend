@@ -96,4 +96,27 @@ export class TablesRepository {
   async delete(id: string): Promise<void> {
     await this.prisma.restaurantTable.delete({ where: { id } });
   }
+
+  async statusCounts(
+    where: Prisma.RestaurantTableWhereInput,
+  ): Promise<{ status: string; _count: number }[]> {
+    const rows = await this.prisma.restaurantTable.groupBy({
+      by: ["status"],
+      where,
+      _count: true,
+    });
+    return rows.map((r) => ({ status: r.status, _count: r._count }));
+  }
+
+  async sectionCounts(
+    where: Prisma.RestaurantTableWhereInput,
+  ): Promise<{ section: string | null; _count: number }[]> {
+    const rows = await this.prisma.restaurantTable.groupBy({
+      by: ["section"],
+      where,
+      _count: true,
+      orderBy: { section: "asc" },
+    });
+    return rows.map((r) => ({ section: r.section, _count: r._count }));
+  }
 }

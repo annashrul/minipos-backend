@@ -48,6 +48,37 @@ export class TablesService {
     return paginate(rows.map(toTableResponse), total, page, perPage);
   }
 
+  async summary(companyId: string, branchId?: string) {
+    const base: Prisma.RestaurantTableWhereInput = {
+      branch: { companyId },
+      ...(branchId ? { branchId } : {}),
+    };
+    const activeWhere = { ...base, isActive: true };
+
+    const [total, active, statusCounts, sectionCounts] = await Promise.all([
+      this.repo.count(base),
+      this.repo.count(activeWhere),
+      this.repo.statusCounts(activeWhere),
+      this.repo.sectionCounts(activeWhere),
+    ]);
+
+    const byStatus = (s: string) =>
+      statusCounts.find((r) => r.status === s)?._count ?? 0;
+
+    return {
+      total,
+      active,
+      available: byStatus("AVAILABLE"),
+      occupied: byStatus("OCCUPIED"),
+      reserved: byStatus("RESERVED"),
+      cleaning: byStatus("CLEANING"),
+      sections: sectionCounts
+        .filter((r) => r.section !== null)
+        .map((r) => ({ name: r.section!, count: r._count })),
+      noSectionCount: sectionCounts.find((r) => r.section === null)?._count ?? 0,
+    };
+  }
+
   async findById(companyId: string, id: string): Promise<TableResponse> {
     const table = await this.repo.findOne({ id, branch: { companyId } });
     if (!table) throw new NotFoundException("Table not found");

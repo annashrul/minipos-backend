@@ -12,10 +12,12 @@
 import {
   CreateTableSchema,
   ListTablesQuerySchema,
+  TableSummaryQuerySchema,
   UpdateTableSchema,
   UpdateTableStatusSchema,
   type CreateTableDto,
   type ListTablesQueryDto,
+  type TableSummaryQueryDto,
   type UpdateTableDto,
   type UpdateTableStatusDto,
 } from "./dto/tables.dto";
@@ -38,6 +40,17 @@ export class TablesController {
     query: ListTablesQueryDto,
   ) {
     const data = await this.tables.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("tables", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(TableSummaryQuerySchema))
+    query: TableSummaryQueryDto,
+  ) {
+    const data = await this.tables.summary(companyId, query.branchId);
     return { data };
   }
 
