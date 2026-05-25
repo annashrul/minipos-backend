@@ -267,7 +267,7 @@ export class DebtsService {
     });
 
     const now = new Date();
-    const [payable, receivable, overdueAgg] = await Promise.all([
+    const [payable, receivable, overdueAgg, totalCount, unpaidCount, partialCount, paidCount] = await Promise.all([
       this.prisma.debt.aggregate({
         where: { ...where, type: "PAYABLE" },
         _sum: { totalAmount: true, remainingAmount: true },
@@ -287,6 +287,10 @@ export class DebtsService {
         _sum: { remainingAmount: true },
         _count: { _all: true },
       }),
+      this.prisma.debt.count({ where }),
+      this.prisma.debt.count({ where: { ...where, status: "UNPAID" } }),
+      this.prisma.debt.count({ where: { ...where, status: "PARTIAL" } }),
+      this.prisma.debt.count({ where: { ...where, status: "PAID" } }),
     ]);
 
     return {
@@ -303,6 +307,13 @@ export class DebtsService {
       overdue: {
         count: overdueAgg._count._all,
         remaining: overdueAgg._sum.remainingAmount ?? 0,
+      },
+      byStatus: {
+        total: totalCount,
+        unpaid: unpaidCount,
+        partial: partialCount,
+        paid: paidCount,
+        overdue: overdueAgg._count._all,
       },
     };
   }

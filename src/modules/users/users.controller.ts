@@ -38,6 +38,16 @@ export class UsersController {
     return { data };
   }
 
+  @Get("summary")
+  @RequireAccess("users", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.users.summary(companyId, branchId || undefined);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("users", "view")
   async findOne(@CurrentCompany() companyId: string, @Param("id") id: string) {

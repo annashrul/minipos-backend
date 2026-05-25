@@ -52,6 +52,16 @@ export class ExpensesController {
     return { data };
   }
 
+  @Get("stats")
+  @RequireAccess("expenses", "view")
+  async stats(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.expenses.stats(companyId, branchId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("expenses", "view")
   async findOne(

@@ -286,6 +286,44 @@ export class GiftCardsService {
     return { success: true };
   }
 
+  async stats(companyId: string, branchId?: string) {
+    const where: Prisma.GiftCardWhereInput = this.tenantWhere(companyId);
+    if (branchId) where.branchId = branchId;
+
+    const now = new Date();
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+
+    const [total, active, activeAgg, allAgg, expiringSoon] = await Promise.all([
+      this.repo.count(where),
+      this.repo.count({ ...where, status: "ACTIVE" }),
+      this.repo.tx.giftCard.aggregate({
+        where: { ...where, status: "ACTIVE" },
+        _sum: { currentBalance: true },
+      }),
+      this.repo.tx.giftCard.aggregate({
+        where,
+        _sum: { initialBalance: true, currentBalance: true },
+      }),
+      this.repo.count({
+        ...where,
+        status: "ACTIVE",
+        expiresAt: { gte: now, lte: thirtyDaysFromNow },
+      }),
+    ]);
+
+    const totalBalance = allAgg._sum.initialBalance ?? 0;
+    const currentBalance = allAgg._sum.currentBalance ?? 0;
+
+    return {
+      total,
+      totalActiveCards: active,
+      totalBalanceOutstanding: activeAgg._sum.currentBalance ?? 0,
+      totalRedeemed: totalBalance - currentBalance,
+      expiringSoon,
+    };
+  }
+
   private tenantWhere(companyId: string): Prisma.GiftCardWhereInput {
     return {
       OR: [

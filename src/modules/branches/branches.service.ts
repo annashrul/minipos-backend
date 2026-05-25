@@ -45,6 +45,15 @@ export class BranchesService {
     return paginate(rows.map(toBranchResponse), total, page, perPage);
   }
 
+  async summary(companyId: string) {
+    const where: Prisma.BranchWhereInput = { companyId };
+    const [total, active] = await Promise.all([
+      this.repo.count(where),
+      this.repo.count({ ...where, isActive: true }),
+    ]);
+    return { total, active, inactive: total - active };
+  }
+
   async findById(companyId: string, id: string): Promise<BranchResponse> {
     const branch = await this.repo.findOne({ id, companyId });
     if (!branch) throw new NotFoundException("Branch not found");

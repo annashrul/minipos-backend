@@ -308,6 +308,40 @@ export class PromotionsService {
     }
   }
 
+  async stats(companyId: string) {
+    const now = new Date();
+    const where: Prisma.PromotionWhereInput = { companyId };
+
+    const [total, active, expired, byTypeRaw] = await Promise.all([
+      this.prisma.promotion.count({ where }),
+      this.prisma.promotion.count({
+        where: { ...where, isActive: true, endDate: { gte: now } },
+      }),
+      this.prisma.promotion.count({
+        where: { ...where, endDate: { lt: now } },
+      }),
+      this.prisma.promotion.groupBy({
+        by: ["type"],
+        where,
+        _count: { _all: true },
+      }),
+    ]);
+
+    const typeMap = new Map(byTypeRaw.map((g) => [g.type, g._count._all]));
+    return {
+      total,
+      active,
+      expired,
+      byType: {
+        DISCOUNT_PERCENT: typeMap.get("DISCOUNT_PERCENT") ?? 0,
+        DISCOUNT_AMOUNT: typeMap.get("DISCOUNT_AMOUNT") ?? 0,
+        BUY_X_GET_Y: typeMap.get("BUY_X_GET_Y") ?? 0,
+        VOUCHER: typeMap.get("VOUCHER") ?? 0,
+        BUNDLE: typeMap.get("BUNDLE") ?? 0,
+      },
+    };
+  }
+
   async toggle(
     companyId: string,
     id: string,

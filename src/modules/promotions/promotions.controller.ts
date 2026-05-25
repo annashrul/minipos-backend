@@ -41,6 +41,13 @@ export class PromotionsController {
     return { data };
   }
 
+  @Get("stats")
+  @RequireAccess("promotions", "view")
+  async stats(@CurrentCompany() companyId: string) {
+    const data = await this.promotions.stats(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("promotions", "view")
   async findOne(

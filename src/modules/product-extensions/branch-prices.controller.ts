@@ -31,6 +31,24 @@ import { ProductExtensionsService } from "./product-extensions.service";
 export class BranchPricesController {
   constructor(private readonly service: ProductExtensionsService) {}
 
+  @Get("branch-prices/products")
+  @RequireAccess("branch-prices", "view")
+  async productsWithPrices(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId: string,
+    @Query("search") search?: string,
+    @Query("page") page?: string,
+    @Query("perPage") perPage?: string,
+  ) {
+    const data = await this.service.productsWithBranchPrices(companyId, {
+      branchId,
+      search: search || undefined,
+      page: page ? parseInt(page, 10) : undefined,
+      perPage: perPage ? parseInt(perPage, 10) : undefined,
+    });
+    return { data };
+  }
+
   @Get("branch-prices")
   @RequireAccess("branch-prices", "view")
   async list(

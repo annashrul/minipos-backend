@@ -41,6 +41,24 @@ export class UsersService {
     return paginate(rows.map(toUserResponse), total, page, perPage);
   }
 
+  async summary(companyId: string, branchId?: string) {
+    const where: Prisma.UserWhereInput = { companyId };
+    if (branchId) where.branchId = branchId;
+
+    const [total, active] = await Promise.all([
+      this.repo.count(where),
+      this.repo.count({ ...where, isActive: true }),
+    ]);
+
+    const roleRows = await this.repo.groupByRole(where);
+    const topRoles: [string, number][] = roleRows
+      .sort((a, b) => b._count._all - a._count._all)
+      .slice(0, 5)
+      .map((r) => [r.role, r._count._all]);
+
+    return { total, active, topRoles };
+  }
+
   async findById(companyId: string, id: string): Promise<UserResponse> {
     const user = await this.repo.findOne({ id, companyId });
     if (!user) throw new NotFoundException("User not found");

@@ -45,6 +45,16 @@ export class GiftCardsController {
     return { data };
   }
 
+  @Get("stats")
+  @RequireAccess("gift-cards", "view")
+  async stats(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.giftCards.stats(companyId, branchId);
+    return { data };
+  }
+
   @Get("by-code/:code")
   @RequireAccess("gift-cards", "view")
   async findByCode(

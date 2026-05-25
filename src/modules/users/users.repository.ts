@@ -98,6 +98,17 @@ export class UsersRepository {
     return this.prisma.transaction.count({ where: { userId } });
   }
 
+  async groupByRole(
+    where: Prisma.UserWhereInput,
+  ): Promise<Array<{ role: string; _count: { _all: number } }>> {
+    const rows = await this.prisma.user.groupBy({
+      by: ["role"],
+      where,
+      _count: { _all: true },
+    });
+    return rows;
+  }
+
   async replaceBranches(userId: string, branchIds: string[]): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.userBranch.deleteMany({ where: { userId } }),

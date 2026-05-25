@@ -142,6 +142,30 @@ export class ExpensesService {
     };
   }
 
+  async stats(companyId: string, branchId?: string) {
+    const base: Prisma.ExpenseWhereInput = this.tenantWhere(companyId);
+    if (branchId) base.branchId = branchId;
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const [total, thisMonth, today] = await Promise.all([
+      this.repo.aggregate(base),
+      this.repo.aggregate({ ...base, date: { gte: startOfMonth } }),
+      this.repo.aggregate({ ...base, date: { gte: startOfDay } }),
+    ]);
+
+    return {
+      totalCount: total._count._all,
+      totalAmount: total._sum.amount ?? 0,
+      thisMonthCount: thisMonth._count._all,
+      thisMonthAmount: thisMonth._sum.amount ?? 0,
+      todayCount: today._count._all,
+      todayAmount: today._sum.amount ?? 0,
+    };
+  }
+
   private tenantWhere(companyId: string): Prisma.ExpenseWhereInput {
     return {
       OR: [{ companyId }, { branch: { companyId } }],
