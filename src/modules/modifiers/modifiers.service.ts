@@ -262,6 +262,15 @@ export class ModifiersService {
     return { success: true as const };
   }
 
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, active] = await Promise.all([
+      this.prisma.modifierGroup.count({ where }),
+      this.prisma.modifierGroup.count({ where: { ...where, isActive: true } }),
+    ]);
+    return { total, active, inactive: total - active };
+  }
+
   // â”€â”€ Product attachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async listForProduct(
     companyId: string,

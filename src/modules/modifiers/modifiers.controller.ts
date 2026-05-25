@@ -37,6 +37,12 @@ export class ModifiersController {
     return { data };
   }
 
+  @Get("summary")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.service.summary(companyId);
+    return { data };
+  }
+
   @Get(":id")
   async findOne(@CurrentCompany() companyId: string, @Param("id") id: string) {
     const data = await this.service.findById(companyId, id);

@@ -90,10 +90,13 @@ export type RecipeYieldRow = {
 export type RecipeYieldEstimatesResponse = {
   branchId: string | null;
   items: RecipeYieldRow[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
+  meta: {
+    total: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    count: number;
+  };
 };
 
 export type RecipeYieldSummaryResponse = {
