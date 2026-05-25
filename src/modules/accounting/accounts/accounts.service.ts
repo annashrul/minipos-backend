@@ -16,6 +16,7 @@ import type {
   UpdateAccountDto,
 } from "@/contracts";
 import { PrismaService } from "../../prisma/prisma.service";
+import { paginate } from "../../../common/utils/pagination";
 
 const ACCOUNT_SELECT = {
   id: true,
@@ -61,11 +62,7 @@ export class AccountsService {
       this.prisma.account.count({ where }),
     ]);
 
-    return {
-      accounts: rows.map(toAccountResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toAccountResponse), total, query.page, query.perPage);
   }
 
   async findById(

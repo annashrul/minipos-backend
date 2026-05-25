@@ -136,9 +136,14 @@ export type AccountWithBalanceResponse = AccountResponse & {
 };
 
 export type AccountListResponse = {
-  accounts: AccountResponse[];
-  total: number;
-  totalPages: number;
+  items: AccountResponse[];
+  meta: {
+    total: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    count: number;
+  };
 };
 
 export type AccountTreeNode = {
