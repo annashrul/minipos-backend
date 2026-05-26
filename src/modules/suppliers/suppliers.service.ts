@@ -123,6 +123,22 @@ export class SuppliersService {
     await this.repo.delete(id);
     return { success: true };
   }
+
+  async bulkDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number; skipped: string[] }> {
+    const [skippedRows, deleted] = await Promise.all([
+      this.prisma.supplier.findMany({
+        where: { id: { in: ids }, companyId, products: { some: { deletedAt: null } } },
+        select: { name: true },
+      }),
+      this.prisma.supplier.deleteMany({
+        where: { id: { in: ids }, companyId, products: { none: { deletedAt: null } } },
+      }),
+    ]);
+    return { count: deleted.count, skipped: skippedRows.map((r) => r.name) };
+  }
 }
 
 function toSupplierResponse(s: RawSupplier): SupplierResponse {

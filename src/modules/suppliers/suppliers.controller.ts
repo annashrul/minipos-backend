@@ -56,6 +56,16 @@ export class SuppliersController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("suppliers", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.suppliers.bulkDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Post()
   @RequireAccess("suppliers", "create")
   async create(
