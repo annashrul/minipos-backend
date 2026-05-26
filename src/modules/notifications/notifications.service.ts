@@ -1,9 +1,9 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type {
   NotificationExpiringListResponse,
   NotificationLowStockListResponse,
 } from "./dto/notifications.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { NotificationsRepository } from "./notifications.repository";
 
 /**
  * NOTE: this module currently only exposes product-alert-style notifications
@@ -14,7 +14,7 @@ import { PrismaService } from "../prisma/prisma.service";
  */
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: NotificationsRepository) {}
 
   async getLowStockProducts(
     companyId: string,
@@ -22,22 +22,7 @@ export class NotificationsService {
     // Prisma cannot directly compare `stock <= minStock`, so we fetch a
     // small candidate set and filter in memory. Mirrors the original raw SQL
     // behaviour (active products, ordered by stock asc, capped at 20).
-    const candidates = await this.prisma.product.findMany({
-      where: {
-        companyId,
-        isActive: true,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        minStock: true,
-      },
-      orderBy: { stock: "asc" },
-      take: 100,
-    });
+    const candidates = await this.repo.findLowStockCandidates(companyId, 100);
 
     return candidates
       .filter((p) => p.stock <= p.minStock)
@@ -57,23 +42,11 @@ export class NotificationsService {
     const thirtyDaysFromNow = new Date();
     thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
 
-    const rows = await this.prisma.product.findMany({
-      where: {
-        companyId,
-        isActive: true,
-        deletedAt: null,
-        expiryDate: { not: null, lte: thirtyDaysFromNow },
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        expiryDate: true,
-      },
-      orderBy: { expiryDate: "asc" },
-      take: 20,
-    });
+    const rows = await this.repo.findExpiringProducts(
+      companyId,
+      thirtyDaysFromNow,
+      20,
+    );
 
     return rows.map((p) => ({
       id: p.id,

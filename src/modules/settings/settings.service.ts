@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
 import type {
@@ -8,7 +8,10 @@ import type {
   UpsertSettingDto,
   UpsertSettingsBulkDto,
 } from "./dto/settings.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import {
+  SettingsRepository,
+  type RawSetting,
+} from "./settings.repository";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 
 type SettingCategory = "pos" | "receipt" | "kitchen" | null;
@@ -26,22 +29,10 @@ function detectSettingCategory(
   return null;
 }
 
-const SETTING_SELECT = {
-  id: true,
-  key: true,
-  value: true,
-  label: true,
-  group: true,
-  branchId: true,
-  updatedAt: true,
-} satisfies Prisma.SettingSelect;
-
-type RawSetting = Prisma.SettingGetPayload<{ select: typeof SETTING_SELECT }>;
-
 @Injectable()
 export class SettingsService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: SettingsRepository,
     private readonly realtime: RealtimeService,
     private readonly assert: AssertService,
   ) {}
@@ -93,11 +84,7 @@ export class SettingsService {
       if (keyList.length > 0) where.key = { in: keyList };
     }
 
-    const rows = await this.prisma.setting.findMany({
-      where,
-      select: SETTING_SELECT,
-      orderBy: [{ group: "asc" }, { key: "asc" }],
-    });
+    const rows = await this.repo.findMany(where);
 
     return { settings: rows.map(toSettingResponse) };
   }
@@ -128,11 +115,11 @@ export class SettingsService {
       ),
     );
     if (branchIds.length > 0) {
-      const valid = await this.prisma.branch.findMany({
-        where: { id: { in: branchIds }, companyId },
-        select: { id: true },
-      });
-      if (valid.length !== branchIds.length) {
+      const validCount = await this.repo.countBranchesByIds(
+        companyId,
+        branchIds,
+      );
+      if (validCount !== branchIds.length) {
         throw new NotFoundException("Salah satu branchId tidak ditemukan");
       }
     }
@@ -172,15 +159,9 @@ export class SettingsService {
     branchId: string | null,
   ): Promise<{ success: true }> {
     if (branchId) await this.assert.branch(companyId, branchId);
-    const existing = await this.prisma.setting.findFirst({
-      where: { key, branchId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findFirstByKeyAndBranch(key, branchId);
     if (!existing) throw new NotFoundException("Setting not found");
-    const deleted = await this.prisma.setting.delete({
-      where: { id: existing.id },
-      select: SETTING_SELECT,
-    });
+    const deleted = await this.repo.delete(existing.id);
     this.emitConfigEvent(
       detectSettingCategory(deleted.group, deleted.key),
       { key: deleted.key, group: deleted.group, deleted: true },
@@ -191,33 +172,25 @@ export class SettingsService {
 
   private async upsertOne(dto: UpsertSettingDto): Promise<RawSetting> {
     const branchId = dto.branchId ?? null;
-    const existing = await this.prisma.setting.findFirst({
-      where: { key: dto.key, branchId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findFirstByKeyAndBranch(
+      dto.key,
+      branchId,
+    );
     if (existing) {
-      return this.prisma.setting.update({
-        where: { id: existing.id },
-        data: {
-          value: dto.value,
-          label: dto.label ?? null,
-          group: dto.group ?? null,
-        },
-        select: SETTING_SELECT,
-      });
-    }
-    return this.prisma.setting.create({
-      data: {
-        key: dto.key,
+      return this.repo.update(existing.id, {
         value: dto.value,
         label: dto.label ?? null,
         group: dto.group ?? null,
-        branchId,
-      },
-      select: SETTING_SELECT,
+      });
+    }
+    return this.repo.create({
+      key: dto.key,
+      value: dto.value,
+      label: dto.label ?? null,
+      group: dto.group ?? null,
+      branchId,
     });
   }
-
 }
 
 function toSettingResponse(s: RawSetting): SettingResponse {

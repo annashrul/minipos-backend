@@ -1,37 +1,35 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type {
   LogPosActivityDto,
   LogPosActivityResponse,
 } from "./dto/pos-activity.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PosActivityRepository } from "./pos-activity.repository";
 
 /**
  * Lightweight audit log for POS cashier activities (HOLD, RESUME, REPRINT,
- * REDEEM_POINTS, APPLY_VOUCHER, ...). Reuses the existing `AuditLog` table â€”
+ * REDEEM_POINTS, APPLY_VOUCHER, ...). Reuses the existing `AuditLog` table --
  * no new Prisma model required. Failures are swallowed so the POS is never
  * blocked by activity logging.
  */
 @Injectable()
 export class PosActivityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: PosActivityRepository) {}
 
   async log(
     userId: string,
     dto: LogPosActivityDto,
   ): Promise<LogPosActivityResponse> {
     try {
-      await this.prisma.auditLog.create({
-        data: {
-          userId,
-          action: dto.action,
-          entity: dto.entity,
-          entityId: dto.entityId ?? null,
-          details: dto.details ? JSON.stringify(dto.details) : null,
-          branchId: dto.branchId ?? null,
-        },
+      await this.repo.createLog({
+        userId,
+        action: dto.action,
+        entity: dto.entity,
+        entityId: dto.entityId ?? null,
+        details: dto.details ? JSON.stringify(dto.details) : null,
+        branchId: dto.branchId ?? null,
       });
     } catch {
-      // Silently fail â€” never block POS.
+      // Silently fail -- never block POS.
     }
     return { success: true };
   }

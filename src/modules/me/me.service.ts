@@ -1,14 +1,14 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type {
   AccessMenuDto,
   MeAccessMatrixResponse,
   MeMenusResponse,
 } from "./dto/me.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { MeRepository } from "./me.repository";
 
 @Injectable()
 export class MeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: MeRepository) {}
 
   /**
    * Returns the menu tree filtered to a single role's permissions.
@@ -25,35 +25,10 @@ export class MeService {
     companyId?: string | null,
   ): Promise<MeMenusResponse> {
     const [menus, appRole, company] = await Promise.all([
-      this.prisma.appMenu.findMany({
-        where: { isActive: true },
-        orderBy: [{ group: "asc" }, { sortOrder: "asc" }],
-        include: {
-          actions: {
-            where: { isActive: true },
-            orderBy: { sortOrder: "asc" },
-            include: {
-              roleActions: {
-                where: { role },
-                select: { allowed: true },
-              },
-            },
-          },
-          roleMenus: {
-            where: { role },
-            select: { allowed: true },
-          },
-        },
-      }),
-      this.prisma.appRole.findUnique({
-        where: { key: role },
-        select: { color: true },
-      }),
+      this.repo.findActiveMenusForRole(role),
+      this.repo.findRoleColor(role),
       companyId
-        ? this.prisma.company.findUnique({
-            where: { id: companyId },
-            select: { businessUnit: true },
-          })
+        ? this.repo.findCompanyBusinessUnit(companyId)
         : Promise.resolve(null),
     ]);
 
@@ -98,28 +73,8 @@ export class MeService {
     role: string,
     search?: string,
   ): Promise<MeAccessMatrixResponse> {
-    const roles = await this.prisma.appRole.findMany({
-      where: { isActive: true },
-      orderBy: [{ isSystem: "desc" }, { name: "asc" }],
-      select: { key: true },
-    });
-    const menus = await this.prisma.appMenu.findMany({
-      where: {
-        isActive: true,
-        ...(search ? { name: { contains: search } } : {}),
-      },
-      orderBy: [{ group: "asc" }, { sortOrder: "asc" }],
-      include: {
-        roleMenus: true,
-        actions: {
-          where: { isActive: true },
-          orderBy: { sortOrder: "asc" },
-          include: {
-            roleActions: true,
-          },
-        },
-      },
-    });
+    const roles = await this.repo.findActiveRoleKeys();
+    const menus = await this.repo.findActiveMenusWithAllPermissions(search);
 
     const mapped: AccessMenuDto[] = menus.map((menu) => ({
       id: menu.id,
@@ -163,9 +118,7 @@ export class MeService {
    * "/dashboard" if dashboard menu is allowed, otherwise "/pos".
    */
   async getDefaultRouteForRole(role: string): Promise<string> {
-    const dashboardPerm = await this.prisma.roleMenuPermission.findFirst({
-      where: { role, menu: { key: "dashboard" }, allowed: true },
-    });
+    const dashboardPerm = await this.repo.findDashboardPermission(role);
     return dashboardPerm ? "/dashboard" : "/pos";
   }
 
@@ -177,17 +130,7 @@ export class MeService {
     planExpiresAt: string | null;
     businessUnit: string;
   }> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        plan: true,
-        planExpiresAt: true,
-        businessUnit: true,
-      },
-    });
+    const company = await this.repo.findCompanyById(companyId);
     return {
       id: company?.id ?? companyId,
       name: company?.name ?? "-",
@@ -202,11 +145,10 @@ export class MeService {
     companyId: string,
     businessUnit: "RETAIL" | "BENGKEL" | "RESTAURANT" | "CAFE",
   ) {
-    const updated = await this.prisma.company.update({
-      where: { id: companyId },
-      data: { businessUnit },
-      select: { id: true, name: true, businessUnit: true },
-    });
+    const updated = await this.repo.updateCompanyBusinessUnit(
+      companyId,
+      businessUnit,
+    );
     return {
       id: updated.id,
       name: updated.name,
@@ -222,13 +164,10 @@ export class MeService {
     branchCount: number;
   }> {
     const [company, productCount, userCount, branchCount] = await Promise.all([
-      this.prisma.company.findUnique({
-        where: { id: companyId },
-        select: { plan: true, planExpiresAt: true },
-      }),
-      this.prisma.product.count({ where: { companyId } }),
-      this.prisma.user.count({ where: { companyId } }),
-      this.prisma.branch.count({ where: { companyId } }),
+      this.repo.findCompanyPlan(companyId),
+      this.repo.countProducts(companyId),
+      this.repo.countUsers(companyId),
+      this.repo.countBranches(companyId),
     ]);
     return {
       plan: company?.plan ?? "FREE",

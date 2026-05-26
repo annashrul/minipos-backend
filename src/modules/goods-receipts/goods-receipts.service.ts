@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   GoodsReceiptDetailItemResponse,
@@ -11,76 +11,15 @@ import type {
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
-import { PrismaService } from "../prisma/prisma.service";
-
-const LIST_SELECT = {
-  id: true,
-  receiptNumber: true,
-  purchaseOrderId: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  receivedBy: true,
-  receivedByName: true,
-  notes: true,
-  receivedAt: true,
-  createdAt: true,
-  purchaseOrder: {
-    select: {
-      orderNumber: true,
-      totalAmount: true,
-      status: true,
-      supplier: { select: { name: true } },
-    },
-  },
-  _count: { select: { items: true } },
-} satisfies Prisma.GoodsReceiptSelect;
-
-const DETAIL_SELECT = {
-  id: true,
-  receiptNumber: true,
-  purchaseOrderId: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  receivedBy: true,
-  receivedByName: true,
-  notes: true,
-  receivedAt: true,
-  createdAt: true,
-  purchaseOrder: {
-    select: {
-      orderNumber: true,
-      orderDate: true,
-      status: true,
-      totalAmount: true,
-      supplier: {
-        select: { name: true, contact: true, address: true },
-      },
-    },
-  },
-  items: {
-    select: {
-      id: true,
-      goodsReceiptId: true,
-      productId: true,
-      productName: true,
-      quantityOrdered: true,
-      quantityReceived: true,
-      unitPrice: true,
-      previousPurchasePrice: true,
-      notes: true,
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.GoodsReceiptSelect;
-
-type RawList = Prisma.GoodsReceiptGetPayload<{ select: typeof LIST_SELECT }>;
-type RawDetail = Prisma.GoodsReceiptGetPayload<{
-  select: typeof DETAIL_SELECT;
-}>;
+import {
+  GoodsReceiptsRepository,
+  type RawGoodsReceiptDetail,
+  type RawGoodsReceiptList,
+} from "./goods-receipts.repository";
 
 @Injectable()
 export class GoodsReceiptsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: GoodsReceiptsRepository) {}
 
   async list(
     companyId: string,
@@ -90,14 +29,8 @@ export class GoodsReceiptsService {
     const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
-      this.prisma.goodsReceipt.findMany({
-        where,
-        select: LIST_SELECT,
-        orderBy: { receivedAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.goodsReceipt.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toListItemResponse), total, page, perPage);
@@ -107,9 +40,9 @@ export class GoodsReceiptsService {
     companyId: string,
     id: string,
   ): Promise<GoodsReceiptDetailResponse> {
-    const receipt = await this.prisma.goodsReceipt.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch") },
-      select: DETAIL_SELECT,
+    const receipt = await this.repo.findOne({
+      id,
+      ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
     });
     if (!receipt) {
       throw new NotFoundException("Bukti penerimaan tidak ditemukan");
@@ -121,13 +54,9 @@ export class GoodsReceiptsService {
     companyId: string,
     purchaseOrderId: string,
   ): Promise<GoodsReceiptDetailResponse[]> {
-    const rows = await this.prisma.goodsReceipt.findMany({
-      where: {
-        purchaseOrderId,
-        ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
-      },
-      select: DETAIL_SELECT,
-      orderBy: { receivedAt: "desc" },
+    const rows = await this.repo.findManyDetail({
+      purchaseOrderId,
+      ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
     });
     return rows.map(toDetailResponse);
   }
@@ -150,27 +79,23 @@ export class GoodsReceiptsService {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [total, today, thisMonth] = await Promise.all([
-      this.prisma.goodsReceipt.count({ where: baseWhere }),
-      this.prisma.goodsReceipt.count({
-        where: { ...baseWhere, receivedAt: { gte: startOfToday } },
-      }),
-      this.prisma.goodsReceipt.count({
-        where: { ...baseWhere, receivedAt: { gte: startOfMonth } },
-      }),
+      this.repo.count(baseWhere),
+      this.repo.count({ ...baseWhere, receivedAt: { gte: startOfToday } }),
+      this.repo.count({ ...baseWhere, receivedAt: { gte: startOfMonth } }),
     ]);
 
     return { total, today, thisMonth };
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.goodsReceipt.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch") },
-      select: { id: true },
+    const existing = await this.repo.findById({
+      id,
+      ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
     });
     if (!existing) {
       throw new NotFoundException("Bukti penerimaan tidak ditemukan");
     }
-    await this.prisma.goodsReceipt.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -181,13 +106,11 @@ export class GoodsReceiptsService {
     if (ids.length === 0) {
       return { success: true, deleted: 0 };
     }
-    const result = await this.prisma.goodsReceipt.deleteMany({
-      where: {
-        id: { in: ids },
-        ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
-      },
+    const deleted = await this.repo.deleteMany({
+      id: { in: ids },
+      ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
     });
-    return { success: true, deleted: result.count };
+    return { success: true, deleted };
   }
 
   private buildListWhere(
@@ -251,7 +174,7 @@ function parseDate(input: string, endOfDay: boolean): Date {
   return new Date(input);
 }
 
-function toListItemResponse(row: RawList): GoodsReceiptListItemResponse {
+function toListItemResponse(row: RawGoodsReceiptList): GoodsReceiptListItemResponse {
   return {
     id: row.id,
     receiptNumber: row.receiptNumber,
@@ -277,7 +200,7 @@ function toListItemResponse(row: RawList): GoodsReceiptListItemResponse {
 }
 
 function toDetailItemResponse(
-  it: RawDetail["items"][number],
+  it: RawGoodsReceiptDetail["items"][number],
 ): GoodsReceiptDetailItemResponse {
   return {
     id: it.id,
@@ -292,7 +215,7 @@ function toDetailItemResponse(
   };
 }
 
-function toDetailResponse(row: RawDetail): GoodsReceiptDetailResponse {
+function toDetailResponse(row: RawGoodsReceiptDetail): GoodsReceiptDetailResponse {
   return {
     id: row.id,
     receiptNumber: row.receiptNumber,
