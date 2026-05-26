@@ -516,7 +516,145 @@ export class BrandsModule {}
 
 ---
 
-## 11. Query Pattern
+## 11. Database Naming Convention
+
+### Prinsip Utama
+
+Semua identifier di database menggunakan **camelCase** untuk kolom dan **snake_case** untuk nama tabel.
+
+### Tabel
+
+Nama tabel menggunakan **snake_case** via `@@map` di Prisma schema:
+
+```prisma
+model PurchaseOrder {
+  id        String   @id @default(uuid())
+  companyId String
+  status    String
+  createdAt DateTime @default(now())
+
+  @@map("purchase_orders")
+}
+```
+
+| Item | Convention | Contoh |
+|------|-----------|--------|
+| Model Prisma | PascalCase | `PurchaseOrder`, `TransactionItem` |
+| Tabel DB | snake_case (via `@@map`) | `purchase_orders`, `transaction_items` |
+
+### Kolom
+
+Nama kolom menggunakan **camelCase** — sama persis dengan nama field di Prisma schema. **Tidak boleh** menggunakan `@map` pada field.
+
+```prisma
+// ✅ Benar — kolom DB = "companyId", "branchId", "createdAt"
+model Booking {
+  companyId  String
+  branchId   String?
+  createdAt  DateTime @default(now())
+  
+  @@map("bookings")
+}
+
+// ❌ Salah — jangan pakai @map pada field
+model Booking {
+  companyId  String   @map("company_id")    // DILARANG
+  branchId   String?  @map("branch_id")     // DILARANG
+  createdAt  DateTime @map("created_at")    // DILARANG
+}
+```
+
+### Index & Constraint
+
+```prisma
+@@unique([companyId, name])     // Prisma auto-generate nama
+@@index([companyId])
+@@index([branchId, status])
+```
+
+### Enum
+
+Enum menggunakan **PascalCase** untuk nama dan **UPPER_SNAKE_CASE** untuk value:
+
+```prisma
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+  VOIDED
+  CANCELLED
+}
+```
+
+### View
+
+View menggunakan prefix `vw_` + snake_case untuk nama view, dan **camelCase** (double-quoted) untuk alias kolom output:
+
+```sql
+CREATE VIEW vw_sales_item_facts AS
+SELECT
+  ti.id AS "itemId",
+  t."branchId",
+  u.name AS "cashierName",
+  ti."productId",
+  p."purchasePrice",
+  t."createdAt" AS "txCreatedAt"
+FROM transaction_items ti
+JOIN transactions t ON t.id = ti."transactionId"
+...
+```
+
+| Item | Convention | Contoh |
+|------|-----------|--------|
+| Nama view | `vw_` + snake_case | `vw_product_branch`, `vw_sales_item_facts` |
+| Alias kolom view | camelCase (double-quoted) | `"productId"`, `"cashierName"`, `"txCreatedAt"` |
+
+### Raw SQL di Backend
+
+Saat menulis raw SQL (`$queryRaw`, `$queryRawUnsafe`):
+
+```ts
+// ✅ Benar — kolom camelCase harus double-quoted di PostgreSQL
+const rows = await this.prisma.$queryRaw`
+  SELECT "companyId", "branchId", "grandTotal"
+  FROM transactions
+  WHERE "companyId" = ${companyId}
+`;
+
+// ✅ Benar — tabel tetap snake_case (tanpa quote boleh)
+const rows = await this.prisma.$queryRaw`
+  SELECT * FROM purchase_orders WHERE id = ${id}
+`;
+
+// ❌ Salah — camelCase tanpa quote akan jadi lowercase di PostgreSQL
+SELECT companyId FROM transactions  // PostgreSQL baca sebagai "companyid" → error
+```
+
+### Aturan Penting
+
+1. **Kolom camelCase di PostgreSQL WAJIB double-quoted** — PostgreSQL fold unquoted identifiers ke lowercase.
+2. **Tabel snake_case tidak perlu di-quote** — sudah lowercase.
+3. **Jangan gunakan `@map` pada field** — nama field Prisma = nama kolom DB.
+4. **`@@map` pada model WAJIB** — untuk mapping PascalCase model ke snake_case tabel.
+5. **SELECT alias di raw SQL harus camelCase** — konsisten dengan response format.
+6. **Enum values tetap UPPER_SNAKE_CASE** — ini standard PostgreSQL enum.
+
+### Migration
+
+Saat membuat migrasi baru:
+
+```prisma
+// Tambah field baru — langsung camelCase, tanpa @map
+model Product {
+  lastSyncedAt DateTime?    // kolom DB = "lastSyncedAt"
+}
+```
+
+Jangan pernah membuat kolom baru dengan snake_case. Jika menemukan kolom lama yang masih snake_case, rename ke camelCase dan hapus `@map`.
+
+---
+
+## 12. Query Pattern
 
 Ikuti standar lengkap di [`QUERY-STANDARD.md`](./QUERY-STANDARD.md). Ringkasan:
 
