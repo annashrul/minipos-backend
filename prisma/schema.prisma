@@ -150,7 +150,7 @@ model Company {
   plan                 String                     @default("FREE") // FREE, PRO, ENTERPRISE
   // Jenis usaha — drive ketersediaan menu di sidebar.
   // RETAIL, BENGKEL, RESTAURANT, CAFE.
-  businessUnit         String                     @default("RETAIL") @map("business_unit")
+  businessUnit         String                     @default("RETAIL")
   planExpiresAt        DateTime?
   isActive             Boolean                    @default(true)
   createdAt            DateTime                   @default(now())
@@ -187,11 +187,11 @@ model User {
   // Password otorisasi untuk aksi sensitif (void/refund/hapus transaksi, dll).
   // Berbeda dari `password` (login). Nullable untuk backward-compat — user lama
   // bisa set lewat profile. Hashed sama seperti password login (bcrypt).
-  authorizationPassword   String?                    @map("authorization_password")
+  authorizationPassword   String?
   role                    String                     @default("CASHIER")
   // Bengkel: User dengan flag ini bisa di-assign sebagai mekanik di
   // ServiceOrder & ServiceOrderItem (untuk komisi/payroll).
-  isMechanic              Boolean                    @default(false) @map("is_mechanic")
+  isMechanic              Boolean                    @default(false)
   companyId               String?
   company                 Company?                   @relation(fields: [companyId], references: [id])
   branchId                String?
@@ -254,7 +254,7 @@ model AppMenu {
   // Daftar business unit yang bisa lihat menu ini (mis. ["BENGKEL"] berarti
   // hanya company businessUnit=BENGKEL). NULL atau empty = available untuk
   // semua. Default null supaya semua menu existing tetap visible.
-  businessUnits Json?                @map("business_units")
+  businessUnits Json?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   actions       MenuAction[]
@@ -321,11 +321,11 @@ model RoleActionPermission {
 /// switch ke branch Y).
 model UserBranch {
   id        String   @id @default(uuid())
-  userId    String   @map("user_id")
+  userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  branchId  String   @map("branch_id")
+  branchId  String
   branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now())
 
   @@unique([userId, branchId])
   @@index([userId])
@@ -500,7 +500,7 @@ model Product {
   // PRODUCT = barang fisik dengan stock; SERVICE = jasa (no stock validation,
   // skip stock movement, dipakai bisnis bengkel/jasa). Default PRODUCT supaya
   // backward-compat.
-  itemType            String                      @default("PRODUCT") @map("item_type")
+  itemType            String                      @default("PRODUCT")
   isActive            Boolean                     @default(true)
   description         String?
   imageUrl            String?
@@ -1496,24 +1496,24 @@ model Setting {
 // (data lama tidak di-drop), tapi sudah tidak di-populate lagi.
 model WhatsappSession {
   id                    String               @id @default(uuid())
-  companyId             String               @unique @map("company_id")
+  companyId             String               @unique
   company               Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   status                String               @default("DISCONNECTED") // DISCONNECTED, CONNECTING, CONNECTED
   stage                 String               @default("IDLE") // IDLE | PREPARING | QR_READY | SCANNED | SYNCING | CONNECTED | FAILED
-  phoneNumber           String?              @map("phone_number")
-  deviceName            String?              @map("device_name")
-  qrCode                String?              @map("qr_code")
-  authCreds             Json?                @map("auth_creds") // DEPRECATED: dulu Baileys creds; sekarang null. Tidak di-drop biar migration ringan.
+  phoneNumber           String?
+  deviceName            String?
+  qrCode                String?
+  authCreds             Json? // DEPRECATED: dulu Baileys creds; sekarang null. Tidak di-drop biar migration ringan.
   // ── wa-service tenant credentials ─────────────────────────────────
-  waServiceTenantId     String?              @unique @map("wa_service_tenant_id")
-  waServiceApiKey       String?              @map("wa_service_api_key")
-  waServiceWebhookSecret String?             @map("wa_service_webhook_secret")
+  waServiceTenantId     String?              @unique
+  waServiceApiKey       String?
+  waServiceWebhookSecret String?
   // ───────────────────────────────────────────────────────────────────
-  lastConnectedAt       DateTime?            @map("last_connected_at")
-  lastDisconnectedAt    DateTime?            @map("last_disconnected_at")
-  lastError             String?              @map("last_error")
-  createdAt             DateTime             @default(now()) @map("created_at")
-  updatedAt             DateTime             @updatedAt @map("updated_at")
+  lastConnectedAt       DateTime?
+  lastDisconnectedAt    DateTime?
+  lastError             String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
   keys                  WhatsappSessionKey[]
   messages              WhatsappMessageLog[]
 
@@ -1523,13 +1523,13 @@ model WhatsappSession {
 
 model WhatsappSessionKey {
   id        String          @id @default(uuid())
-  sessionId String          @map("session_id")
+  sessionId String
   session   WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  keyType   String          @map("key_type")
-  keyId     String          @map("key_id")
+  keyType   String
+  keyId     String
   value     Json
-  createdAt DateTime        @default(now()) @map("created_at")
-  updatedAt DateTime        @updatedAt @map("updated_at")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
   @@unique([sessionId, keyType, keyId])
   @@index([sessionId, keyType])
@@ -1538,17 +1538,17 @@ model WhatsappSessionKey {
 
 model WhatsappMessageLog {
   id                String          @id @default(uuid())
-  sessionId         String          @map("session_id")
+  sessionId         String
   session           WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   direction         String // OUTBOUND, INBOUND
-  toNumber          String?         @map("to_number")
-  fromNumber        String?         @map("from_number")
-  messageType       String          @default("text") @map("message_type")
+  toNumber          String?
+  fromNumber        String?
+  messageType       String          @default("text")
   content           String?
   status            String          @default("PENDING")
-  providerMessageId String?         @map("provider_message_id")
-  errorMessage      String?         @map("error_message")
-  createdAt         DateTime        @default(now()) @map("created_at")
+  providerMessageId String?
+  errorMessage      String?
+  createdAt         DateTime        @default(now())
 
   @@index([sessionId, createdAt])
   @@map("whatsapp_message_logs")
@@ -1562,28 +1562,28 @@ model WhatsappMessageLog {
 // - selain itu → CUSTOMER mode (anonymous walaupun belum tercatat di Customer)
 model WhatsappBotConfig {
   id                   String   @id @default(uuid())
-  companyId            String   @unique @map("company_id")
+  companyId            String   @unique
   company              Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   enabled              Boolean  @default(false)
   // Daftar nomor (format normalized 62xxx) yang dianggap sebagai owner —
   // boleh akses tool data internal (stok, omset, dll). Kosong = tidak ada
   // owner mode, semua pengirim diperlakukan sebagai customer.
-  ownerPhones          String[] @default([]) @map("owner_phones")
+  ownerPhones          String[] @default([])
   // Pengetahuan bisnis bebas-format (jam buka, alamat, FAQ, kebijakan).
   // Di-stuff ke system prompt customer mode supaya bot bisa jawab tanpa
   // halusinasi. Kalau kosong, bot fallback minta admin manusia.
   knowledge            String?  @db.Text
-  systemPromptCustomer String?  @map("system_prompt_customer") @db.Text
-  systemPromptOwner    String?  @map("system_prompt_owner") @db.Text
+  systemPromptCustomer String?  @db.Text
+  systemPromptOwner    String?  @db.Text
   // Model Groq yang dipakai. Default ke openai/gpt-oss-120b karena
   // tool-calling-nya jauh lebih reliable. Llama-3 family kadang emit
   // native function-tag format yang bikin Groq parser fail.
   model                String   @default("openai/gpt-oss-120b")
   // Throttle balas: max 1 reply per nomor per N detik supaya tidak loop kalau
   // ada bot lain di seberang juga auto-reply.
-  replyThrottleSec     Int      @default(3) @map("reply_throttle_sec")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  replyThrottleSec     Int      @default(3)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@map("whatsapp_bot_configs")
 }
@@ -1601,39 +1601,39 @@ model WhatsappBotConfig {
 /// access_token (4 jam) + refresh_token (30 hari).
 model ShopeeAccount {
   id               String    @id @default(uuid())
-  companyId        String    @map("company_id")
+  companyId        String
   company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  shopId           String    @map("shop_id") // Shopee shop ID (numeric string)
-  shopName         String?   @map("shop_name") // Cached display name dari Shopee
+  shopId           String // Shopee shop ID (numeric string)
+  shopName         String? // Cached display name dari Shopee
   region           String    @default("ID") // ID/MY/SG/TH/VN/PH/TW/BR
   // Mode koneksi: OAUTH (resmi, butuh shop ≥30 order atau Mall) atau
   // COOKIE (PoC, paste cookie session dari browser seller).
-  connectionMode   String    @default("OAUTH") @map("connection_mode")
+  connectionMode   String    @default("OAUTH")
   // ─── OAuth fields (mode=OAUTH) ─────────────────────────────────
-  accessToken      String?   @map("access_token") @db.Text
-  refreshToken     String?   @map("refresh_token") @db.Text
-  expiresAt        DateTime? @map("expires_at") // access_token expiry (~4 jam)
-  refreshExpiresAt DateTime? @map("refresh_expires_at")
+  accessToken      String?   @db.Text
+  refreshToken     String?   @db.Text
+  expiresAt        DateTime? // access_token expiry (~4 jam)
+  refreshExpiresAt DateTime?
   // ─── Cookie fields (mode=COOKIE) ───────────────────────────────
   // Cookie string lengkap dari header Cookie request browser seller Shopee.
   // Format: "k1=v1; k2=v2; ...". Berisi token session yang valid 24-72 jam.
   // User wajib paste ulang saat expired.
-  sellerCookie     String?   @map("seller_cookie") @db.Text
+  sellerCookie     String?   @db.Text
   // User-agent yang dipakai saat dapat cookie ini — beberapa cookie
   // ke-bind ke fingerprint browser, jadi disimpan untuk konsisten.
-  cookieUserAgent  String?   @map("cookie_user_agent") @db.Text
+  cookieUserAgent  String?   @db.Text
   // Anti-bot tokens (mode=COOKIE, only untuk WRITE ops seperti update_stock,
   // update_product_info, create_product). Read ops gak butuh.
   // Struktur: { xSapRi, xSapSec, afAcEncSzToken, scFeSession, scFeVer }.
   // Tokens ini di-generate runtime oleh JS Shopee dan EXPIRE per session
   // (~15 menit s.d. beberapa jam). User wajib paste ulang saat expired.
-  scrapingTokens   Json?     @map("scraping_tokens")
+  scrapingTokens   Json?
   // ─── Common ────────────────────────────────────────────────────
   isActive         Boolean   @default(true)
-  lastSyncedAt     DateTime? @map("last_synced_at")
-  lastError        String?   @map("last_error") @db.Text
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  lastSyncedAt     DateTime?
+  lastError        String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   productMappings ProductMarketplaceMapping[]
   cachedItems     ShopeeItem[]
@@ -1653,32 +1653,32 @@ model ShopeeAccount {
 /// punya beberapa row.
 model ShopeeItem {
   id              String        @id @default(uuid())
-  shopeeAccountId String        @map("shopee_account_id")
+  shopeeAccountId String
   account         ShopeeAccount @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
   // Shopee item_id (int64) & model_id (int64). Disimpan sebagai string supaya
   // gak overflow JS Number. modelId NULL kalau produk tanpa varian (untuk
   // produk dengan model_list, selalu pakai model_id walaupun cuma 1 model).
-  itemId          String        @map("item_id")
+  itemId          String
   // "0" untuk produk tanpa varian (atau yg model_id tidak ditemukan).
   // Non-nullable supaya composite unique [account, item, model] selalu unik
   // (PostgreSQL treat NULL != NULL di unique constraint).
-  modelId         String        @default("0") @map("model_id")
+  modelId         String        @default("0")
   name            String
   sku             String?
   status          String        @default("NORMAL")
-  currentPrice    Int?          @map("current_price")
-  originalPrice   Int?          @map("original_price")
-  totalStock      Int?          @map("total_stock")
-  imageUrl        String?       @map("image_url") @db.Text
-  hasModel        Boolean       @default(false) @map("has_model")
+  currentPrice    Int?
+  originalPrice   Int?
+  totalStock      Int?
+  imageUrl        String?       @db.Text
+  hasModel        Boolean       @default(false)
   // Link ke produk MiniPOS — NULL = belum linked. Auto-set saat fetch kalau
   // SKU match.
-  productId       String?       @map("product_id")
+  productId       String?
   product         Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
-  lastFetchedAt   DateTime      @default(now()) @map("last_fetched_at")
-  lastPushedAt    DateTime?     @map("last_pushed_at") // Terakhir push stok ke Shopee
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  lastFetchedAt   DateTime      @default(now())
+  lastPushedAt    DateTime? // Terakhir push stok ke Shopee
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@unique([shopeeAccountId, itemId, modelId])
   @@index([shopeeAccountId])
@@ -1693,27 +1693,27 @@ model ShopeeItem {
 /// tinggal pakai model ini tanpa migrasi schema.
 model ProductMarketplaceMapping {
   id                   String         @id @default(uuid())
-  productId            String         @map("product_id")
+  productId            String
   product              Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
   // SHOPEE / TOKOPEDIA / LAZADA / TIKTOK_SHOP — pakai string supaya mudah
   // extend tanpa migrasi enum.
   marketplace          String
   // External item ID (Shopee item_id, Tokopedia product_id, dst).
-  externalItemId       String         @map("external_item_id")
+  externalItemId       String
   // Variant level mapping (kalau product punya varian, masing-masing variant
   // di-link ke model_id Shopee). NULL = product-level mapping.
-  externalModelId      String?        @map("external_model_id")
-  externalSku          String?        @map("external_sku")
+  externalModelId      String?
+  externalSku          String?
   // Reference balik ke akun yang punya item ini (untuk Shopee).
-  shopeeAccountId      String?        @map("shopee_account_id")
+  shopeeAccountId      String?
   shopeeAccount        ShopeeAccount? @relation(fields: [shopeeAccountId], references: [id], onDelete: Cascade)
   // Sinkronisasi status — last sync timestamp + last known stock di marketplace
   // (untuk reconciliation kalau ada discrepancy dengan stok kita).
-  lastSyncedAt         DateTime?      @map("last_synced_at")
-  lastMarketplaceStock Int?           @map("last_marketplace_stock")
-  syncEnabled          Boolean        @default(true) @map("sync_enabled")
-  createdAt            DateTime       @default(now()) @map("created_at")
-  updatedAt            DateTime       @updatedAt @map("updated_at")
+  lastSyncedAt         DateTime?
+  lastMarketplaceStock Int?
+  syncEnabled          Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   @@unique([marketplace, externalItemId, externalModelId])
   @@index([productId])
@@ -1735,32 +1735,32 @@ model ProductMarketplaceMapping {
 
 model GrabAccount {
   id              String    @id @default(uuid())
-  companyId       String    @map("company_id")
+  companyId       String
   company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   // Branch MiniPOS yang outlet GrabFood ini "milik". Optional — kalau merchant
   // belum mapping branch, biarkan null dan tampil sebagai outlet standalone.
-  branchId        String?   @map("branch_id")
+  branchId        String?
   branch          Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   // Grab merchantID (string, di-set saat paste cookie atau dari profile API).
-  merchantId      String    @map("merchant_id")
+  merchantId      String
   // Nama outlet untuk tampil di UI (cached dari Grab profile).
-  merchantName    String?   @map("merchant_name")
+  merchantName    String?
   region          String    @default("ID") // ID/MY/SG/TH/VN/PH
   // ─── Cookie session (paste manual dari browser) ────────────────
   // Cookie lengkap dari header Cookie request browser merchant Grab.
   // Format: "k1=v1; k2=v2; ...". Berisi token session. Expire 1-4 jam
   // typical — user wajib paste ulang saat expired.
   cookie          String    @db.Text
-  cookieUserAgent String?   @map("cookie_user_agent") @db.Text
+  cookieUserAgent String?   @db.Text
   // Anti-bot tokens kalau Grab portal pakai (mis. x-csrf-token, x-grab-app).
   // Disimpan terpisah supaya bisa di-refresh tanpa replace cookie.
-  scrapingTokens  Json?     @map("scraping_tokens")
+  scrapingTokens  Json?
   // ─── Status ────────────────────────────────────────────────────
   isActive        Boolean   @default(true)
-  lastSyncedAt    DateTime? @map("last_synced_at")
-  lastError       String?   @map("last_error") @db.Text
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  lastSyncedAt    DateTime?
+  lastError       String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   dailyReports GrabDailyReport[]
   orders       GrabOrder[]
@@ -1776,27 +1776,27 @@ model GrabAccount {
 /// rekonsiliasi keuangan & sales analytics.
 model GrabDailyReport {
   id             String      @id @default(uuid())
-  accountId      String      @map("account_id")
+  accountId      String
   account        GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   // Tanggal report (date only, no time). UTC date — convert ke WIB di UI.
-  reportDate     DateTime    @map("report_date") @db.Date
+  reportDate     DateTime    @db.Date
   // Aggregate metrics (semua dalam rupiah, integer untuk hindari floating point).
-  orderCount     Int         @default(0) @map("order_count")
-  completedCount Int         @default(0) @map("completed_count")
-  cancelledCount Int         @default(0) @map("cancelled_count")
+  orderCount     Int         @default(0)
+  completedCount Int         @default(0)
+  cancelledCount Int         @default(0)
   // GMV (gross merchandise value) = total nominal order sebelum potongan
-  grossSales     Int         @default(0) @map("gross_sales")
+  grossSales     Int         @default(0)
   // Net payout = GMV - Grab commission - refund. Match dengan settlement Grab.
-  netPayout      Int         @default(0) @map("net_payout")
+  netPayout      Int         @default(0)
   // Grab commission (fee Grab ambil). Biasanya 20-30% di Indonesia.
   commission     Int         @default(0)
   // Refund total kalau ada return/cancel after charge.
-  refundAmount   Int         @default(0) @map("refund_amount")
+  refundAmount   Int         @default(0)
   // Raw response dari Grab portal (untuk debug & schema migration nanti).
-  rawPayload     Json?       @map("raw_payload")
-  fetchedAt      DateTime    @default(now()) @map("fetched_at")
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
+  rawPayload     Json?
+  fetchedAt      DateTime    @default(now())
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   @@unique([accountId, reportDate])
   @@index([accountId, reportDate])
@@ -1808,44 +1808,44 @@ model GrabDailyReport {
 /// karena real-time integration butuh Partner API resmi.
 model GrabOrder {
   id            String      @id @default(uuid())
-  accountId     String      @map("account_id")
+  accountId     String
   account       GrabAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   // Grab order_id / short_order_id — public visible di app customer.
-  grabOrderId   String      @map("grab_order_id")
-  shortOrderId  String?     @map("short_order_id")
+  grabOrderId   String
+  shortOrderId  String?
   // ─── Customer (sebagian masked Grab — biasanya cuma nama depan & nomor masked) ─
-  customerName  String?     @map("customer_name")
-  customerPhone String?     @map("customer_phone") // biasanya masked "0812****1234"
+  customerName  String?
+  customerPhone String? // biasanya masked "0812****1234"
   // ─── Money (dalam rupiah, integer) ─────────────────────────────
   subtotal      Int         @default(0)
-  deliveryFee   Int         @default(0) @map("delivery_fee")
+  deliveryFee   Int         @default(0)
   discount      Int         @default(0)
   total         Int         @default(0) // total yang dibayar customer
   commission    Int         @default(0) // Grab cut
-  netPayout     Int         @default(0) @map("net_payout") // yang merchant terima
+  netPayout     Int         @default(0) // yang merchant terima
   // ─── Status ──────────────────────────────────────────────────────
   // COMPLETED, CANCELLED, REFUNDED, PENDING — string supaya extend mudah
   status        String      @default("COMPLETED")
-  paymentMethod String?     @map("payment_method") // GRABPAY, OVO, CASH, etc.
-  cancelReason  String?     @map("cancel_reason")
+  paymentMethod String? // GRABPAY, OVO, CASH, etc.
+  cancelReason  String?
   // ─── Items ─────────────────────────────────────────────────────
   // Disimpan sebagai JSON karena schema item Grab bervariasi & kita gak
   // butuh query per-item (cuma display). Format:
   // [{ name, qty, price, modifiers: [{name, price}], note }]
   items         Json?
-  itemCount     Int         @default(0) @map("item_count")
+  itemCount     Int         @default(0)
   // ─── Timing ────────────────────────────────────────────────────
-  orderedAt     DateTime?   @map("ordered_at")
-  acceptedAt    DateTime?   @map("accepted_at")
-  readyAt       DateTime?   @map("ready_at")
-  pickedUpAt    DateTime?   @map("picked_up_at")
-  deliveredAt   DateTime?   @map("delivered_at")
-  cancelledAt   DateTime?   @map("cancelled_at")
+  orderedAt     DateTime?
+  acceptedAt    DateTime?
+  readyAt       DateTime?
+  pickedUpAt    DateTime?
+  deliveredAt   DateTime?
+  cancelledAt   DateTime?
   // ─── Raw payload untuk reference / future re-parse ─────────────
-  rawPayload    Json?       @map("raw_payload")
-  fetchedAt     DateTime    @default(now()) @map("fetched_at")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  rawPayload    Json?
+  fetchedAt     DateTime    @default(now())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@unique([accountId, grabOrderId])
   @@index([accountId, status])
@@ -1859,35 +1859,35 @@ model GrabOrder {
 
 model Vehicle {
   id              String         @id @default(uuid())
-  companyId       String         @map("company_id")
-  customerId      String         @map("customer_id")
+  companyId       String
+  customerId      String
   customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   // Identitas kendaraan
-  plateNumber     String         @map("plate_number")
+  plateNumber     String
   type            String         @default("MOTOR") // MOTOR, MOBIL
   // Brand (FK ke Brand dengan kind=VEHICLE) — mis. Honda, Yamaha, Toyota.
-  brandId         String?        @map("brand_id")
+  brandId         String?
   brand           Brand?         @relation("VehicleBrand", fields: [brandId], references: [id])
   // Model (FK ke Category dengan kind=VEHICLE_MODEL) — mis. Vario 150, Beat.
   // Tiap model di-link ke brand-nya, sehingga form bisa cascade.
-  modelId         String?        @map("model_id")
+  modelId         String?
   modelRef        Category?      @relation("VehicleModel", fields: [modelId], references: [id])
   year            Int?
   color           String?
   vin             String? // No rangka
-  engineNumber    String?        @map("engine_number")
-  engineCapacity  String?        @map("engine_capacity") // 150cc, 1.5L
+  engineNumber    String?
+  engineCapacity  String? // 150cc, 1.5L
   transmission    String? // manual / automatic
-  fuelType        String?        @map("fuel_type") // pertalite, pertamax, solar
+  fuelType        String? // pertalite, pertamax, solar
   mileage         Int? // odometer terakhir (km)
-  photoUrl        String?        @map("photo_url")
+  photoUrl        String?
   notes           String?
-  isActive        Boolean        @default(true) @map("is_active")
-  lastServicedAt  DateTime?      @map("last_serviced_at")
-  nextServiceKm   Int?           @map("next_service_km")
-  nextServiceDate DateTime?      @map("next_service_date")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  isActive        Boolean        @default(true)
+  lastServicedAt  DateTime?
+  nextServiceKm   Int?
+  nextServiceDate DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
   serviceOrders   ServiceOrder[]
 
   bookings Booking[]
@@ -1913,44 +1913,44 @@ model Vehicle {
 //   atau CANCELLED / NO_SHOW dari status manapun.
 model Booking {
   id             String           @id @default(uuid())
-  companyId      String           @map("company_id")
-  branchId       String           @map("branch_id")
+  companyId      String
+  branchId       String
   branch         Branch           @relation(fields: [branchId], references: [id])
-  customerId     String?          @map("customer_id")
+  customerId     String?
   customer       Customer?        @relation(fields: [customerId], references: [id])
   // Identitas customer kalau bukan member (walk-in booking).
-  customerName   String?          @map("customer_name")
-  customerPhone  String?          @map("customer_phone")
+  customerName   String?
+  customerPhone  String?
   // BENGKEL | RESTAURANT | CAFE — menentukan field opsional yang relevan.
-  bookingType    String           @map("booking_type")
+  bookingType    String
   // Jadwal kedatangan / janji.
-  scheduledAt    DateTime         @map("scheduled_at")
-  durationMin    Int?             @map("duration_min") // estimasi durasi pelayanan
+  scheduledAt    DateTime
+  durationMin    Int? // estimasi durasi pelayanan
   // Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW
   status         String           @default("PENDING")
   notes          String?
   // ─── Bengkel-specific ──────────────────────────────────────────
-  vehicleId      String?          @map("vehicle_id")
+  vehicleId      String?
   vehicle        Vehicle?         @relation(fields: [vehicleId], references: [id])
-  serviceType    String?          @map("service_type") // Ganti Oli, Tune Up, dll
-  mechanicId     String?          @map("mechanic_id")
+  serviceType    String? // Ganti Oli, Tune Up, dll
+  mechanicId     String?
   mechanic       User?            @relation("BookingMechanic", fields: [mechanicId], references: [id])
   // ─── Resto/Cafe-specific ───────────────────────────────────────
-  partySize      Int?             @map("party_size")
-  tableId        String?          @map("table_id")
+  partySize      Int?
+  tableId        String?
   table          RestaurantTable? @relation(fields: [tableId], references: [id])
   // Reminder WA tracking — supaya cron tidak dobel kirim.
-  reminderSentAt DateTime?        @map("reminder_sent_at")
+  reminderSentAt DateTime?
   // Saat di-finalize jadi service order (bengkel) atau table session (F&B),
   // simpan reference-nya di sini untuk audit.
-  serviceOrderId String?          @map("service_order_id")
-  cancelReason   String?          @map("cancel_reason")
-  cancelledAt    DateTime?        @map("cancelled_at")
-  completedAt    DateTime?        @map("completed_at")
-  createdById    String?          @map("created_by_id")
+  serviceOrderId String?
+  cancelReason   String?
+  cancelledAt    DateTime?
+  completedAt    DateTime?
+  createdById    String?
   createdBy      User?            @relation("BookingCreatedBy", fields: [createdById], references: [id])
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   @@index([companyId])
   @@index([branchId])
@@ -1967,45 +1967,45 @@ model Booking {
 model ServiceOrder {
   id                 String             @id @default(uuid())
   // Unique scoped per company — sequence reset per company per hari.
-  orderNumber        String             @map("order_number")
-  companyId          String             @map("company_id")
-  branchId           String             @map("branch_id")
+  orderNumber        String
+  companyId          String
+  branchId           String
   branch             Branch             @relation(fields: [branchId], references: [id])
-  vehicleId          String             @map("vehicle_id")
+  vehicleId          String
   vehicle            Vehicle            @relation(fields: [vehicleId], references: [id])
-  customerId         String             @map("customer_id")
+  customerId         String
   customer           Customer           @relation(fields: [customerId], references: [id])
   // Mekanik utama yang assigned (boleh null kalau belum di-assign).
-  mechanicId         String?            @map("mechanic_id")
+  mechanicId         String?
   mechanic           User?              @relation("ServiceOrderMechanic", fields: [mechanicId], references: [id])
   // Status: ANTRIAN, DIAGNOSA, MENUNGGU_APPROVAL, DIKERJAKAN, SELESAI, DIBAYAR, DIBATALKAN
   status             String             @default("ANTRIAN")
   complaint          String? // Keluhan customer
   diagnose           String? // Hasil diagnosa mekanik
-  estimateAmount     Float?             @map("estimate_amount")
-  finalAmount        Float?             @map("final_amount") // Total final yg disepakati
-  mileageIn          Int?               @map("mileage_in")
-  mileageOut         Int?               @map("mileage_out")
-  approvedAt         DateTime?          @map("approved_at")
-  startedAt          DateTime?          @map("started_at")
-  completedAt        DateTime?          @map("completed_at")
-  paidAt             DateTime?          @map("paid_at")
-  cancelledAt        DateTime?          @map("cancelled_at")
-  cancelReason       String?            @map("cancel_reason")
+  estimateAmount     Float?
+  finalAmount        Float? // Total final yg disepakati
+  mileageIn          Int?
+  mileageOut         Int?
+  approvedAt         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  paidAt             DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
   // Estimasi tanggal service berikutnya — di-set saat finalize, dipakai oleh
   // cron reminder WA (H-7 / H-3 sebelum tanggal ini).
-  nextServiceAt      DateTime?          @map("next_service_at")
+  nextServiceAt      DateTime?
   // Stempel waktu terakhir reminder dikirim, supaya tidak dobel di window
   // yang sama (H-7 → tidak dikirim ulang sampai pindah window H-3).
-  lastReminderSentAt DateTime?          @map("last_reminder_sent_at")
+  lastReminderSentAt DateTime?
   // Foto sebelum/sesudah, attachment lain. Format: [{url, label, uploadedAt}]
   attachments        Json?
   notes              String?
   // Link ke Transaction setelah dibayar (1:1 — Service Order finalize jadi Transaction).
-  transactionId      String?            @unique @map("transaction_id")
+  transactionId      String?            @unique
   transaction        Transaction?       @relation("ServiceOrderTransaction", fields: [transactionId], references: [id])
-  createdAt          DateTime           @default(now()) @map("created_at")
-  updatedAt          DateTime           @updatedAt @map("updated_at")
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
   items              ServiceOrderItem[]
 
   @@unique([companyId, orderNumber])
@@ -2025,30 +2025,30 @@ model ServiceOrder {
 
 model ServiceOrderItem {
   id               String       @id @default(uuid())
-  serviceOrderId   String       @map("service_order_id")
+  serviceOrderId   String
   serviceOrder     ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
   // Kalau item = produk dari katalog, isi productId. Kalau jasa ad-hoc
   // (mis. "Pengecekan suspensi"), productId null + name diisi manual.
-  productId        String?      @map("product_id")
+  productId        String?
   // PRODUCT atau SERVICE — duplikasi dari Product.itemType supaya tidak
   // butuh JOIN di list view. Default SERVICE supaya UI default ke "jasa".
-  itemType         String       @default("SERVICE") @map("item_type")
+  itemType         String       @default("SERVICE")
   name             String
   quantity         Float        @default(1)
-  unitPrice        Float        @map("unit_price")
+  unitPrice        Float
   discount         Float        @default(0)
   subtotal         Float
   // Mekanik yang nge-handle item ini (untuk komisi). Bisa beda dengan
   // mekanik utama di ServiceOrder kalau ada lebih dari 1 mekanik.
-  mechanicId       String?      @map("mechanic_id")
+  mechanicId       String?
   mechanic         User?        @relation("ServiceOrderItemMechanic", fields: [mechanicId], references: [id])
   // Untuk JASA: persen komisi yang akan dihitung. Default 0.
-  commissionPct    Float        @default(0) @map("commission_pct")
+  commissionPct    Float        @default(0)
   // Computed dari subtotal × commissionPct/100 saat finalize. Disimpan
   // supaya laporan komisi tidak butuh re-compute.
-  commissionAmount Float        @default(0) @map("commission_amount")
+  commissionAmount Float        @default(0)
   notes            String?
-  createdAt        DateTime     @default(now()) @map("created_at")
+  createdAt        DateTime     @default(now())
 
   @@index([serviceOrderId])
   @@index([productId])

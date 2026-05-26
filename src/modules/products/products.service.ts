@@ -873,14 +873,14 @@ export class ProductsService {
         [{
           total: bigint;
           active: bigint;
-          low_stock: bigint;
-          out_of_stock: bigint;
+          lowStock: bigint;
+          outOfStock: bigint;
         }]
       >`
         SELECT COUNT(*)::int AS total,
                COUNT(*) FILTER (WHERE p."isActive" = true)::int AS active,
-               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) > 0 AND COALESCE(bs.quantity, 0) <= 10)::int AS low_stock,
-               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) = 0)::int AS out_of_stock
+               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) > 0 AND COALESCE(bs.quantity, 0) <= 10)::int AS "lowStock",
+               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) = 0)::int AS "outOfStock"
           FROM products p
           LEFT JOIN branch_stocks bs ON bs."productId" = p.id AND bs."branchId" = ${branchId}
           WHERE p."companyId" = ${companyId} AND p."deletedAt" IS NULL
@@ -889,22 +889,22 @@ export class ProductsService {
       return {
         total: Number(r.total),
         active: Number(r.active),
-        lowStock: Number(r.low_stock),
-        outOfStock: Number(r.out_of_stock),
+        lowStock: Number(r.lowStock),
+        outOfStock: Number(r.outOfStock),
       };
     }
     const result = await this.prisma.$queryRaw<
       [{
         total: bigint;
         active: bigint;
-        low_stock: bigint;
-        out_of_stock: bigint;
+        lowStock: bigint;
+        outOfStock: bigint;
       }]
     >`
       SELECT COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE "isActive" = true)::int AS active,
-             COUNT(*) FILTER (WHERE stock > 0 AND stock <= 10)::int AS low_stock,
-             COUNT(*) FILTER (WHERE stock = 0)::int AS out_of_stock
+             COUNT(*) FILTER (WHERE stock > 0 AND stock <= 10)::int AS "lowStock",
+             COUNT(*) FILTER (WHERE stock = 0)::int AS "outOfStock"
         FROM products
         WHERE "companyId" = ${companyId} AND "deletedAt" IS NULL
     `;
@@ -912,8 +912,8 @@ export class ProductsService {
     return {
       total: Number(r.total),
       active: Number(r.active),
-      lowStock: Number(r.low_stock),
-      outOfStock: Number(r.out_of_stock),
+      lowStock: Number(r.lowStock),
+      outOfStock: Number(r.outOfStock),
     };
   }
 
@@ -1145,7 +1145,7 @@ export class ProductsService {
       excludeIngredient: true,
     });
     const rawRows = rows as Record<string, unknown>[];
-    const productIds = rawRows.map((row) => String(row.product_id));
+    const productIds = rawRows.map((row) => String(row.productId));
     if (productIds.length === 0) return { products: [], total };
 
     const [units, branchSkus] = await Promise.all([
@@ -1200,7 +1200,7 @@ export class ProductsService {
     }
 
     const products = rawRows.map((row) => {
-      const productId = String(row.product_id);
+      const productId = String(row.productId);
       const baseSku = baseSkuByProduct.get(productId);
       const productUnits = (unitsByProduct.get(productId) ?? [])
         .filter((unit) => Number(unit.conversionQty) > 1)
@@ -1222,19 +1222,19 @@ export class ProductsService {
 
       return {
         id: productId,
-        code: String(row.product_code ?? ""),
-        name: String(row.product_name ?? ""),
-        categoryId: (row.category_id as string) ?? null,
+        code: String(row.productCode ?? ""),
+        name: String(row.productName ?? ""),
+        categoryId: (row.categoryId as string) ?? null,
         category: {
-          id: (row.category_id as string) ?? "",
-          name: (row.category_name as string) ?? "",
+          id: (row.categoryId as string) ?? "",
+          name: (row.categoryName as string) ?? "",
         },
-        sellingPrice: Number(baseSku?.sellingPrice ?? row.selling_price ?? 0),
-        purchasePrice: Number(baseSku?.purchasePrice ?? row.purchase_price ?? 0),
+        sellingPrice: Number(baseSku?.sellingPrice ?? row.sellingPrice ?? 0),
+        purchasePrice: Number(baseSku?.purchasePrice ?? row.purchasePrice ?? 0),
         stock: Number(row.stock ?? 0),
-        minStock: Number(row.min_stock ?? 0),
-        unit: (row.base_unit as string) ?? "",
-        imageUrl: (row.image_url as string) ?? null,
+        minStock: Number(row.minStock ?? 0),
+        unit: (row.baseUnit as string) ?? "",
+        imageUrl: (row.imageUrl as string) ?? null,
         barcode: (row.barcode as string) ?? null,
         ...(productUnits.length > 0 ? { units: productUnits } : {}),
       };
@@ -1286,52 +1286,48 @@ export class ProductsService {
       excludeIngredient = false,
       itemType,
     } = params;
-    const conditions: string[] = ["company_id = $1"];
+    const conditions: string[] = ['"companyId" = $1'];
     const values: unknown[] = [companyId];
     let i = 2;
     if (branchId) {
-      conditions.push(`branch_id = $${i++}`);
+      conditions.push(`"branchId" = $${i++}`);
       values.push(branchId);
     }
     if (search) {
       conditions.push(
-        `(product_name ILIKE $${i} OR product_code ILIKE $${i} OR barcode ILIKE $${i} OR category_name ILIKE $${i} OR description ILIKE $${i})`,
+        `("productName" ILIKE $${i} OR "productCode" ILIKE $${i} OR barcode ILIKE $${i} OR "categoryName" ILIKE $${i} OR description ILIKE $${i})`,
       );
       values.push(`%${search}%`);
       i++;
     }
     if (categoryId) {
-      conditions.push(`category_id = $${i++}`);
+      conditions.push(`"categoryId" = $${i++}`);
       values.push(categoryId);
     }
     if (brandId) {
-      conditions.push(`brand_id = $${i++}`);
+      conditions.push(`"brandId" = $${i++}`);
       values.push(brandId);
     }
     if (isActive !== undefined) {
-      conditions.push(`is_active = $${i++}`);
+      conditions.push(`"isActive" = $${i++}`);
       values.push(isActive);
     }
     if (stockStatus === "out") conditions.push("stock = 0");
     else if (stockStatus === "low")
       conditions.push("stock > 0 AND stock <= 10");
     else if (stockStatus === "available") conditions.push("stock > 0");
-    if (onlyWithStock) conditions.push("has_branch_stock = true");
+    if (onlyWithStock) conditions.push('"hasBranchStock" = true');
     if (restrictToBranchAssigned && branchId) {
-      conditions.push("(has_branch_stock = true OR has_branch_price = true)");
+      conditions.push('("hasBranchStock" = true OR "hasBranchPrice" = true)');
     }
     if (excludeIngredient) {
-      // View belum punya kolom item_type — pakai subquery ke products.
-      // Prisma field `itemType` ter-map ke kolom DB `item_type` via
-      // @map("item_type"), jadi nama kolom yang benar di raw SQL adalah
-      // snake_case (tanpa double-quote camelCase).
       conditions.push(
-        `product_id NOT IN (SELECT id FROM products WHERE item_type = 'INGREDIENT')`,
+        `"productId" NOT IN (SELECT id FROM products WHERE "itemType" = 'INGREDIENT')`,
       );
     }
     if (itemType) {
       conditions.push(
-        `product_id IN (SELECT id FROM products WHERE item_type = $${i++})`,
+        `"productId" IN (SELECT id FROM products WHERE "itemType" = $${i++})`,
       );
       values.push(itemType);
     }
@@ -1339,40 +1335,40 @@ export class ProductsService {
     const whereClause = conditions.join(" AND ");
     const dir = sortDir === "asc" ? "ASC" : "DESC";
     const sortColumnByKey: Record<string, string> = {
-      name: "product_name",
-      code: "product_code",
-      category: "category_name",
-      purchasePrice: "purchase_price",
-      sellingPrice: "selling_price",
+      name: '"productName"',
+      code: '"productCode"',
+      category: '"categoryName"',
+      purchasePrice: '"purchasePrice"',
+      sellingPrice: '"sellingPrice"',
       stock: "stock",
-      createdAt: "created_at",
+      createdAt: '"createdAt"',
     };
     const sortColumn = sortBy ? sortColumnByKey[sortBy] : undefined;
     const orderBy = sortColumn
-      ? `${sortColumn} ${dir}, product_name ASC`
-      : "created_at DESC";
+      ? `${sortColumn} ${dir}, "productName" ASC`
+      : '"createdAt" DESC';
     const groupedOrderBy = sortColumn
-      ? `${sortColumn} ${dir}, product_name ASC`
-      : "created_at DESC";
-    const countQuery = `SELECT COUNT(DISTINCT product_id)::int AS total FROM vw_product_branch WHERE ${whereClause}`;
+      ? `${sortColumn} ${dir}, "productName" ASC`
+      : '"createdAt" DESC';
+    const countQuery = `SELECT COUNT(DISTINCT "productId")::int AS total FROM vw_product_branch WHERE ${whereClause}`;
     const dataQuery = branchId
       ? `SELECT * FROM vw_product_branch WHERE ${whereClause} ORDER BY ${orderBy} LIMIT $${i} OFFSET $${i + 1}`
-      : `SELECT product_id, product_code, product_name, category_id, category_name,
-                brand_id, company_id, base_unit, is_active, image_url, barcode, description,
-                MIN(branch_id) AS branch_id, '' AS branch_name, '' AS branch_code,
-                (SELECT p."sellingPrice" FROM products p WHERE p.id = product_id)::float8 AS selling_price,
-                (SELECT p."purchasePrice" FROM products p WHERE p.id = product_id)::float8 AS purchase_price,
-                (SELECT p.stock FROM products p WHERE p.id = product_id)::int4 AS stock,
-                (SELECT p."minStock" FROM products p WHERE p.id = product_id)::int4 AS min_stock,
-                bool_or(has_branch_stock) AS has_branch_stock,
-                bool_or(has_branch_price) AS has_branch_price,
-                MAX(unit_count)::int4 AS unit_count,
-                MAX(variant_count)::int4 AS variant_count,
-                MIN(created_at) AS created_at, MAX(updated_at) AS updated_at
+      : `SELECT "productId", "productCode", "productName", "categoryId", "categoryName",
+                "brandId", "companyId", "baseUnit", "isActive", "imageUrl", barcode, description,
+                MIN("branchId") AS "branchId", '' AS "branchName", '' AS "branchCode",
+                (SELECT p."sellingPrice" FROM products p WHERE p.id = "productId")::float8 AS "sellingPrice",
+                (SELECT p."purchasePrice" FROM products p WHERE p.id = "productId")::float8 AS "purchasePrice",
+                (SELECT p.stock FROM products p WHERE p.id = "productId")::int4 AS stock,
+                (SELECT p."minStock" FROM products p WHERE p.id = "productId")::int4 AS "minStock",
+                bool_or("hasBranchStock") AS "hasBranchStock",
+                bool_or("hasBranchPrice") AS "hasBranchPrice",
+                MAX("unitCount")::int4 AS "unitCount",
+                MAX("variantCount")::int4 AS "variantCount",
+                MIN("createdAt") AS "createdAt", MAX("updatedAt") AS "updatedAt"
            FROM vw_product_branch
            WHERE ${whereClause}
-           GROUP BY product_id, product_code, product_name, category_id, category_name,
-                    brand_id, company_id, base_unit, is_active, image_url, barcode, description
+           GROUP BY "productId", "productCode", "productName", "categoryId", "categoryName",
+                    "brandId", "companyId", "baseUnit", "isActive", "imageUrl", barcode, description
            ORDER BY ${groupedOrderBy}
            LIMIT $${i} OFFSET $${i + 1}`;
     const [countRes, rawRows] = await Promise.all([
@@ -1390,7 +1386,7 @@ export class ProductsService {
 
     // Augment rows with default_rack info (raw SQL view doesn't include it).
     const productIds = Array.from(
-      new Set(rawRows.map((r) => String(r.product_id))),
+      new Set(rawRows.map((r) => String(r.productId))),
     ).filter((id) => id);
     const rackInfoByProduct = new Map<
       string,
@@ -1426,14 +1422,14 @@ export class ProductsService {
       branchId,
     );
     const rows = rawRows.map((r) => {
-      const productId = String(r.product_id);
+      const productId = String(r.productId);
       const rack = rackInfoByProduct.get(productId) ?? null;
       const recipeStock = recipeStockByProduct.get(productId);
       return {
         ...r,
         stock: recipeStock ?? r.stock,
-        default_rack_id: rack?.id ?? null,
-        default_rack: rack,
+        defaultRackId: rack?.id ?? null,
+        defaultRack: rack,
       };
     });
 

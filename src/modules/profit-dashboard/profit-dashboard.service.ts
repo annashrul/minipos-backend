@@ -98,13 +98,13 @@ export class ProfitDashboardService {
     type ProfitRow = {
       revenue: number;
       cogs: number;
-      gross_profit: number;
+      grossProfit: number;
       discount: number;
       tax: number;
       expense: number;
-      net_profit: number;
-      transaction_count: number;
-      items_sold: number;
+      netProfit: number;
+      transactionCount: number;
+      itemsSold: number;
     };
 
     const [[current], [prev]] = await Promise.all([
@@ -126,17 +126,17 @@ export class ProfitDashboardService {
 
     const revenue = current?.revenue ?? 0;
     const cogs = current?.cogs ?? 0;
-    const grossProfit = current?.gross_profit ?? 0;
+    const grossProfit = current?.grossProfit ?? 0;
     const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
     const expenses = current?.expense ?? 0;
-    const netProfit = current?.net_profit ?? 0;
+    const netProfit = current?.netProfit ?? 0;
     const netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
 
     const prevRevenue = prev?.revenue ?? 0;
     const prevCogs = prev?.cogs ?? 0;
-    const prevGrossProfit = prev?.gross_profit ?? 0;
+    const prevGrossProfit = prev?.grossProfit ?? 0;
     const prevExpensesTotal = prev?.expense ?? 0;
-    const prevNetProfit = prev?.net_profit ?? 0;
+    const prevNetProfit = prev?.netProfit ?? 0;
 
     const revenueGrowth =
       prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
@@ -168,7 +168,7 @@ export class ProfitDashboardService {
       netProfitGrowth: Math.round(netProfitGrowth * 10) / 10,
       cogsGrowth: Math.round(cogsGrowth * 10) / 10,
       expensesGrowth: Math.round(expensesGrowth * 10) / 10,
-      transactionCount: Number(current?.transaction_count ?? 0),
+      transactionCount: Number(current?.transactionCount ?? 0),
     };
   }
 
@@ -254,18 +254,18 @@ export class ProfitDashboardService {
 
     const rows = await this.prisma.$queryRawUnsafe<
       {
-        product_name: string;
-        product_code: string;
-        units_sold: number;
+        productName: string;
+        productCode: string;
+        unitsSold: number;
         revenue: number;
         cost: number;
       }[]
     >(
       `
       SELECT
-        ti."productName" AS product_name,
-        ti."productCode" AS product_code,
-        SUM(ti."quantity")::int AS units_sold,
+        ti."productName" AS "productName",
+        ti."productCode" AS "productCode",
+        SUM(ti."quantity")::int AS "unitsSold",
         SUM(ti."subtotal")::float AS revenue,
         SUM(ti."quantity" * p."purchasePrice")::float AS cost
       FROM transactions t
@@ -284,9 +284,9 @@ export class ProfitDashboardService {
     );
 
     return rows.map((r) => ({
-      productName: r.product_name,
-      productCode: r.product_code,
-      unitsSold: r.units_sold,
+      productName: r.productName,
+      productCode: r.productCode,
+      unitsSold: r.unitsSold,
       revenue: r.revenue,
       cost: r.cost,
       profit: r.revenue - r.cost,
@@ -308,12 +308,12 @@ export class ProfitDashboardService {
       : "";
 
     const rows = await this.prisma.$queryRawUnsafe<
-      { branch_id: string; branch_name: string; revenue: number; cost: number }[]
+      { branchId: string; branchName: string; revenue: number; cost: number }[]
     >(
       `
       SELECT
-        b."id" AS branch_id,
-        b."name" AS branch_name,
+        b."id" AS "branchId",
+        b."name" AS "branchName",
         COALESCE(SUM(ti."subtotal"), 0)::float AS revenue,
         COALESCE(SUM(ti."quantity" * p."purchasePrice"), 0)::float AS cost
       FROM branches b
@@ -336,10 +336,10 @@ export class ProfitDashboardService {
       ? `AND "branchId" IN (SELECT id FROM branches WHERE "companyId" = $${expenseParams.push(companyId)})`
       : "";
     const expenseRows = await this.prisma.$queryRawUnsafe<
-      { branch_id: string; total: number }[]
+      { branchId: string; total: number }[]
     >(
       `
-      SELECT "branchId" AS branch_id, COALESCE(SUM("amount"), 0)::float AS total
+      SELECT "branchId" AS "branchId", COALESCE(SUM("amount"), 0)::float AS total
       FROM expenses
       WHERE "date" >= $1 AND "date" < $2 AND "branchId" IS NOT NULL
         ${expenseCompanyCond}
@@ -348,16 +348,16 @@ export class ProfitDashboardService {
       ...expenseParams,
     );
 
-    const expenseMap = new Map(expenseRows.map((e) => [e.branch_id, e.total]));
+    const expenseMap = new Map(expenseRows.map((e) => [e.branchId, e.total]));
     const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
 
     return rows.map((r) => {
-      const expenses = expenseMap.get(r.branch_id) ?? 0;
+      const expenses = expenseMap.get(r.branchId) ?? 0;
       const grossProfit = r.revenue - r.cost;
       const netProfit = grossProfit - expenses;
       return {
-        branchId: r.branch_id,
-        branchName: r.branch_name,
+        branchId: r.branchId,
+        branchName: r.branchName,
         revenue: r.revenue,
         cost: r.cost,
         grossProfit,
@@ -457,11 +457,11 @@ export class ProfitDashboardService {
     }
 
     const rows = await this.prisma.$queryRawUnsafe<
-      { product_name: string; revenue: number; cost: number }[]
+      { productName: string; revenue: number; cost: number }[]
     >(
       `
       SELECT
-        ti."productName" AS product_name,
+        ti."productName" AS "productName",
         SUM(ti."subtotal")::float AS revenue,
         SUM(ti."quantity" * p."purchasePrice")::float AS cost
       FROM transactions t

@@ -533,15 +533,15 @@ export class ReportsService {
         transactionCount: number;
       }>
     >(
-      `SELECT COALESCE(v.category_id, 'no-cat') AS "categoryId",
-              COALESCE(v.category_name, 'Tanpa Kategori') AS "categoryName",
+      `SELECT COALESCE(v."categoryId", 'no-cat') AS "categoryId",
+              COALESCE(v."categoryName", 'Tanpa Kategori') AS "categoryName",
               SUM(v.quantity)::int AS "totalQuantity",
               COALESCE(SUM(v.subtotal), 0)::float AS "totalRevenue",
-              COALESCE(SUM(v.quantity * v.purchase_price), 0)::float AS "totalCost",
-              COUNT(DISTINCT v.transaction_id)::int AS "transactionCount"
+              COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
+              COUNT(DISTINCT v."transactionId")::int AS "transactionCount"
          FROM public.vw_sales_item_facts v
          WHERE ${where}
-         GROUP BY v.category_id, v.category_name
+         GROUP BY v."categoryId", v."categoryName"
          ORDER BY "totalRevenue" DESC`,
       ...params,
     );
@@ -555,14 +555,14 @@ export class ReportsService {
       }>
     >(
       `SELECT * FROM (
-         SELECT COALESCE(v.category_id, 'no-cat') AS "categoryId",
-                v.product_name AS "productName",
+         SELECT COALESCE(v."categoryId", 'no-cat') AS "categoryId",
+                v."productName" AS "productName",
                 SUM(v.quantity)::int AS quantity,
                 COALESCE(SUM(v.subtotal), 0)::float AS revenue,
-                ROW_NUMBER() OVER (PARTITION BY COALESCE(v.category_id, 'no-cat') ORDER BY SUM(v.subtotal) DESC) AS rn
+                ROW_NUMBER() OVER (PARTITION BY COALESCE(v."categoryId", 'no-cat') ORDER BY SUM(v.subtotal) DESC) AS rn
            FROM public.vw_sales_item_facts v
            WHERE ${where}
-           GROUP BY v.category_id, v.product_id, v.product_name
+           GROUP BY v."categoryId", v."productId", v."productName"
        ) ranked WHERE rn <= 5`,
       ...params,
     );
@@ -610,15 +610,15 @@ export class ReportsService {
           productCount: number;
         }>
       >(
-        `SELECT v.supplier_id AS "supplierId",
-                COALESCE(v.supplier_name, 'Tanpa Supplier') AS "supplierName",
+        `SELECT v."supplierId" AS "supplierId",
+                COALESCE(v."supplierName", 'Tanpa Supplier') AS "supplierName",
                 SUM(v.quantity)::int AS "totalQuantity",
                 COALESCE(SUM(v.subtotal), 0)::float AS "totalRevenue",
-                COALESCE(SUM(v.quantity * v.purchase_price), 0)::float AS "totalCost",
-                COUNT(DISTINCT v.product_id)::int AS "productCount"
+                COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
+                COUNT(DISTINCT v."productId")::int AS "productCount"
            FROM public.vw_sales_item_facts v
            WHERE ${where}
-           GROUP BY v.supplier_id, v.supplier_name
+           GROUP BY v."supplierId", v."supplierName"
            ORDER BY "totalRevenue" DESC`,
         ...params,
       ),
@@ -631,14 +631,14 @@ export class ReportsService {
         }>
       >(
         `SELECT * FROM (
-           SELECT v.supplier_id AS "supplierId",
-                  v.product_name AS "productName",
+           SELECT v."supplierId" AS "supplierId",
+                  v."productName" AS "productName",
                   SUM(v.quantity)::int AS quantity,
                   COALESCE(SUM(v.subtotal), 0)::float AS revenue,
-                  ROW_NUMBER() OVER (PARTITION BY v.supplier_id ORDER BY SUM(v.subtotal) DESC) AS rn
+                  ROW_NUMBER() OVER (PARTITION BY v."supplierId" ORDER BY SUM(v.subtotal) DESC) AS rn
              FROM public.vw_sales_item_facts v
              WHERE ${where}
-             GROUP BY v.supplier_id, v.product_id, v.product_name
+             GROUP BY v."supplierId", v."productId", v."productName"
          ) ranked WHERE rn <= 5`,
         ...params,
       ),
@@ -686,10 +686,10 @@ export class ReportsService {
           txCount: number;
         }>
       >(
-        `SELECT COALESCE(SUM(v.grand_total), 0)::float AS revenue,
-                COALESCE(SUM(v.discount_amount), 0)::float AS discount,
-                COALESCE(SUM(v.tax_amount), 0)::float AS tax,
-                COUNT(v.transaction_id)::int AS "txCount"
+        `SELECT COALESCE(SUM(v."grandTotal"), 0)::float AS revenue,
+                COALESCE(SUM(v."discountAmount"), 0)::float AS discount,
+                COALESCE(SUM(v."taxAmount"), 0)::float AS tax,
+                COUNT(v."transactionId")::int AS "txCount"
            FROM public.vw_sales_transactions_fact v
            WHERE ${where}`,
         ...params,
@@ -702,13 +702,13 @@ export class ReportsService {
           revenue: number;
         }>
       >(
-        `SELECT v.user_id AS "userId",
-                COALESCE(v.cashier_name, 'Unknown') AS name,
-                COUNT(v.transaction_id)::int AS transactions,
-                COALESCE(SUM(v.grand_total), 0)::float AS revenue
+        `SELECT v."userId" AS "userId",
+                COALESCE(v."cashierName", 'Unknown') AS name,
+                COUNT(v."transactionId")::int AS transactions,
+                COALESCE(SUM(v."grandTotal"), 0)::float AS revenue
            FROM public.vw_sales_transactions_fact v
            WHERE ${where}
-           GROUP BY v.user_id, v.cashier_name
+           GROUP BY v."userId", v."cashierName"
            ORDER BY revenue DESC
            LIMIT 5`,
         ...params,
@@ -716,12 +716,12 @@ export class ReportsService {
       this.prisma.$queryRawUnsafe<
         Array<{ category: string; total: number; quantity: number }>
       >(
-        `SELECT COALESCE(v.category_name, 'Tanpa Kategori') AS category,
+        `SELECT COALESCE(v."categoryName", 'Tanpa Kategori') AS category,
                 COALESCE(SUM(v.subtotal), 0)::float AS total,
                 SUM(v.quantity)::int AS quantity
            FROM public.vw_sales_item_facts v
            WHERE ${where}
-           GROUP BY v.category_name
+           GROUP BY v."categoryName"
            ORDER BY total DESC
            LIMIT 8`,
         ...params,
@@ -771,27 +771,27 @@ export class ReportsService {
           transactionCount: number;
         }>
       >(
-        `SELECT v.user_id AS "userId",
-                COALESCE(v.cashier_name, 'Unknown') AS name,
-                COALESCE(v.cashier_email, '-') AS email,
-                COALESCE(v.cashier_role, '-') AS role,
-                COALESCE(SUM(v.grand_total), 0)::float AS "totalRevenue",
-                COALESCE(SUM(v.discount_amount), 0)::float AS "totalDiscount",
-                COUNT(v.transaction_id)::int AS "transactionCount"
+        `SELECT v."userId" AS "userId",
+                COALESCE(v."cashierName", 'Unknown') AS name,
+                COALESCE(v."cashierEmail", '-') AS email,
+                COALESCE(v."cashierRole", '-') AS role,
+                COALESCE(SUM(v."grandTotal"), 0)::float AS "totalRevenue",
+                COALESCE(SUM(v."discountAmount"), 0)::float AS "totalDiscount",
+                COUNT(v."transactionId")::int AS "transactionCount"
            FROM public.vw_sales_transactions_fact v
            WHERE ${where}
-           GROUP BY v.user_id, v.cashier_name, v.cashier_email, v.cashier_role`,
+           GROUP BY v."userId", v."cashierName", v."cashierEmail", v."cashierRole"`,
         ...params,
       ),
       this.prisma.$queryRawUnsafe<
         Array<{ userId: string; totalCost: number; itemsSold: number }>
       >(
-        `SELECT v.user_id AS "userId",
-                COALESCE(SUM(v.quantity * v.purchase_price), 0)::float AS "totalCost",
+        `SELECT v."userId" AS "userId",
+                COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
                 SUM(v.quantity)::int AS "itemsSold"
            FROM public.vw_sales_item_facts v
            WHERE ${where}
-           GROUP BY v.user_id`,
+           GROUP BY v."userId"`,
         ...params,
       ),
     ]);
@@ -830,18 +830,18 @@ export class ReportsService {
     const params: unknown[] = [];
     if (dateFrom) {
       params.push(new Date(dateFrom + "T00:00:00"));
-      conds.push(`${alias}.tx_created_at >= $${params.length}`);
+      conds.push(`${alias}."txCreatedAt" >= $${params.length}`);
     }
     if (dateTo) {
       params.push(new Date(dateTo + "T23:59:59"));
-      conds.push(`${alias}.tx_created_at <= $${params.length}`);
+      conds.push(`${alias}."txCreatedAt" <= $${params.length}`);
     }
     if (branchId) {
       params.push(branchId);
-      conds.push(`${alias}.branch_id = $${params.length}`);
+      conds.push(`${alias}."branchId" = $${params.length}`);
     }
     params.push(companyId);
-    conds.push(`${alias}.company_id = $${params.length}`);
+    conds.push(`${alias}."companyId" = $${params.length}`);
     return { where: conds.join(" AND "), params };
   }
 }
