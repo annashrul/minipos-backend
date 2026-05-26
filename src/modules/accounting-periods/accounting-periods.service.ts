@@ -5,6 +5,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   AccountingPeriodListResponse,
   AccountingPeriodResponse,
@@ -384,12 +385,5 @@ function toPeriodResponse(p: RawPeriod): AccountingPeriodResponse {
 }
 
 function throwIfDuplicate(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Periode dengan tanggal yang sama sudah ada",
-    );
-  }
+  throwIfUniqueConstraint(err, "Periode dengan tanggal yang sama sudah ada");
 }
