@@ -15,13 +15,13 @@ import {
   RejectReturnSchema,
   SearchExchangeProductsQuerySchema,
   SearchReturnTransactionQuerySchema,
-  type AuthUser,
   type CreateReturnDto,
   type ListReturnsQueryDto,
   type RejectReturnDto,
   type SearchExchangeProductsQueryDto,
   type SearchReturnTransactionQueryDto,
-} from "@/contracts";
+} from "./dto/returns.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

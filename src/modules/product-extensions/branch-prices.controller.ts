@@ -19,7 +19,7 @@ import {
   type ListBranchPricesQueryDto,
   type ReplaceBranchPricesDto,
   type UpdateBranchPriceDto,
-} from "@/contracts";
+} from "./dto/product-extensions.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

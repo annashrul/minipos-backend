@@ -20,7 +20,7 @@ import type {
   SearchExchangeProductsResponse,
   SearchReturnTransactionQueryDto,
   SearchReturnTransactionResponse,
-} from "@/contracts";
+} from "./dto/returns.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const RETURN_SELECT = {

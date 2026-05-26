@@ -4,7 +4,7 @@ import {
   SubscriptionPlanSchema,
   SubscriptionStatusSchema,
   type SubscriptionResponse,
-} from "@/contracts";
+} from "../../subscriptions/dto/subscriptions.dto";
 
 export const ListPlatformSubscriptionsQuerySchema = z.object({
   companyId: z.string().uuid().optional(),

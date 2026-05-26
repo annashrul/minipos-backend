@@ -17,7 +17,7 @@ import type {
   TransactionStatsQueryDto,
   TransactionStatsResponse,
   VoidTransactionResponse,
-} from "@/contracts";
+} from "./dto/transactions.dto";
 import { DebtsService } from "../debts/debts.service";
 import { PointsService } from "../points/points.service";
 import { PrismaService } from "../prisma/prisma.service";

@@ -15,13 +15,13 @@ import {
   RunRecurringJournalSchema,
   ToggleRecurringJournalSchema,
   UpdateRecurringJournalSchema,
-  type AuthUser,
   type CreateRecurringJournalDto,
   type ListRecurringJournalsQueryDto,
   type RunRecurringJournalDto,
   type ToggleRecurringJournalDto,
   type UpdateRecurringJournalDto,
-} from "@/contracts";
+} from "./dto/recurring-journals.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

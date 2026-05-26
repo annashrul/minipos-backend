@@ -15,7 +15,7 @@ import {
   type BulkDeleteGoodsReceiptsDto,
   type GoodsReceiptStatsQueryDto,
   type ListGoodsReceiptsQueryDto,
-} from "@/contracts";
+} from "./dto/goods-receipts.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

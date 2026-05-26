@@ -17,7 +17,7 @@ import type {
   SalesReportQueryDto,
   SalesReportResponse,
   SalesReportSeriesEntry,
-} from "@/contracts";
+} from "./dto/reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

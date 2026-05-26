@@ -7,7 +7,7 @@ import type {
   GoodsReceiptStatsQueryDto,
   GoodsReceiptStatsResponse,
   ListGoodsReceiptsQueryDto,
-} from "@/contracts";
+} from "./dto/goods-receipts.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";

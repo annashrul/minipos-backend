@@ -18,7 +18,7 @@ import type {
   RunRecurringJournalResponse,
   ToggleRecurringJournalDto,
   UpdateRecurringJournalDto,
-} from "@/contracts";
+} from "./dto/recurring-journals.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const TEMPLATE_SELECT = {

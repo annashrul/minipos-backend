@@ -125,4 +125,5 @@ export type DebtSummaryResponse = {
   payable: { total: number; remaining: number; count: number };
   receivable: { total: number; remaining: number; count: number };
   overdue: { count: number; remaining: number };
+  byStatus: { total: number; unpaid: number; partial: number; paid: number; overdue: number };
 };

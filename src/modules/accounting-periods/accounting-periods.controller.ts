@@ -13,11 +13,11 @@ import {
   CreateAccountingPeriodSchema,
   ListAccountingPeriodsQuerySchema,
   UpdateAccountingPeriodSchema,
-  type AuthUser,
   type CreateAccountingPeriodDto,
   type ListAccountingPeriodsQueryDto,
   type UpdateAccountingPeriodDto,
-} from "@/contracts";
+} from "./dto/accounting-periods.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

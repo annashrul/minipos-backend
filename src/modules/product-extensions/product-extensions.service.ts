@@ -19,13 +19,17 @@ import type {
   UpdateBranchPriceDto,
   UpdateProductUnitDto,
   UpdateTierPriceDto,
+} from "./dto/product-extensions.dto";
+import type {
   ProductVariantResponse,
   ProductVariantListResponse,
   ReplaceProductVariantsDto,
+} from "./dto/product-variants.dto";
+import type {
   ProductBranchSkuResponse,
   ProductBranchSkuListResponse,
   ReplaceProductBranchSkusDto,
-} from "@/contracts";
+} from "./dto/product-branch-skus.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";

@@ -11,7 +11,7 @@ import type {
   CreateAccountingPeriodDto,
   ListAccountingPeriodsQueryDto,
   UpdateAccountingPeriodDto,
-} from "@/contracts";
+} from "./dto/accounting-periods.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PERIOD_SELECT = {

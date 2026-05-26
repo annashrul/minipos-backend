@@ -11,7 +11,7 @@ import type {
   CreateAccountCategoryDto,
   ListAccountCategoriesQueryDto,
   UpdateAccountCategoryDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
 import { PrismaService } from "../../prisma/prisma.service";
 
 const CATEGORY_SELECT = {

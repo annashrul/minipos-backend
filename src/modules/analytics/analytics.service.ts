@@ -28,7 +28,7 @@ import type {
   ValidateVoucherDto,
   ValidateVoucherResponse,
   VoidAbuseEntryResponse,
-} from "@/contracts";
+} from "./dto/analytics.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

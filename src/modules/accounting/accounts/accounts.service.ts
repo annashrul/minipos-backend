@@ -14,7 +14,7 @@ import type {
   CreateAccountDto,
   ListAccountsQueryDto,
   UpdateAccountDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { paginate } from "../../../common/utils/pagination";
 

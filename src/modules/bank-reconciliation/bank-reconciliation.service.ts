@@ -15,7 +15,7 @@ import type {
   SetReconciliationItemsDto,
   ToggleItemMatchDto,
   UpdateBankReconciliationDto,
-} from "@/contracts";
+} from "./dto/bank-reconciliation.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const RECON_SELECT = {

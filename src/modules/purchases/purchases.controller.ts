@@ -17,7 +17,6 @@ import {
   ReceivePurchaseSchema,
   UpdatePurchaseSchema,
   UpdatePurchaseStatusSchema,
-  type AuthUser,
   type ClosePurchaseDto,
   type CreatePurchaseDto,
   type ListPurchaseTransactionLogQueryDto,
@@ -25,7 +24,8 @@ import {
   type ReceivePurchaseDto,
   type UpdatePurchaseDto,
   type UpdatePurchaseStatusDto,
-} from "@/contracts";
+} from "./dto/purchases.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

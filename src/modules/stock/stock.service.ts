@@ -16,7 +16,7 @@ import type {
   StockCardQueryDto,
   StockCardResponse,
   StockMovementResponse,
-} from "@/contracts";
+} from "./dto/stock.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";

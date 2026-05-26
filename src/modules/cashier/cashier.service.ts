@@ -17,7 +17,7 @@ import type {
   CreateCashierFavoriteDto,
   ReorderCashierFavoritesDto,
   UpdateCashierFavoriteDto,
-} from "@/contracts";
+} from "./dto/cashier.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 // We encode (badge, level) into the DB `badge` field using a separator,

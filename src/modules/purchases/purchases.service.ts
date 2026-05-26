@@ -25,7 +25,7 @@ import type {
   ReceivePurchaseResponse,
   UpdatePurchaseDto,
   UpdatePurchaseStatusDto,
-} from "@/contracts";
+} from "./dto/purchases.dto";
 import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";

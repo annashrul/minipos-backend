@@ -14,7 +14,7 @@ import type {
   StockOpnameItemResponse,
   StockOpnameResponse,
   StockOpnameStatusDto,
-} from "@/contracts";
+} from "./dto/stock-opname.dto";
 import {
   dayRange,
   nextDocumentNumber,

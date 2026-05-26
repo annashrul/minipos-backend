@@ -18,7 +18,7 @@ import {
   type FindCustomerByPhoneQueryDto,
   type TebusMurahOptionsDto,
   type ValidateVoucherDto,
-} from "@/contracts";
+} from "./dto/analytics.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

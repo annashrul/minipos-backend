@@ -16,7 +16,7 @@ import type {
   ListJournalsQueryDto,
   UpdateJournalDto,
   VoidJournalDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { paginate } from "../../../common/utils/pagination";
 

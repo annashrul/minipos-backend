@@ -14,12 +14,12 @@ import {
   ListJournalsQuerySchema,
   UpdateJournalSchema,
   VoidJournalSchema,
-  type AuthUser,
   type CreateJournalDto,
   type ListJournalsQueryDto,
   type UpdateJournalDto,
   type VoidJournalDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../../common/pipes/zod.pipe";
 import { AccessGuard } from "../../auth/access.guard";
 import { CurrentCompany } from "../../auth/current-company.decorator";
