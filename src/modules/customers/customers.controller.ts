@@ -56,6 +56,16 @@ export class CustomersController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("customers", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.customers.bulkDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Post()
   @RequireAccess("customers", "create")
   async create(

@@ -154,6 +154,13 @@ export class CustomersService {
     await this.repo.delete(id);
     return { success: true };
   }
+
+  async bulkDelete(companyId: string, ids: string[]): Promise<{ count: number }> {
+    const { count } = await this.prisma.customer.deleteMany({
+      where: { id: { in: ids }, companyId },
+    });
+    return { count };
+  }
 }
 
 function toCustomerResponse(c: RawCustomer): CustomerResponse {
