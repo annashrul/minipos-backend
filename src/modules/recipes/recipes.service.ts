@@ -224,6 +224,7 @@ export class RecipesService {
           companyId,
           deletedAt: null,
           isActive: true,
+          ...productNameFilter,
         },
       },
       include: {
@@ -328,16 +329,7 @@ export class RecipesService {
       };
     });
 
-    // FILTER: apply search (Product name/code) & status (computed).
-    const searchLower = search?.trim().toLowerCase() ?? "";
     let filtered = allRows;
-    if (searchLower) {
-      filtered = filtered.filter(
-        (r) =>
-          r.productName.toLowerCase().includes(searchLower) ||
-          r.productCode.toLowerCase().includes(searchLower),
-      );
-    }
     if (status && status !== "all") {
       filtered = filtered.filter((r) => {
         const h =
@@ -349,7 +341,6 @@ export class RecipesService {
         return h === status;
       });
     }
-    void productNameFilter; // tidak dipakai (search di-apply ke Product.name level row)
 
     // SORT.
     const dir = sortDir ?? (sortBy === "revenue" ? "desc" : "asc");

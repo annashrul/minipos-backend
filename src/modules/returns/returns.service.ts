@@ -478,38 +478,32 @@ export class ReturnsService {
       // qty yg dibeli per produk → transaksi pindah ke REFUNDED. Partial
       // return tetap dibiarkan COMPLETED — modul retur jadi single source
       // of truth nominal yg dikembalikan.
-      const txDetail = await tx.transaction.findUnique({
+      const txStatus = await tx.transaction.findUnique({
         where: { id: existing.transactionId },
-        select: {
-          status: true,
-          items: { select: { productId: true, quantity: true } },
-        },
+        select: { status: true },
       });
-      if (txDetail && txDetail.status !== "REFUNDED") {
-        const purchasedByProduct = new Map<string, number>();
-        for (const it of txDetail.items) {
-          purchasedByProduct.set(
-            it.productId,
-            (purchasedByProduct.get(it.productId) ?? 0) + it.quantity,
-          );
-        }
-        const returnedAgg = await tx.returnExchangeItem.groupBy({
-          by: ["productId"],
-          where: {
-            returnExchange: {
-              transactionId: existing.transactionId,
-              status: "COMPLETED",
-            },
-          },
-          _sum: { quantity: true },
-        });
-        const returnedByProduct = new Map<string, number>(
-          returnedAgg.map((r) => [r.productId, r._sum.quantity ?? 0]),
-        );
-        const fullyReturned = Array.from(purchasedByProduct.entries()).every(
-          ([pid, qty]) => (returnedByProduct.get(pid) ?? 0) >= qty,
-        );
-        if (fullyReturned) {
+      if (txStatus && txStatus.status !== "REFUNDED") {
+        const [{ fully_returned }] = await tx.$queryRaw<
+          [{ fully_returned: boolean }]
+        >`
+          SELECT NOT EXISTS (
+            SELECT 1
+            FROM transaction_items ti
+            LEFT JOIN (
+              SELECT rei."productId",
+                     COALESCE(SUM(rei.quantity), 0) AS returned_qty
+              FROM return_exchange_items rei
+              JOIN return_exchanges re ON re.id = rei."returnExchangeId"
+              WHERE re."transactionId" = ${existing.transactionId}
+                AND re.status = 'COMPLETED'
+              GROUP BY rei."productId"
+            ) ret ON ret."productId" = ti."productId"
+            WHERE ti."transactionId" = ${existing.transactionId}
+            GROUP BY ti."productId"
+            HAVING SUM(ti.quantity) > COALESCE(MAX(ret.returned_qty), 0)
+          ) AS fully_returned
+        `;
+        if (fully_returned) {
           await tx.transaction.update({
             where: { id: existing.transactionId },
             data: { status: "REFUNDED" },

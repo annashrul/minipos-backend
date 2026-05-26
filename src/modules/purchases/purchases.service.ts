@@ -843,7 +843,7 @@ export class PurchasesService {
           SELECT
             COUNT(*) FILTER (WHERE "receivedQty" < "quantity") AS "unreceived_count",
             COALESCE(SUM("receivedQty" * "unitPrice"), 0) AS "received_amount"
-          FROM "PurchaseOrderItem"
+          FROM purchase_order_items
           WHERE "purchaseOrderId" = ${id}
         `;
         const allReceived = Number(poItemSummary.unreceived_count) === 0;
