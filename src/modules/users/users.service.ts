@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import bcrypt from "bcryptjs";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateUserDto,
   ListUsersQueryDto,
@@ -143,10 +144,7 @@ export class UsersService {
       const updated = await this.repo.update(id, data);
       return toUserResponse(updated);
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-        throw new ConflictException("Email sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Email sudah digunakan");
     }
   }
 

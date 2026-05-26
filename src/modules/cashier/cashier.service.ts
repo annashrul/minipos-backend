@@ -5,6 +5,8 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import { round2 } from "@/common/utils/math";
 import type {
   AutoAwardBadgesResponse,
   CashierBadgeResponse,
@@ -130,13 +132,7 @@ export class CashierService {
       });
       return toFavoriteResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Produk sudah ada di favorit");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Produk sudah ada di favorit");
     }
   }
 
@@ -259,13 +255,7 @@ export class CashierService {
       });
       return toBadgeResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Badge sudah dimiliki user");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Badge sudah dimiliki user");
     }
   }
 
@@ -700,8 +690,4 @@ function periodRange(
     return { start, end };
   }
   return monthRange(now);
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

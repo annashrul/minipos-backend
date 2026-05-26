@@ -1,5 +1,7 @@
 ﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { toDateOnly } from "@/common/utils/date";
+import { round2 } from "@/common/utils/math";
 import type {
   AccountingAgingQueryDto,
   AccountingDashboardQueryDto,
@@ -176,7 +178,7 @@ export class AccountingReportsService {
         lineDescription: e.lineDescription,
         debit: e.debit,
         credit: e.credit,
-        runningBalance: Math.round(runningBalance * 100) / 100,
+        runningBalance: round2(runningBalance),
       };
     });
 
@@ -191,9 +193,9 @@ export class AccountingReportsService {
       },
       openingBalance,
       entries: ledgerEntries,
-      closingBalance: Math.round(runningBalance * 100) / 100,
-      totalDebit: Math.round(totalDebit * 100) / 100,
-      totalCredit: Math.round(totalCredit * 100) / 100,
+      closingBalance: round2(runningBalance),
+      totalDebit: round2(totalDebit),
+      totalCredit: round2(totalCredit),
     };
   }
 
@@ -293,13 +295,13 @@ export class AccountingReportsService {
         categoryType: row.categoryType,
         categoryName: row.categoryName,
         normalSide,
-        debit: Math.round(debit * 100) / 100,
-        credit: Math.round(credit * 100) / 100,
+        debit: round2(debit),
+        credit: round2(credit),
       };
     });
 
-    grandTotalDebit = Math.round(grandTotalDebit * 100) / 100;
-    grandTotalCredit = Math.round(grandTotalCredit * 100) / 100;
+    grandTotalDebit = round2(grandTotalDebit);
+    grandTotalCredit = round2(grandTotalCredit);
 
     return {
       rows: result,
@@ -307,7 +309,7 @@ export class AccountingReportsService {
       totalCredit: grandTotalCredit,
       isBalanced: Math.abs(grandTotalDebit - grandTotalCredit) < 0.01,
       difference: grandTotalDebit - grandTotalCredit,
-      asOfDate: asOfDate ?? new Date().toISOString().split("T")[0]!,
+      asOfDate: asOfDate ?? toDateOnly(new Date()),
     };
   }
 
@@ -385,9 +387,9 @@ export class AccountingReportsService {
       }
     }
 
-    totalRevenue = Math.round(totalRevenue * 100) / 100;
-    totalExpense = Math.round(totalExpense * 100) / 100;
-    const netIncome = Math.round((totalRevenue - totalExpense) * 100) / 100;
+    totalRevenue = round2(totalRevenue);
+    totalExpense = round2(totalExpense);
+    const netIncome = round2(totalRevenue - totalExpense);
 
     return {
       period: { dateFrom, dateTo },
@@ -500,7 +502,7 @@ export class AccountingReportsService {
       } else {
         balance += row.totalCredit - row.totalDebit;
       }
-      balance = Math.round(balance * 100) / 100;
+      balance = round2(balance);
 
       const key = `${row.categoryType}::${row.categoryName}`;
       if (!groupMap[key]) {
@@ -555,13 +557,13 @@ export class AccountingReportsService {
     }
 
     const totalAssets =
-      Math.round(assetGroups.reduce((s, g) => s + g.total, 0) * 100) / 100;
+      round2(assetGroups.reduce((s, g) => s + g.total, 0));
     const totalLiabilities =
-      Math.round(liabilityGroups.reduce((s, g) => s + g.total, 0) * 100) / 100;
+      round2(liabilityGroups.reduce((s, g) => s + g.total, 0));
     const totalEquity =
-      Math.round(equityGroups.reduce((s, g) => s + g.total, 0) * 100) / 100;
+      round2(equityGroups.reduce((s, g) => s + g.total, 0));
     const totalLiabilitiesAndEquity =
-      Math.round((totalLiabilities + totalEquity) * 100) / 100;
+      round2(totalLiabilities + totalEquity);
 
     const assets: BalanceSheetGroupResponse = {
       categoryName: "Aset",
@@ -594,7 +596,7 @@ export class AccountingReportsService {
       retainedEarnings,
       isBalanced: Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01,
       difference:
-        Math.round((totalAssets - totalLiabilitiesAndEquity) * 100) / 100,
+        round2(totalAssets - totalLiabilitiesAndEquity),
     };
   }
 
@@ -711,11 +713,11 @@ export class AccountingReportsService {
     }
 
     const totalCashIn =
-      Math.round(cashIn.reduce((s, i) => s + i.amount, 0) * 100) / 100;
+      round2(cashIn.reduce((s, i) => s + i.amount, 0));
     const totalCashOut =
-      Math.round(cashOut.reduce((s, i) => s + i.amount, 0) * 100) / 100;
-    const netCashFlow = Math.round((totalCashIn - totalCashOut) * 100) / 100;
-    const closingCash = Math.round((openingCash + netCashFlow) * 100) / 100;
+      round2(cashOut.reduce((s, i) => s + i.amount, 0));
+    const netCashFlow = round2(totalCashIn - totalCashOut);
+    const closingCash = round2(openingCash + netCashFlow);
 
     const cashInByType = summarizeCashByType(
       cashMovements
@@ -976,7 +978,7 @@ export class AccountingReportsService {
 
     const trendMap = new Map(
       revenueTrend.map((r) => [
-        new Date(r.date).toISOString().split("T")[0]!,
+        toDateOnly(r.date),
         r.revenue,
       ]),
     );
@@ -984,7 +986,7 @@ export class AccountingReportsService {
     for (let i = 6; i >= 0; i--) {
       const d = new Date(todayStart);
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().split("T")[0]!;
+      const key = toDateOnly(d);
       revenueTrendFilled.push({ date: key, revenue: trendMap.get(key) ?? 0 });
     }
 
@@ -1298,7 +1300,7 @@ export class AccountingReportsService {
 
     return {
       type,
-      asOfDate: asOfDate || new Date().toISOString().slice(0, 10),
+      asOfDate: asOfDate || toDateOnly(new Date()),
       summary: { ...buckets, total },
       details: rows,
       byParty: Array.from(byPartyMap.values()).sort(
@@ -1387,8 +1389,8 @@ export class AccountingReportsService {
     });
     if (!period) return { error: "Periode tidak ditemukan" };
 
-    const dateFrom = period.startDate.toISOString().slice(0, 10);
-    const dateTo = period.endDate.toISOString().slice(0, 10);
+    const dateFrom = toDateOnly(period.startDate);
+    const dateTo = toDateOnly(period.endDate);
 
     const draftCount = await this.prisma.journalEntry.count({
       where: {
@@ -1469,8 +1471,8 @@ export class AccountingReportsService {
     if (period.status !== "OPEN")
       return { error: "Periode harus berstatus OPEN" };
 
-    const dateFrom = period.startDate.toISOString().slice(0, 10);
-    const dateTo = period.endDate.toISOString().slice(0, 10);
+    const dateFrom = toDateOnly(period.startDate);
+    const dateTo = toDateOnly(period.endDate);
 
     const incomeRows = await this.prisma.$queryRawUnsafe<
       Array<{
@@ -1621,6 +1623,6 @@ function summarizeCashByType(
   return Array.from(map.entries()).map(([type, amount]) => ({
     type,
     description: labels[type] ?? type,
-    amount: Math.round(amount * 100) / 100,
+    amount: round2(amount),
   }));
 }

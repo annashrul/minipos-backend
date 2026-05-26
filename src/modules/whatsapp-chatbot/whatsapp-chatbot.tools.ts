@@ -1,5 +1,6 @@
 import type Groq from "groq-sdk";
 import type { Prisma } from "@prisma/client";
+import { toDateOnly } from "@/common/utils/date";
 import type { PrismaService } from "../prisma/prisma.service";
 
 // ─── Tool catalog ────────────────────────────────────────────────────
@@ -589,8 +590,8 @@ export async function executeOwnerTool(
         period: label,
         ...(start && end
           ? {
-              from: start.toISOString().slice(0, 10),
-              to: end.toISOString().slice(0, 10),
+              from: toDateOnly(start),
+              to: toDateOnly(end),
             }
           : {}),
         transactionCount: rows.length,
@@ -765,8 +766,8 @@ export async function executeOwnerTool(
         period: label,
         ...(start && end
           ? {
-              from: start.toISOString().slice(0, 10),
-              to: end.toISOString().slice(0, 10),
+              from: toDateOnly(start),
+              to: toDateOnly(end),
             }
           : {}),
         count: bookings.length,
@@ -881,7 +882,7 @@ export async function executeOwnerTool(
         paid: fmtRp(d.paidAmount),
         remaining: fmtRp(d.remainingAmount),
         status: d.status,
-        dueDate: d.dueDate ? d.dueDate.toISOString().slice(0, 10) : null,
+        dueDate: d.dueDate ? toDateOnly(d.dueDate) : null,
       }));
       return {
         summary: {
@@ -1251,7 +1252,7 @@ export async function executeOwnerTool(
             r.transaction.invoiceNumber,
           amount: fmtRp(r.amount),
           reason: r.reason ?? "—",
-          date: r.createdAt.toISOString().slice(0, 10),
+          date: toDateOnly(r.createdAt),
         })),
       };
     }
@@ -1361,7 +1362,7 @@ export async function executeOwnerTool(
         .map(([name, qty]) => ({ name, quantitySold: qty }));
 
       return {
-        date: today.start!.toISOString().slice(0, 10),
+        date: toDateOnly(today.start!),
         sales: {
           revenue: fmtRp(totalRevenue),
           transactionCount: txs.length,
@@ -1415,7 +1416,7 @@ export async function executeOwnerTool(
           transactionCount: c._count.transactions,
           lastTransaction: c.transactions[0]
             ? {
-                date: c.transactions[0].createdAt.toISOString().slice(0, 10),
+                date: toDateOnly(c.transactions[0].createdAt),
                 amount: fmtRp(c.transactions[0].grandTotal),
               }
             : null,

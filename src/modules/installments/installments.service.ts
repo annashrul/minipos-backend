@@ -3,6 +3,7 @@
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { toDateOnly } from "@/common/utils/date";
 import type {
   CreateInstallmentPlanDto,
   InstallmentRecord,
@@ -367,7 +368,7 @@ export class InstallmentsService {
       schedule.push({
         no: i + 1,
         amount,
-        dueDate: dueDate.toISOString().split("T")[0]!,
+        dueDate: toDateOnly(dueDate),
       });
     }
 

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateGiftCardDto,
   GiftCardDetailResponse,
@@ -129,13 +130,7 @@ export class GiftCardsService {
       });
       return toGiftCardResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Kode gift card sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Kode gift card sudah digunakan");
     }
   }
 

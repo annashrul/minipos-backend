@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateRoleDto,
   ListRolesQueryDto,
@@ -359,10 +360,5 @@ function generateRoleKey(name: string): string {
 }
 
 function throwOnDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException("Nama atau key role sudah digunakan");
-  }
+  throwIfUniqueConstraint(err, "Nama atau key role sudah digunakan");
 }

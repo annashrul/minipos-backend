@@ -5,6 +5,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   BranchPriceListResponse,
   BranchPriceResponse,
@@ -1049,33 +1050,14 @@ function toBranchPriceResponse(b: RawBranchPrice): BranchPriceResponse {
 // ============================================================
 
 function throwOnUnitDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException("Nama unit sudah dipakai produk ini");
-  }
+  throwIfUniqueConstraint(err, "Nama unit sudah dipakai produk ini");
 }
 
 function throwOnTierDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Tier price dengan minQty tersebut sudah ada untuk produk ini",
-    );
-  }
+  throwIfUniqueConstraint(err, "Tier price dengan minQty tersebut sudah ada untuk produk ini");
 }
 
 function throwOnBranchPriceDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Harga untuk cabang ini sudah ditetapkan pada produk tersebut",
-    );
-  }
+  throwIfUniqueConstraint(err, "Harga untuk cabang ini sudah ditetapkan pada produk tersebut");
 }
 

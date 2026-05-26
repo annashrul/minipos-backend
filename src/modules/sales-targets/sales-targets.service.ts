@@ -4,6 +4,8 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { toDateOnly } from "@/common/utils/date";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateSalesTargetDto,
   EvaluateBadgesDto,
@@ -633,8 +635,8 @@ export class SalesTargetsService {
         type: "DAILY",
         isActive: true,
         period: {
-          gte: sevenDaysAgo.toISOString().slice(0, 10),
-          lte: today.toISOString().slice(0, 10),
+          gte: toDateOnly(sevenDaysAgo),
+          lte: toDateOnly(today),
         },
         userId: { not: null },
         // Tenant scope via user.companyId.
@@ -677,7 +679,7 @@ export class SalesTargetsService {
 
   private getCurrentPeriod(type: SalesTargetTypeDto): string {
     const now = new Date();
-    if (type === "DAILY") return now.toISOString().slice(0, 10);
+    if (type === "DAILY") return toDateOnly(now);
     if (type === "WEEKLY") {
       const d = new Date(
         Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
@@ -716,7 +718,7 @@ export class SalesTargetsService {
 
   private derivePeriod(type: SalesTargetTypeDto, startDate?: string): string {
     const d = startDate ? new Date(startDate) : new Date();
-    if (type === "DAILY") return d.toISOString().slice(0, 10);
+    if (type === "DAILY") return toDateOnly(d);
     if (type === "WEEKLY") {
       const tmp = new Date(
         Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
@@ -734,7 +736,7 @@ export class SalesTargetsService {
     }
     if (type === "YEARLY") return `${d.getFullYear()}`;
     if (type === "CUSTOM")
-      return `CUSTOM-${d.toISOString().slice(0, 10)}`;
+      return `CUSTOM-${toDateOnly(d)}`;
     // MONTHLY
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }
@@ -900,12 +902,5 @@ export class SalesTargetsService {
 }
 
 function throwOnDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Sales target sudah ada untuk user/type/period tersebut",
-    );
-  }
+  throwIfUniqueConstraint(err, "Sales target sudah ada untuk user/type/period tersebut");
 }

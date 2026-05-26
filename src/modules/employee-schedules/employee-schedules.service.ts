@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   BulkCreateEmployeeScheduleResponse,
   BulkCreateEmployeeSchedulesDto,
@@ -150,15 +151,7 @@ export class EmployeeSchedulesService {
       });
       return toScheduleResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException(
-          "Jadwal sudah ada untuk user ini di waktu tersebut",
-        );
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Jadwal sudah ada untuk user ini di waktu tersebut");
     }
   }
 
@@ -244,15 +237,7 @@ export class EmployeeSchedulesService {
       });
       return toScheduleResponse(updated);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException(
-          "Jadwal sudah ada untuk user ini di waktu tersebut",
-        );
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Jadwal sudah ada untuk user ini di waktu tersebut");
     }
   }
 

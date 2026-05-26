@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Groq from "groq-sdk";
+import { toDateOnly } from "@/common/utils/date";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 import {
@@ -290,7 +291,7 @@ export class WhatsappChatbotService implements OnModuleInit {
     })}, ${now.toLocaleTimeString("id-ID", {
       hour: "2-digit",
       minute: "2-digit",
-    })} WIB (ISO: ${now.toISOString().slice(0, 10)}).`;
+    })} WIB (ISO: ${toDateOnly(now)}).`;
 
     const knowledge = config?.knowledge?.trim();
     const fullPrompt = knowledge

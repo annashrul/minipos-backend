@@ -5,6 +5,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   AccountCategoryListResponse,
   AccountCategoryResponse,
@@ -244,12 +245,5 @@ function toCategoryResponse(c: RawCategory): AccountCategoryResponse {
 }
 
 function throwIfDuplicate(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Kategori akun untuk tipe ini sudah ada di perusahaan",
-    );
-  }
+  throwIfUniqueConstraint(err, "Kategori akun untuk tipe ini sudah ada di perusahaan");
 }

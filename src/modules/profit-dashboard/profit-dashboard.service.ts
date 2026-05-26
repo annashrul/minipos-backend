@@ -1,4 +1,6 @@
 ﻿import { Injectable } from "@nestjs/common";
+import { toDateOnly } from "@/common/utils/date";
+import { round2 } from "@/common/utils/math";
 import type {
   MarginDistributionEntry,
   ProfitByBranchEntry,
@@ -159,10 +161,10 @@ export class ProfitDashboardService {
       revenue,
       cogs,
       grossProfit,
-      grossMargin: Math.round(grossMargin * 100) / 100,
+      grossMargin: round2(grossMargin),
       expenses,
       netProfit,
-      netMargin: Math.round(netMargin * 100) / 100,
+      netMargin: round2(netMargin),
       revenueGrowth: Math.round(revenueGrowth * 10) / 10,
       grossProfitGrowth: Math.round(grossProfitGrowth * 10) / 10,
       netProfitGrowth: Math.round(netProfitGrowth * 10) / 10,
@@ -419,7 +421,7 @@ export class ProfitDashboardService {
 
     const dataMap = new Map<string, { revenue: number; cost: number }>();
     for (const row of rows) {
-      const key = new Date(row.d).toISOString().slice(0, 10);
+      const key = toDateOnly(row.d);
       dataMap.set(key, { revenue: row.revenue, cost: row.cost });
     }
 
@@ -429,7 +431,7 @@ export class ProfitDashboardService {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
-      const key = date.toISOString().slice(0, 10);
+      const key = toDateOnly(date);
       const data = dataMap.get(key) || { revenue: 0, cost: 0 };
       result.push({
         date: date.toLocaleDateString("id-ID", {

@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateTableDto,
   ListTablesQueryDto,
@@ -103,15 +104,7 @@ export class TablesService {
       });
       return toTableResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException(
-          "Nomor meja sudah digunakan di cabang ini",
-        );
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Nomor meja sudah digunakan di cabang ini");
     }
   }
 
@@ -140,15 +133,7 @@ export class TablesService {
       const updated = await this.repo.update(id, data);
       return toTableResponse(updated);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException(
-          "Nomor meja sudah digunakan di cabang ini",
-        );
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Nomor meja sudah digunakan di cabang ini");
     }
   }
 

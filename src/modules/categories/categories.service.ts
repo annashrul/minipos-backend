@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CategoryResponse,
   CreateCategoryDto,
@@ -246,10 +247,5 @@ function toCategoryResponse(c: RawCategory): CategoryResponse {
 }
 
 function throwIfDuplicateName(err: unknown, message: string): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(message);
-  }
+  throwIfUniqueConstraint(err, message);
 }

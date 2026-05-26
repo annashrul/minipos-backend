@@ -6,6 +6,7 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
+import { round2 } from "@/common/utils/math";
 import type {
   CreateJournalDto,
   JournalDetailResponse,
@@ -683,10 +684,6 @@ function generateEntryNumber(date: Date): string {
   const dd = date.getUTCDate().toString().padStart(2, "0");
   const hex = randomBytes(3).toString("hex").toUpperCase();
   return `JE-${yyyy}${mm}${dd}-${hex}`;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function toJournalResponse(j: RawJournal): JournalResponse {

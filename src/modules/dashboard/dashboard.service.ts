@@ -1,5 +1,6 @@
 ﻿import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { toDateOnly } from "@/common/utils/date";
 import {
   APP_TIME_ZONE,
   addDaysInTimeZone,
@@ -853,7 +854,7 @@ export class DashboardService {
 
     const salesMap = new Map<string, { total: number; count: number }>();
     for (const row of rows) {
-      const dateKey = new Date(row.d).toISOString().slice(0, 10);
+      const dateKey = toDateOnly(row.d);
       salesMap.set(dateKey, {
         total: Number(row.total),
         count: Number(row.count),
@@ -866,7 +867,7 @@ export class DashboardService {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
-      const dateKey = date.toISOString().slice(0, 10);
+      const dateKey = toDateOnly(date);
       const data = salesMap.get(dateKey) || { total: 0, count: 0 };
       result.push({
         date: date.toLocaleDateString("id-ID", {

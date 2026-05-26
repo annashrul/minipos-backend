@@ -1,4 +1,6 @@
 ﻿import { Injectable } from "@nestjs/common";
+import { toDateOnly } from "@/common/utils/date";
+import { round2 } from "@/common/utils/math";
 import type {
   ActivePromotionResponse,
   AppliedPromoResponse,
@@ -353,7 +355,7 @@ export class AnalyticsService {
         code: p.code,
         currentStock: p.stock,
         minStock: p.minStock,
-        avgDailySales: Math.round(avgDailySales * 100) / 100,
+        avgDailySales: round2(avgDailySales),
         daysUntilOut,
         recommendedQty,
         supplier: p.supplierName || "-",
@@ -483,7 +485,7 @@ export class AnalyticsService {
     );
 
     return rows.map((r) => ({
-      date: new Date(r.d).toISOString().split("T")[0] ?? "",
+      date: toDateOnly(r.d),
       revenue: Number(r.revenue),
       cost: Number(r.cost),
       profit: Number(r.revenue) - Number(r.cost),

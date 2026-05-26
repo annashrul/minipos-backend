@@ -1,5 +1,7 @@
 ﻿import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { toDateOnly } from "@/common/utils/date";
+import { round2 } from "@/common/utils/math";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -188,7 +190,7 @@ export class InventoryForecastService {
         minStock: p.minStock,
         purchasePrice: p.purchasePrice,
         sellingPrice: p.sellingPrice,
-        avgDailySales: Math.round(avgDaily * 100) / 100,
+        avgDailySales: round2(avgDaily),
         daysUntilStockout: daysLeft,
         recommendedReorderQty: reorderQty,
         trend: classifyTrend(recentAvg, priorAvg),
@@ -313,7 +315,7 @@ export class InventoryForecastService {
     const result: DailySalesPointResponse[] = [];
     const salesMap = new Map(
       rows.map((r) => [
-        new Date(r.sale_date).toISOString().split("T")[0] ?? "",
+        toDateOnly(r.sale_date),
         Number(r.daily_qty),
       ]),
     );
@@ -321,7 +323,7 @@ export class InventoryForecastService {
     for (let i = 0; i < days; i++) {
       const d = new Date();
       d.setDate(d.getDate() - (days - 1 - i));
-      const key = d.toISOString().split("T")[0] ?? "";
+      const key = toDateOnly(d);
       result.push({
         date: key,
         quantity: salesMap.get(key) ?? 0,

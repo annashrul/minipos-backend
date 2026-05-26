@@ -5,6 +5,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   AccountListResponse,
   AccountResponse,
@@ -485,10 +486,5 @@ function toAccountResponse(a: RawAccount): AccountResponse {
 }
 
 function throwIfDuplicateCode(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException("Kode akun sudah digunakan");
-  }
+  throwIfUniqueConstraint(err, "Kode akun sudah digunakan");
 }

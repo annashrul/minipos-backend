@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma, StockMovementType } from "@prisma/client";
+import { round2 } from "@/common/utils/math";
 import { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -133,7 +134,7 @@ export class StockLedgerService {
 
     const totalCost =
       unitCost !== undefined && unitCost !== null
-        ? Math.round(unitCost * quantity * 100) / 100
+        ? round2(unitCost * quantity)
         : null;
 
     // Update branch_stock — increment/decrement sesuai direction.

@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { round2 } from "@/common/utils/math";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -824,7 +825,7 @@ export class PurchasesService {
                 ? {
                     unitCost,
                     totalCost:
-                      Math.round(unitCost * input.quantityReceived * 100) / 100,
+                      round2(unitCost * input.quantityReceived),
                   }
                 : {}),
               refType: "purchase_order",

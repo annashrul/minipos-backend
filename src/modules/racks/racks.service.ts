@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   AssignProductsToRackDto,
   CreateRackDto,
@@ -992,12 +993,5 @@ function toRackResponse(
 }
 
 function throwOnDupRack(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException(
-      "Kode rak sudah dipakai di cabang ini. Pilih kode lain.",
-    );
-  }
+  throwIfUniqueConstraint(err, "Kode rak sudah dipakai di cabang ini. Pilih kode lain.");
 }

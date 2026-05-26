@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   BrandResponse,
   CreateBrandDto,
@@ -81,13 +82,7 @@ export class BrandsService {
       });
       return toBrandResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Nama brand sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Nama brand sudah digunakan");
     }
   }
 
@@ -107,13 +102,7 @@ export class BrandsService {
       const updated = await this.repo.update(id, data);
       return toBrandResponse(updated);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Nama brand sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Nama brand sudah digunakan");
     }
   }
 

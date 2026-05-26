@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { round2 } from "@/common/utils/math";
 import type {
   BankReconciliationDetailResponse,
   BankReconciliationItemInputDto,
@@ -437,10 +438,6 @@ export class BankReconciliationService {
       normalSide === "DEBIT" ? debitSum - creditSum : creditSum - debitSum;
     return round2((account.openingBalance ?? 0) + movement);
   }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function toReconResponse(r: RawRecon): BankReconciliationResponse {

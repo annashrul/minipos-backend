@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreatePromotionDto,
   ListPromotionsQueryDto,
@@ -486,10 +487,5 @@ function toPromotionResponse(
 }
 
 function throwOnDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException("Voucher code sudah digunakan");
-  }
+  throwIfUniqueConstraint(err, "Voucher code sudah digunakan");
 }

@@ -6,6 +6,7 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
+import { round2 } from "@/common/utils/math";
 import type {
   CreateRecurringJournalDto,
   ListRecurringJournalsQueryDto,
@@ -519,10 +520,6 @@ function clampDayOfMonth(date: Date, day: number): void {
   const month = date.getUTCMonth();
   const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   date.setUTCDate(Math.min(day, lastDay));
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function toTemplateResponse(t: RawTemplate): RecurringJournalResponse {

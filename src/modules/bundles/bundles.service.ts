@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   BundleItemInputDto,
   BundleResponse,
@@ -348,10 +349,5 @@ function toBundleResponse(b: RawBundle): BundleResponse {
 }
 
 function throwOnDup(err: unknown): void {
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002"
-  ) {
-    throw new ConflictException("Kode atau barcode bundle sudah digunakan");
-  }
+  throwIfUniqueConstraint(err, "Kode atau barcode bundle sudah digunakan");
 }

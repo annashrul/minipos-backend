@@ -6,6 +6,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateProductDto,
   ListProductsQueryDto,
@@ -466,13 +467,7 @@ export class ProductsService {
       }
       return toProductResponse(created);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Kode atau barcode produk sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Kode atau barcode produk sudah digunakan");
     }
   }
 
@@ -549,13 +544,7 @@ export class ProductsService {
       }
       return toProductResponse(updated);
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        throw new ConflictException("Kode atau barcode produk sudah digunakan");
-      }
-      throw err;
+      throwIfUniqueConstraint(err, "Kode atau barcode produk sudah digunakan");
     }
   }
 
