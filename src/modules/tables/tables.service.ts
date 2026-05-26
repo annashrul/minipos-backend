@@ -62,20 +62,20 @@ export class TablesService {
       this.repo.sectionCounts(activeWhere),
     ]);
 
-    const byStatus = (s: string) =>
-      statusCounts.find((r) => r.status === s)?._count ?? 0;
+    const statusMap = new Map(statusCounts.map((r) => [r.status, r._count]));
+    const sectionMap = new Map(sectionCounts.map((r) => [r.section, r._count]));
 
     return {
       total,
       active,
-      available: byStatus("AVAILABLE"),
-      occupied: byStatus("OCCUPIED"),
-      reserved: byStatus("RESERVED"),
-      cleaning: byStatus("CLEANING"),
+      available: statusMap.get("AVAILABLE") ?? 0,
+      occupied: statusMap.get("OCCUPIED") ?? 0,
+      reserved: statusMap.get("RESERVED") ?? 0,
+      cleaning: statusMap.get("CLEANING") ?? 0,
       sections: sectionCounts
         .filter((r) => r.section !== null)
         .map((r) => ({ name: r.section!, count: r._count })),
-      noSectionCount: sectionCounts.find((r) => r.section === null)?._count ?? 0,
+      noSectionCount: sectionMap.get(null) ?? 0,
     };
   }
 

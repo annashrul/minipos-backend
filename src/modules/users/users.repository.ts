@@ -100,11 +100,14 @@ export class UsersRepository {
 
   async groupByRole(
     where: Prisma.UserWhereInput,
+    take?: number,
   ): Promise<Array<{ role: string; _count: { _all: number } }>> {
     const rows = await this.prisma.user.groupBy({
       by: ["role"],
       where,
       _count: { _all: true },
+      orderBy: { _count: { role: "desc" } },
+      take,
     });
     return rows;
   }

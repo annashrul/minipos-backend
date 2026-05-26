@@ -242,11 +242,11 @@ export class ClosingReportsService {
       const refundCount = refundedAgg._count._all;
       const voidCount = voidedAgg._count._all;
 
-      const cashMovementIn =
-        cashMovementsGrouped.find((m) => m.type === "CASH_IN")?._sum.amount ?? 0;
-      const cashMovementOut =
-        cashMovementsGrouped.find((m) => m.type === "CASH_OUT")?._sum.amount ??
-        0;
+      const cashMovementMap = new Map(
+        cashMovementsGrouped.map((m) => [m.type, m._sum.amount ?? 0]),
+      );
+      const cashMovementIn = cashMovementMap.get("CASH_IN") ?? 0;
+      const cashMovementOut = cashMovementMap.get("CASH_OUT") ?? 0;
 
       const paymentSummary: PaymentSummaryEntry[] = paymentGrouped
         .map((p) => ({
@@ -417,10 +417,11 @@ export class ClosingReportsService {
     const refundCount = refundedAgg._count._all;
     const voidCount = voidedAgg._count._all;
 
-    const cashMovementIn =
-      cashMovementsGrouped.find((m) => m.type === "CASH_IN")?._sum.amount ?? 0;
-    const cashMovementOut =
-      cashMovementsGrouped.find((m) => m.type === "CASH_OUT")?._sum.amount ?? 0;
+    const cashMovementMap = new Map(
+      cashMovementsGrouped.map((m) => [m.type, m._sum.amount ?? 0]),
+    );
+    const cashMovementIn = cashMovementMap.get("CASH_IN") ?? 0;
+    const cashMovementOut = cashMovementMap.get("CASH_OUT") ?? 0;
 
     const paymentSummary: PaymentSummaryEntry[] = paymentGrouped
       .map((p) => ({

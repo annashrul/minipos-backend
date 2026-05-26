@@ -837,18 +837,17 @@ export class PurchasesService {
           });
         }
 
-        // Re-fetch PO items to determine new status + receivedAmount
-        const updatedItems = await tx.purchaseOrderItem.findMany({
-          where: { purchaseOrderId: id },
-          select: { quantity: true, receivedQty: true, unitPrice: true },
-        });
-        const allReceived = updatedItems.every(
-          (it) => it.receivedQty >= it.quantity,
-        );
-        const newReceivedAmount = updatedItems.reduce(
-          (sum, it) => sum + it.receivedQty * it.unitPrice,
-          0,
-        );
+        const [poItemSummary] = await tx.$queryRaw<
+          [{ unreceived_count: bigint; received_amount: number }]
+        >`
+          SELECT
+            COUNT(*) FILTER (WHERE "receivedQty" < "quantity") AS "unreceived_count",
+            COALESCE(SUM("receivedQty" * "unitPrice"), 0) AS "received_amount"
+          FROM "PurchaseOrderItem"
+          WHERE "purchaseOrderId" = ${id}
+        `;
+        const allReceived = Number(poItemSummary.unreceived_count) === 0;
+        const newReceivedAmount = Number(poItemSummary.received_amount);
 
         // Compute incoming-receipt's grandTotal (use ordered unitPrice).
         const grandTotalReceipt = resolvedInputs.reduce((sum, input) => {

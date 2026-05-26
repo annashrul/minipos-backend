@@ -50,11 +50,8 @@ export class UsersService {
       this.repo.count({ ...where, isActive: true }),
     ]);
 
-    const roleRows = await this.repo.groupByRole(where);
-    const topRoles: [string, number][] = roleRows
-      .sort((a, b) => b._count._all - a._count._all)
-      .slice(0, 5)
-      .map((r) => [r.role, r._count._all]);
+    const roleRows = await this.repo.groupByRole(where, 5);
+    const topRoles: [string, number][] = roleRows.map((r) => [r.role, r._count._all]);
 
     return { total, active, topRoles };
   }
