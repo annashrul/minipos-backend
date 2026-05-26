@@ -872,14 +872,27 @@ export class AnalyticsService {
       Array.from(giftProductInfoMap.values()).map((p) => [p.id, p.sellingPrice]),
     );
 
+    const itemsByProductId = new Map<string, typeof items>();
+    const itemsByCategoryId = new Map<string, typeof items>();
+    for (const item of items) {
+      const pArr = itemsByProductId.get(item.productId) ?? [];
+      pArr.push(item);
+      itemsByProductId.set(item.productId, pArr);
+      if (item.categoryId) {
+        const cArr = itemsByCategoryId.get(item.categoryId) ?? [];
+        cArr.push(item);
+        itemsByCategoryId.set(item.categoryId, cArr);
+      }
+    }
+
     const findQualifiedItems = (promo: {
       productId: string | null;
       categoryId: string | null;
     }) => {
       if (promo.productId)
-        return items.filter((i) => i.productId === promo.productId);
+        return itemsByProductId.get(promo.productId) ?? [];
       if (promo.categoryId)
-        return items.filter((i) => i.categoryId === promo.categoryId);
+        return itemsByCategoryId.get(promo.categoryId) ?? [];
       return items;
     };
 
@@ -926,15 +939,13 @@ export class AnalyticsService {
         const buyQty = promo.buyQty || 1;
         const getQty = promo.getQty || 1;
         const buyItem = promo.productId
-          ? items.find((i) => i.productId === promo.productId)
+          ? itemsByProductId.get(promo.productId)?.[0]
           : qualifiedItems[0];
         if (buyItem && buyItem.quantity >= buyQty) {
           const multiplier = Math.floor(buyItem.quantity / buyQty);
           const freeItems = multiplier * getQty;
           const targetProductId = promo.getProductId || buyItem.productId;
-          const targetItem = items.find(
-            (i) => i.productId === targetProductId,
-          );
+          const targetItem = itemsByProductId.get(targetProductId)?.[0];
           const giftInfo = giftProductInfoMap.get(targetProductId);
           const giftName =
             giftInfo?.name || targetItem?.productName || buyItem.productName;

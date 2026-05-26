@@ -330,8 +330,16 @@ export class AccountsService {
 
     const balanceMap = new Map(balances.map((b) => [b.accountId, b]));
     type Acc = (typeof accounts)[number];
+
+    const accountsByCategoryId = new Map<string, Acc[]>();
+    for (const acc of accounts) {
+      const arr = accountsByCategoryId.get(acc.categoryId) ?? [];
+      arr.push(acc);
+      accountsByCategoryId.set(acc.categoryId, arr);
+    }
+
     const tree = categories.map((cat) => {
-      const catAccounts = accounts.filter((a) => a.categoryId === cat.id);
+      const catAccounts = accountsByCategoryId.get(cat.id) ?? [];
       const childMap = new Map<string, Acc[]>();
       for (const acc of catAccounts) {
         if (acc.parentId) {
