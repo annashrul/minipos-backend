@@ -5,6 +5,7 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { round2 } from "@/common/utils/math";
+import { AssertService } from "@/common/assert/assert.service";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -139,6 +140,7 @@ export class PurchasesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly assert: AssertService,
   ) {}
 
   async list(
@@ -211,8 +213,8 @@ export class PurchasesService {
     dto: CreatePurchaseDto,
     retryCount = 0,
   ): Promise<PurchaseOrderDetailResponse> {
-    await this.assertSupplier(companyId, dto.supplierId);
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    await this.assert.supplier(companyId, dto.supplierId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const totalAmount = dto.items.reduce((sum, it) => sum + it.subtotal, 0);
     const orderNumber = await this.nextOrderNumber(companyId);
@@ -353,8 +355,8 @@ export class PurchasesService {
       );
     }
 
-    if (dto.supplierId) await this.assertSupplier(companyId, dto.supplierId);
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.supplierId) await this.assert.supplier(companyId, dto.supplierId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const data: Prisma.PurchaseOrderUpdateInput = {};
@@ -520,7 +522,7 @@ export class PurchasesService {
     }
 
     const targetBranchId = dto.branchId ?? po.branchId ?? null;
-    if (targetBranchId) await this.assertBranch(companyId, targetBranchId);
+    if (targetBranchId) await this.assert.branch(companyId, targetBranchId);
 
     // Build item maps. Untuk PO multi-varian (1 productId punya N item dgn
     // variantId berbeda), match WAJIB pakai purchaseOrderItemId. Fallback
@@ -1303,21 +1305,6 @@ export class PurchasesService {
     };
   }
 
-  private async assertSupplier(companyId: string, supplierId: string) {
-    const supplier = await this.prisma.supplier.findFirst({
-      where: { id: supplierId, companyId },
-      select: { id: true },
-    });
-    if (!supplier) throw new NotFoundException("Supplier tidak ditemukan");
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
-  }
 }
 
 function isOrderNumberConflict(err: unknown): boolean {

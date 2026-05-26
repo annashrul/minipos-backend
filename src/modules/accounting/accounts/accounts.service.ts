@@ -6,6 +6,7 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   AccountListResponse,
   AccountResponse,
@@ -44,7 +45,10 @@ type RawAccount = Prisma.AccountGetPayload<{ select: typeof ACCOUNT_SELECT }>;
 
 @Injectable()
 export class AccountsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -100,9 +104,9 @@ export class AccountsService {
     companyId: string,
     dto: CreateAccountDto,
   ): Promise<AccountResponse> {
-    await this.assertCategory(companyId, dto.categoryId);
+    await this.assert.accountCategory(companyId, dto.categoryId);
     if (dto.parentId) await this.assertAccount(companyId, dto.parentId);
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     let code = dto.code?.trim();
     if (!code) {
@@ -186,11 +190,11 @@ export class AccountsService {
     }
 
     if (dto.categoryId !== undefined) {
-      await this.assertCategory(companyId, dto.categoryId);
+      await this.assert.accountCategory(companyId, dto.categoryId);
     }
 
     if (dto.branchId !== undefined && dto.branchId !== null) {
-      await this.assertBranch(companyId, dto.branchId);
+      await this.assert.branch(companyId, dto.branchId);
     }
 
     const data: Prisma.AccountUpdateInput = {};
@@ -430,14 +434,6 @@ export class AccountsService {
     return { category: { companyId } };
   }
 
-  private async assertCategory(companyId: string, categoryId: string) {
-    const cat = await this.prisma.accountCategory.findFirst({
-      where: { id: categoryId, companyId },
-      select: { id: true },
-    });
-    if (!cat) throw new NotFoundException("Account category not found");
-  }
-
   private async assertAccount(companyId: string, accountId: string) {
     const acc = await this.prisma.account.findFirst({
       where: { id: accountId, ...this.tenantWhere(companyId) },
@@ -446,13 +442,6 @@ export class AccountsService {
     if (!acc) throw new NotFoundException("Parent account not found");
   }
 
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
-  }
 }
 
 function toAccountResponse(a: RawAccount): AccountResponse {

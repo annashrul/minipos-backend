@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CreateDebtDto,
   DebtDetailResponse,
@@ -80,7 +81,10 @@ type RawDebtDetail = Prisma.DebtGetPayload<{
 
 @Injectable()
 export class DebtsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -117,7 +121,7 @@ export class DebtsService {
     userId: string,
     dto: CreateDebtDto,
   ): Promise<DebtDetailResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const dpAmount = dto.installment?.downPayment ?? 0;
@@ -424,14 +428,6 @@ export class DebtsService {
     return {
       OR: [{ companyId }, { branch: { companyId } }],
     };
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
   }
 
   private async createInstallments(

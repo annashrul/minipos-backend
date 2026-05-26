@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { AuditInterceptor } from "./common/interceptors/audit.interceptor";
+import { AssertModule } from "./common/assert/assert.module";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { RedisModule } from "./modules/redis/redis.module";
 import { RealtimeModule } from "./modules/realtime/realtime.module";
@@ -87,6 +88,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    AssertModule,
     RedisModule,
     RealtimeModule,
     AuthModule,

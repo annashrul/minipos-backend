@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -68,7 +69,10 @@ type RawTransferItem = Prisma.StockTransferItemGetPayload<{
 
 @Injectable()
 export class StockTransfersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -152,8 +156,8 @@ export class StockTransfersService {
         "Cabang asal dan tujuan tidak boleh sama",
       );
     }
-    await this.assertBranch(companyId, dto.fromBranchId);
-    await this.assertBranch(companyId, dto.toBranchId);
+    await this.assert.branch(companyId, dto.fromBranchId);
+    await this.assert.branch(companyId, dto.toBranchId);
 
     // Validate products belong to company and gather names
     const productIds = Array.from(new Set(dto.items.map((it) => it.productId)));
@@ -541,14 +545,6 @@ export class StockTransfersService {
         { toBranch: { companyId } },
       ],
     };
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
 
   // TR-YYYYMMDD-NNNN — sequence per company per hari (shared utility).

@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CategoryResponse,
   CreateCategoryDto,
@@ -24,6 +25,7 @@ export class CategoriesService {
     private readonly repo: CategoriesRepository,
     private readonly realtime: RealtimeService,
     private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
   ) {}
 
   async summary(companyId: string) {
@@ -107,7 +109,7 @@ export class CategoriesService {
     companyId: string,
     dto: CreateCategoryDto,
   ): Promise<CategoryResponse> {
-    if (dto.parentId) await this.ensureSameCompany(companyId, dto.parentId);
+    if (dto.parentId) await this.assert.category(companyId, dto.parentId);
     try {
       const created = await this.repo.create({
         name: dto.name,
@@ -137,7 +139,7 @@ export class CategoriesService {
       if (dto.parentId === id) {
         throw new BadRequestException("Kategori tidak bisa menjadi parent dirinya");
       }
-      await this.ensureSameCompany(companyId, dto.parentId);
+      await this.assert.category(companyId, dto.parentId);
     }
 
     const data: Prisma.CategoryUpdateInput = {};
@@ -224,10 +226,6 @@ export class CategoriesService {
     return { count, skipped: skippedRows.map((r) => r.name) };
   }
 
-  private async ensureSameCompany(companyId: string, parentId: string) {
-    const parent = await this.repo.findById(companyId, parentId);
-    if (!parent) throw new NotFoundException("Parent category not found");
-  }
 }
 
 function toCategoryResponse(c: RawCategory): CategoryResponse {

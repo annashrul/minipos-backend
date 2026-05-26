@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CheckoutDto,
   CheckoutResponse,
@@ -117,6 +118,7 @@ export class TransactionsService {
     private readonly autoJournal: AutoJournalService,
     private readonly whatsapp: WhatsappReceiptService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly assert: AssertService,
   ) {}
 
   async list(
@@ -210,8 +212,8 @@ export class TransactionsService {
     retryCount = 0,
   ): Promise<CheckoutResponse> {
     const branchId = dto.branchId ?? null;
-    if (branchId) await this.assertBranch(companyId, branchId);
-    if (dto.customerId) await this.assertCustomer(companyId, dto.customerId);
+    if (branchId) await this.assert.branch(companyId, branchId);
+    if (dto.customerId) await this.assert.customer(companyId, dto.customerId);
 
     const [company, branch] = await Promise.all([
       this.prisma.company.findUnique({
@@ -827,22 +829,6 @@ export class TransactionsService {
     }
   }
 
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
-  }
-
-  private async assertCustomer(companyId: string, customerId: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, companyId },
-      select: { id: true },
-    });
-    if (!customer) throw new NotFoundException("Customer not found");
-  }
-
   async voidTransaction(
     companyId: string,
     userId: string,
@@ -893,8 +879,8 @@ export class TransactionsService {
       throw new BadRequestException("Cart kosong, tidak bisa simpan draft");
     }
     const branchId = dto.branchId ?? null;
-    if (branchId) await this.assertBranch(companyId, branchId);
-    if (dto.customerId) await this.assertCustomer(companyId, dto.customerId);
+    if (branchId) await this.assert.branch(companyId, branchId);
+    if (dto.customerId) await this.assert.customer(companyId, dto.customerId);
     const [company, branch] = await Promise.all([
       this.prisma.company.findUnique({
         where: { id: companyId },

@@ -7,6 +7,7 @@
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { round2 } from "@/common/utils/math";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CreateRecurringJournalDto,
   ListRecurringJournalsQueryDto,
@@ -68,7 +69,10 @@ const BALANCE_TOLERANCE = 0.01;
 
 @Injectable()
 export class RecurringJournalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -136,7 +140,7 @@ export class RecurringJournalsService {
     userId: string,
     dto: CreateRecurringJournalDto,
   ): Promise<RecurringJournalDetailResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     await this.assertAccountsValid(companyId, dto.lines);
     this.assertBalanced(dto.lines);
 
@@ -180,7 +184,7 @@ export class RecurringJournalsService {
     });
     if (!existing) throw new NotFoundException("Recurring journal not found");
 
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     if (dto.lines) {
       await this.assertAccountsValid(companyId, dto.lines);
       this.assertBalanced(dto.lines);
@@ -365,14 +369,6 @@ export class RecurringJournalsService {
   }
 
   // ===== helpers =====
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
-  }
 
   private async assertAccountsValid(
     companyId: string,

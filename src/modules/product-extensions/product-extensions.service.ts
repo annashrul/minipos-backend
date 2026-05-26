@@ -6,6 +6,7 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   BranchPriceListResponse,
   BranchPriceResponse,
@@ -80,7 +81,10 @@ type RawBranchPrice = Prisma.BranchProductPriceGetPayload<{
 
 @Injectable()
 export class ProductExtensionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   // ============================================================
   // PRODUCT UNITS
@@ -90,7 +94,7 @@ export class ProductExtensionsService {
     companyId: string,
     productId: string,
   ): Promise<ProductUnitResponse[]> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const rows = await this.prisma.productUnit.findMany({
       where: { productId },
       select: UNIT_SELECT,
@@ -104,7 +108,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: CreateProductUnitDto,
   ): Promise<ProductUnitResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     try {
       const created = await this.prisma.$transaction(async (tx) => {
         if (dto.isDefault) {
@@ -140,7 +144,7 @@ export class ProductExtensionsService {
     unitId: string,
     dto: UpdateProductUnitDto,
   ): Promise<ProductUnitResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.productUnit.findFirst({
       where: { id: unitId, productId },
       select: { id: true },
@@ -182,7 +186,7 @@ export class ProductExtensionsService {
     productId: string,
     unitId: string,
   ): Promise<{ success: true }> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.productUnit.findFirst({
       where: { id: unitId, productId },
       select: { id: true, isDefault: true },
@@ -212,7 +216,7 @@ export class ProductExtensionsService {
     companyId: string,
     productId: string,
   ): Promise<TierPriceResponse[]> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const rows = await this.prisma.productTierPrice.findMany({
       where: { productId },
       select: TIER_SELECT,
@@ -226,7 +230,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: CreateTierPriceDto,
   ): Promise<TierPriceResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     try {
       const created = await this.prisma.productTierPrice.create({
         data: {
@@ -249,7 +253,7 @@ export class ProductExtensionsService {
     tierId: string,
     dto: UpdateTierPriceDto,
   ): Promise<TierPriceResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.productTierPrice.findFirst({
       where: { id: tierId, productId },
       select: { id: true },
@@ -279,7 +283,7 @@ export class ProductExtensionsService {
     productId: string,
     tierId: string,
   ): Promise<{ success: true }> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.productTierPrice.findFirst({
       where: { id: tierId, productId },
       select: { id: true },
@@ -295,7 +299,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: ReplaceTierPricesDto,
   ): Promise<TierPriceResponse[]> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
 
     const seen = new Set<number>();
     for (const item of dto.items) {
@@ -448,7 +452,7 @@ export class ProductExtensionsService {
     companyId: string,
     productId: string,
   ): Promise<BranchPriceResponse[]> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const rows = await this.prisma.branchProductPrice.findMany({
       where: { productId },
       select: BRANCH_PRICE_SELECT,
@@ -462,8 +466,8 @@ export class ProductExtensionsService {
     productId: string,
     dto: CreateBranchPriceDto,
   ): Promise<BranchPriceResponse> {
-    await this.assertProduct(companyId, productId);
-    await this.assertBranch(companyId, dto.branchId);
+    await this.assert.product(companyId, productId);
+    await this.assert.branch(companyId, dto.branchId);
     try {
       const created = await this.prisma.branchProductPrice.create({
         data: {
@@ -487,7 +491,7 @@ export class ProductExtensionsService {
     id: string,
     dto: UpdateBranchPriceDto,
   ): Promise<BranchPriceResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.branchProductPrice.findFirst({
       where: { id, productId },
       select: { id: true },
@@ -512,7 +516,7 @@ export class ProductExtensionsService {
     productId: string,
     id: string,
   ): Promise<{ success: true }> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const existing = await this.prisma.branchProductPrice.findFirst({
       where: { id, productId },
       select: { id: true },
@@ -528,7 +532,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: ReplaceBranchPricesDto,
   ): Promise<BranchPriceResponse[]> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
 
     if (dto.items.length > 0) {
       const branchIds = dto.items.map((i) => i.branchId);
@@ -580,7 +584,7 @@ export class ProductExtensionsService {
     companyId: string,
     productId: string,
   ): Promise<ProductVariantListResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const rows = await this.prisma.productVariant.findMany({
       where: { productId },
       include: { options: { select: { optionId: true } } },
@@ -607,7 +611,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: ReplaceProductVariantsDto,
   ): Promise<ProductVariantListResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     for (const v of dto.items) {
       if (new Set(v.optionIds).size !== v.optionIds.length) {
         throw new BadRequestException(
@@ -678,7 +682,7 @@ export class ProductExtensionsService {
     optionIds: string[],
   ) {
     if (optionIds.length === 0) return null;
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const candidates = await this.prisma.productVariant.findMany({
       where: { productId, isActive: true },
       include: { options: { select: { optionId: true } } },
@@ -711,7 +715,7 @@ export class ProductExtensionsService {
     companyId: string,
     productId: string,
   ): Promise<ProductBranchSkuListResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const rows = await this.prisma.productBranchSku.findMany({
       where: { productId },
       orderBy: [{ branchId: "asc" }, { unitId: "asc" }, { variantId: "asc" }],
@@ -742,7 +746,7 @@ export class ProductExtensionsService {
     productId: string,
     dto: ReplaceProductBranchSkusDto,
   ): Promise<ProductBranchSkuListResponse> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
 
     // Resolve variantId per item — kalau optionIds di-pass tapi variantId belum,
     // find-or-create ProductVariant untuk kombinasi tersebut. Ini menghilangkan
@@ -941,7 +945,7 @@ export class ProductExtensionsService {
     unitId: string | null,
     variantId: string | null,
   ): Promise<ProductBranchSkuResponse | null> {
-    await this.assertProduct(companyId, productId);
+    await this.assert.product(companyId, productId);
     const sku = await this.prisma.productBranchSku.findFirst({
       where: {
         productId,
@@ -973,27 +977,6 @@ export class ProductExtensionsService {
   // HELPERS
   // ============================================================
 
-  private async assertProduct(
-    companyId: string,
-    productId: string,
-  ): Promise<void> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!product) throw new NotFoundException("Produk tidak ditemukan");
-  }
-
-  private async assertBranch(
-    companyId: string,
-    branchId: string,
-  ): Promise<void> {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
-  }
 }
 
 // ============================================================

@@ -6,6 +6,7 @@
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -87,7 +88,10 @@ type ExchangeMeta = {
 
 @Injectable()
 export class ReturnsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -198,7 +202,7 @@ export class ReturnsService {
     userId: string,
     dto: CreateReturnDto,
   ): Promise<ReturnDetailResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const transaction = await this.prisma.transaction.findFirst({
       where: {
@@ -903,14 +907,6 @@ export class ReturnsService {
         user: { companyId },
       },
     };
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
   }
 
   private async adjustStock(

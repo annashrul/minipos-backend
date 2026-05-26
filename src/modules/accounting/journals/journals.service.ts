@@ -7,6 +7,7 @@
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { round2 } from "@/common/utils/math";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CreateJournalDto,
   JournalDetailResponse,
@@ -74,7 +75,10 @@ const BALANCE_TOLERANCE = 0.01;
 
 @Injectable()
 export class JournalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assert: AssertService,
+  ) {}
 
   async list(
     companyId: string,
@@ -113,7 +117,7 @@ export class JournalsService {
     userId: string,
     dto: CreateJournalDto,
   ): Promise<JournalDetailResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     await this.assertAccountsValid(companyId, dto.lines);
     const { totalDebit, totalCredit } = this.computeTotals(dto.lines);
     this.assertBalanced(totalDebit, totalCredit);
@@ -180,7 +184,7 @@ export class JournalsService {
       );
     }
 
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     let totalDebit: number | undefined;
     let totalCredit: number | undefined;
@@ -449,14 +453,6 @@ export class JournalsService {
         },
       ],
     };
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
   }
 
   private async assertAccountsValid(

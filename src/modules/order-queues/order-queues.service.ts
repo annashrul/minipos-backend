@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   CreateOrderQueueDto,
   CreateOrderQueueFromTransactionDto,
@@ -52,6 +53,7 @@ export class OrderQueuesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly assert: AssertService,
   ) {}
 
   async list(
@@ -102,7 +104,7 @@ export class OrderQueuesService {
     companyId: string,
     dto: CreateOrderQueueDto,
   ): Promise<OrderQueueResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     if (dto.tableId) await this.assertTable(companyId, dto.tableId);
     if (dto.transactionId) {
       await this.assertTransaction(companyId, dto.transactionId);
@@ -296,14 +298,6 @@ export class OrderQueuesService {
       select: { queueNumber: true },
     });
     return (last?.queueNumber ?? 0) + 1;
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
   }
 
   private async assertTable(companyId: string, tableId: string) {

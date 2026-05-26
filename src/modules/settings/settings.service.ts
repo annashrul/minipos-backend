@@ -1,5 +1,6 @@
 ﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type {
   ListSettingsQueryDto,
   SettingListResponse,
@@ -42,6 +43,7 @@ export class SettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly assert: AssertService,
   ) {}
 
   private emitConfigEvent(
@@ -104,7 +106,7 @@ export class SettingsService {
     companyId: string,
     dto: UpsertSettingDto,
   ): Promise<SettingResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     const result = await this.upsertOne(dto);
     this.emitConfigEvent(
       detectSettingCategory(result.group, result.key),
@@ -169,7 +171,7 @@ export class SettingsService {
     key: string,
     branchId: string | null,
   ): Promise<{ success: true }> {
-    if (branchId) await this.assertBranch(companyId, branchId);
+    if (branchId) await this.assert.branch(companyId, branchId);
     const existing = await this.prisma.setting.findFirst({
       where: { key, branchId },
       select: { id: true },
@@ -216,13 +218,6 @@ export class SettingsService {
     });
   }
 
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
-  }
 }
 
 function toSettingResponse(s: RawSetting): SettingResponse {

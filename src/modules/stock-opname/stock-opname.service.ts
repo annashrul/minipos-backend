@@ -4,6 +4,7 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { AssertService } from "@/common/assert/assert.service";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type {
@@ -70,6 +71,7 @@ export class StockOpnameService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly assert: AssertService,
   ) {}
 
   async list(
@@ -111,7 +113,7 @@ export class StockOpnameService {
     dto: CreateStockOpnameDto,
     retryCount = 0,
   ): Promise<StockOpnameDetailResponse> {
-    if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
+    if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const opnameNumber = await this.nextOpnameNumber(companyId);
 
@@ -430,14 +432,6 @@ export class StockOpnameService {
     return {
       OR: [{ companyId }, { branch: { companyId } }],
     };
-  }
-
-  private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
-    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
 
   // OP-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
