@@ -262,16 +262,23 @@ export class BankReconciliationService {
     userId: string,
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: {
-        id: true,
-        status: true,
-        statementBalance: true,
-        bookBalance: true,
-        items: { select: { matchStatus: true } },
-      },
-    });
+    const [existing, totalItems, unmatchedCount] = await Promise.all([
+      this.prisma.bankReconciliation.findFirst({
+        where: { id, companyId },
+        select: {
+          id: true,
+          status: true,
+          statementBalance: true,
+          bookBalance: true,
+        },
+      }),
+      this.prisma.bankReconciliationItem.count({
+        where: { reconciliationId: id },
+      }),
+      this.prisma.bankReconciliationItem.count({
+        where: { reconciliationId: id, matchStatus: "UNMATCHED" },
+      }),
+    ]);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
@@ -279,9 +286,7 @@ export class BankReconciliationService {
       );
     }
 
-    const allMatched =
-      existing.items.length > 0 &&
-      existing.items.every((it) => it.matchStatus !== "UNMATCHED");
+    const allMatched = totalItems > 0 && unmatchedCount === 0;
     const balanced =
       Math.abs(existing.statementBalance - existing.bookBalance) <= 0.01;
 

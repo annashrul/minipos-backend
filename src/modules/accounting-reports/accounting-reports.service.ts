@@ -159,7 +159,11 @@ export class AccountingReportsService {
     }
 
     let runningBalance = openingBalance;
+    let totalDebit = 0;
+    let totalCredit = 0;
     const ledgerEntries: LedgerEntryResponse[] = entries.map((e) => {
+      totalDebit += e.debit;
+      totalCredit += e.credit;
       if (normalSide === "DEBIT") {
         runningBalance += e.debit - e.credit;
       } else {
@@ -188,10 +192,8 @@ export class AccountingReportsService {
       openingBalance,
       entries: ledgerEntries,
       closingBalance: Math.round(runningBalance * 100) / 100,
-      totalDebit:
-        Math.round(entries.reduce((s, e) => s + e.debit, 0) * 100) / 100,
-      totalCredit:
-        Math.round(entries.reduce((s, e) => s + e.credit, 0) * 100) / 100,
+      totalDebit: Math.round(totalDebit * 100) / 100,
+      totalCredit: Math.round(totalCredit * 100) / 100,
     };
   }
 
@@ -361,28 +363,30 @@ export class AccountingReportsService {
       companyId,
     );
 
-    const revenues: IncomeStatementAccountResponse[] = allRows
-      .filter((r) => r.type === "REVENUE" && r.amount !== 0)
-      .map((r) => ({
+    const revenues: IncomeStatementAccountResponse[] = [];
+    const expenses: IncomeStatementAccountResponse[] = [];
+    let totalRevenue = 0;
+    let totalExpense = 0;
+
+    for (const r of allRows) {
+      if (r.amount === 0) continue;
+      const item: IncomeStatementAccountResponse = {
         accountId: r.accountId,
         accountCode: r.code,
         accountName: r.name,
         amount: r.amount,
-      }));
+      };
+      if (r.type === "REVENUE") {
+        revenues.push(item);
+        totalRevenue += r.amount;
+      } else if (r.type === "EXPENSE") {
+        expenses.push(item);
+        totalExpense += r.amount;
+      }
+    }
 
-    const expenses: IncomeStatementAccountResponse[] = allRows
-      .filter((r) => r.type === "EXPENSE" && r.amount !== 0)
-      .map((r) => ({
-        accountId: r.accountId,
-        accountCode: r.code,
-        accountName: r.name,
-        amount: r.amount,
-      }));
-
-    const totalRevenue =
-      Math.round(revenues.reduce((s, r) => s + r.amount, 0) * 100) / 100;
-    const totalExpense =
-      Math.round(expenses.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+    totalRevenue = Math.round(totalRevenue * 100) / 100;
+    totalExpense = Math.round(totalExpense * 100) / 100;
     const netIncome = Math.round((totalRevenue - totalExpense) * 100) / 100;
 
     return {
@@ -540,13 +544,15 @@ export class AccountingReportsService {
       groupMap[equityKey]!.total += retainedEarnings;
     }
 
-    const allGroups: BalanceSheetCategoryGroupResponse[] =
-      Object.values(groupMap);
-    const assetGroups = allGroups.filter((g) => g.categoryType === "ASSET");
-    const liabilityGroups = allGroups.filter(
-      (g) => g.categoryType === "LIABILITY",
-    );
-    const equityGroups = allGroups.filter((g) => g.categoryType === "EQUITY");
+    const assetGroups: BalanceSheetCategoryGroupResponse[] = [];
+    const liabilityGroups: BalanceSheetCategoryGroupResponse[] = [];
+    const equityGroups: BalanceSheetCategoryGroupResponse[] = [];
+
+    for (const group of Object.values(groupMap)) {
+      if (group.categoryType === "ASSET") assetGroups.push(group);
+      else if (group.categoryType === "LIABILITY") liabilityGroups.push(group);
+      else if (group.categoryType === "EQUITY") equityGroups.push(group);
+    }
 
     const totalAssets =
       Math.round(assetGroups.reduce((s, g) => s + g.total, 0) * 100) / 100;
