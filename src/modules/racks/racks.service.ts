@@ -300,6 +300,33 @@ export class RacksService {
     return { success: true };
   }
 
+  async bulkDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number; skipped: string[] }> {
+    const [skippedRows, deletableRows] = await Promise.all([
+      this.prisma.rack.findMany({
+        where: { id: { in: ids }, companyId, rackStocks: { some: {} } },
+        select: { name: true },
+      }),
+      this.prisma.rack.findMany({
+        where: { id: { in: ids }, companyId, rackStocks: { none: {} } },
+        select: { id: true },
+      }),
+    ]);
+    const deletableIds = deletableRows.map((r) => r.id);
+    let count = 0;
+    if (deletableIds.length > 0) {
+      await this.prisma.product.updateMany({
+        where: { defaultRackId: { in: deletableIds }, companyId },
+        data: { defaultRackId: null },
+      });
+      const result = await this.prisma.rack.deleteMany({ where: { id: { in: deletableIds } } });
+      count = result.count;
+    }
+    return { count, skipped: skippedRows.map((r) => r.name) };
+  }
+
   async productLookup(
     companyId: string,
     productId: string,

@@ -85,6 +85,16 @@ export class RacksController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("racks", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.racks.bulkDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Post()
   @RequireAccess("racks", "create")
   async create(
