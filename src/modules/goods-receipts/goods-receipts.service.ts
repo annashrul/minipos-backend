@@ -10,6 +10,7 @@ import type {
 } from "./dto/goods-receipts.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 import { PrismaService } from "../prisma/prisma.service";
 
 const LIST_SELECT = {
@@ -107,7 +108,7 @@ export class GoodsReceiptsService {
     id: string,
   ): Promise<GoodsReceiptDetailResponse> {
     const receipt = await this.prisma.goodsReceipt.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch") },
       select: DETAIL_SELECT,
     });
     if (!receipt) {
@@ -123,7 +124,7 @@ export class GoodsReceiptsService {
     const rows = await this.prisma.goodsReceipt.findMany({
       where: {
         purchaseOrderId,
-        ...this.tenantWhere(companyId),
+        ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
       },
       select: DETAIL_SELECT,
       orderBy: { receivedAt: "desc" },
@@ -135,9 +136,7 @@ export class GoodsReceiptsService {
     companyId: string,
     query: GoodsReceiptStatsQueryDto,
   ): Promise<GoodsReceiptStatsResponse> {
-    const baseWhere: Prisma.GoodsReceiptWhereInput = this.tenantWhere(
-      companyId,
-    );
+    const baseWhere: Prisma.GoodsReceiptWhereInput = tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch");
     if (query.branchId && query.branchId !== "ALL") {
       baseWhere.branchId = query.branchId;
     }
@@ -165,7 +164,7 @@ export class GoodsReceiptsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.goodsReceipt.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch") },
       select: { id: true },
     });
     if (!existing) {
@@ -185,7 +184,7 @@ export class GoodsReceiptsService {
     const result = await this.prisma.goodsReceipt.deleteMany({
       where: {
         id: { in: ids },
-        ...this.tenantWhere(companyId),
+        ...tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch"),
       },
     });
     return { success: true, deleted: result.count };
@@ -195,7 +194,7 @@ export class GoodsReceiptsService {
     companyId: string,
     query: ListGoodsReceiptsQueryDto,
   ): Prisma.GoodsReceiptWhereInput {
-    const where: Prisma.GoodsReceiptWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.GoodsReceiptWhereInput = tenantWhere(companyId, "direct", "purchaseOrder", "purchaseOrder.supplier", "branch");
 
     if (query.branchId && query.branchId !== "ALL") {
       where.branchId = query.branchId;
@@ -242,16 +241,6 @@ export class GoodsReceiptsService {
     return where;
   }
 
-  private tenantWhere(companyId: string): Prisma.GoodsReceiptWhereInput {
-    return {
-      OR: [
-        { companyId },
-        { purchaseOrder: { companyId } },
-        { purchaseOrder: { supplier: { companyId } } },
-        { branch: { companyId } },
-      ],
-    };
-  }
 }
 
 function parseDate(input: string, endOfDay: boolean): Date {

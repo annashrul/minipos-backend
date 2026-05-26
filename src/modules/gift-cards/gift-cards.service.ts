@@ -19,6 +19,7 @@ import type {
 } from "./dto/gift-cards.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 import {
   GiftCardsRepository,
   GIFT_CARD_DETAIL_SELECT,
@@ -47,7 +48,7 @@ export class GiftCardsService {
       sortDir,
     } = query;
 
-    const where: Prisma.GiftCardWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.GiftCardWhereInput = tenantWhere(companyId, "direct", "branch", "customer");
     if (customerId) where.customerId = customerId;
     if (branchId) where.branchId = branchId;
     if (isActive !== undefined) {
@@ -90,7 +91,7 @@ export class GiftCardsService {
   ): Promise<GiftCardDetailResponse> {
     const giftCard = await this.repo.findDetail({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
     if (!giftCard) throw new NotFoundException("Gift card not found");
     return toGiftCardDetailResponse(giftCard);
@@ -102,7 +103,7 @@ export class GiftCardsService {
   ): Promise<GiftCardResponse | null> {
     const giftCard = await this.repo.findOne({
       code,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
     return giftCard ? toGiftCardResponse(giftCard) : null;
   }
@@ -141,7 +142,7 @@ export class GiftCardsService {
   ): Promise<GiftCardDetailResponse> {
     const updated = await this.repo.tx.$transaction(async (tx) => {
       const card = await tx.giftCard.findFirst({
-        where: { id, ...this.tenantWhere(companyId) },
+        where: { id, ...tenantWhere(companyId, "direct", "branch", "customer") },
         select: { id: true, currentBalance: true, status: true },
       });
       if (!card) throw new NotFoundException("Gift card not found");
@@ -185,7 +186,7 @@ export class GiftCardsService {
   ): Promise<GiftCardDetailResponse> {
     const updated = await this.repo.tx.$transaction(async (tx) => {
       const card = await tx.giftCard.findFirst({
-        where: { id, ...this.tenantWhere(companyId) },
+        where: { id, ...tenantWhere(companyId, "direct", "branch", "customer") },
         select: {
           id: true,
           currentBalance: true,
@@ -243,7 +244,7 @@ export class GiftCardsService {
   ): Promise<GiftCardResponse> {
     const card = await this.repo.findMeta({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
     if (!card) throw new NotFoundException("Gift card not found");
 
@@ -266,7 +267,7 @@ export class GiftCardsService {
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const card = await this.repo.findMeta({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
     if (!card) throw new NotFoundException("Gift card not found");
     if (card.currentBalance !== card.initialBalance) {
@@ -282,7 +283,7 @@ export class GiftCardsService {
   }
 
   async stats(companyId: string, branchId?: string) {
-    const where: Prisma.GiftCardWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.GiftCardWhereInput = tenantWhere(companyId, "direct", "branch", "customer");
     if (branchId) where.branchId = branchId;
 
     const now = new Date();
@@ -316,16 +317,6 @@ export class GiftCardsService {
       totalBalanceOutstanding: activeAgg._sum.currentBalance ?? 0,
       totalRedeemed: totalBalance - currentBalance,
       expiringSoon,
-    };
-  }
-
-  private tenantWhere(companyId: string): Prisma.GiftCardWhereInput {
-    return {
-      OR: [
-        { companyId },
-        { branch: { companyId } },
-        { customer: { companyId } },
-      ],
     };
   }
 

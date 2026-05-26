@@ -31,6 +31,7 @@ import type {
 import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
+import { tenantWhere } from "@/common/utils/tenant";
 
 const PO_ITEM_SELECT = {
   id: true,
@@ -200,7 +201,7 @@ export class PurchasesService {
     id: string,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: PO_DETAIL_SELECT,
     });
     if (!po) throw new NotFoundException("Purchase order tidak ditemukan");
@@ -344,7 +345,7 @@ export class PurchasesService {
     dto: UpdatePurchaseDto,
   ): Promise<PurchaseOrderDetailResponse> {
     const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: { id: true, status: true },
     });
     if (!existing)
@@ -412,7 +413,7 @@ export class PurchasesService {
     dto: UpdatePurchaseStatusDto,
   ): Promise<PurchaseOrderDetailResponse> {
     const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: {
         id: true,
         status: true,
@@ -478,7 +479,7 @@ export class PurchasesService {
     });
     const userName = user?.name ?? null;
     const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: {
         id: true,
         orderNumber: true,
@@ -975,7 +976,7 @@ export class PurchasesService {
     dto: ClosePurchaseDto,
   ): Promise<ClosePurchaseResponse> {
     const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: {
         id: true,
         orderNumber: true,
@@ -1238,7 +1239,7 @@ export class PurchasesService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
       select: {
         id: true,
         status: true,
@@ -1266,7 +1267,7 @@ export class PurchasesService {
     query: ListPurchasesQueryDto,
   ): Prisma.PurchaseOrderWhereInput {
     const { search, status, supplierId, branchId, from, to } = query;
-    const where: Prisma.PurchaseOrderWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.PurchaseOrderWhereInput = tenantWhere(companyId, "direct", "supplier", "branch");
     if (status) {
       const statuses = typeof status === "string" && status.includes(",")
         ? status.split(",").map((s) => s.trim())
@@ -1293,16 +1294,6 @@ export class PurchasesService {
       if (to) where.orderDate.lte = new Date(to);
     }
     return where;
-  }
-
-  private tenantWhere(companyId: string): Prisma.PurchaseOrderWhereInput {
-    return {
-      OR: [
-        { companyId },
-        { supplier: { companyId } },
-        { branch: { companyId } },
-      ],
-    };
   }
 
 }

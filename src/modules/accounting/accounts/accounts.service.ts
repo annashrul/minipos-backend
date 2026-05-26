@@ -19,6 +19,7 @@ import type {
 } from "../dto/accounting.dto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { paginate } from "../../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 
 const ACCOUNT_SELECT = {
   id: true,
@@ -75,7 +76,7 @@ export class AccountsService {
     id: string,
   ): Promise<AccountWithBalanceResponse> {
     const account = await this.prisma.account.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "category") },
       select: ACCOUNT_SELECT,
     });
     if (!account) throw new NotFoundException("Account not found");
@@ -164,7 +165,7 @@ export class AccountsService {
     dto: UpdateAccountDto,
   ): Promise<AccountResponse> {
     const existing = await this.prisma.account.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "category") },
       select: { id: true, code: true, isSystem: true },
     });
     if (!existing) throw new NotFoundException("Account not found");
@@ -238,7 +239,7 @@ export class AccountsService {
     id: string,
   ): Promise<{ success: true }> {
     const existing = await this.prisma.account.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "category") },
       select: {
         id: true,
         isSystem: true,
@@ -263,7 +264,7 @@ export class AccountsService {
 
   async tree(companyId: string): Promise<AccountTreeResponse> {
     const rows = await this.prisma.account.findMany({
-      where: this.tenantWhere(companyId),
+      where: tenantWhere(companyId, "category"),
       select: {
         id: true,
         code: true,
@@ -412,7 +413,7 @@ export class AccountsService {
     query: ListAccountsQueryDto,
   ): Promise<Prisma.AccountWhereInput> {
     const { search, categoryId, parentId, branchId, type, isActive } = query;
-    const where: Prisma.AccountWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.AccountWhereInput = tenantWhere(companyId, "category");
 
     if (categoryId) where.categoryId = categoryId;
     if (parentId !== undefined) where.parentId = parentId;
@@ -430,13 +431,9 @@ export class AccountsService {
     return where;
   }
 
-  private tenantWhere(companyId: string): Prisma.AccountWhereInput {
-    return { category: { companyId } };
-  }
-
   private async assertAccount(companyId: string, accountId: string) {
     const acc = await this.prisma.account.findFirst({
-      where: { id: accountId, ...this.tenantWhere(companyId) },
+      where: { id: accountId, ...tenantWhere(companyId, "category") },
       select: { id: true },
     });
     if (!acc) throw new NotFoundException("Parent account not found");

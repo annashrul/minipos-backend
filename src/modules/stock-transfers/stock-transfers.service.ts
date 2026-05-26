@@ -21,6 +21,7 @@ import {
   nextDocumentNumber,
 } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantWhere } from "@/common/utils/tenant";
 
 const TRANSFER_ITEM_SELECT = {
   id: true,
@@ -96,7 +97,7 @@ export class StockTransfersService {
   }
 
   async summary(companyId: string, branchId?: string) {
-    const where: Prisma.StockTransferWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.StockTransferWhereInput = tenantWhere(companyId, "direct", "fromBranch", "toBranch");
     if (branchId) {
       where.AND = [
         { OR: [{ fromBranchId: branchId }, { toBranchId: branchId }] },
@@ -125,7 +126,7 @@ export class StockTransfersService {
     id: string,
   ): Promise<StockTransferDetailResponse> {
     const row = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
       select: TRANSFER_DETAIL_SELECT,
     });
     if (!row) throw new NotFoundException("Stock transfer tidak ditemukan");
@@ -218,7 +219,7 @@ export class StockTransfersService {
     id: string,
   ): Promise<StockTransferDetailResponse> {
     const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
       select: {
         id: true,
         transferNumber: true,
@@ -313,7 +314,7 @@ export class StockTransfersService {
     dto: ReceiveStockTransferDto,
   ): Promise<StockTransferDetailResponse> {
     const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
       select: {
         id: true,
         transferNumber: true,
@@ -423,7 +424,7 @@ export class StockTransfersService {
     id: string,
   ): Promise<StockTransferDetailResponse> {
     const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
       select: {
         id: true,
         transferNumber: true,
@@ -499,7 +500,7 @@ export class StockTransfersService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
       select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException("Stock transfer tidak ditemukan");
@@ -517,7 +518,7 @@ export class StockTransfersService {
     query: ListStockTransfersQueryDto,
   ): Prisma.StockTransferWhereInput {
     const { search, status, branchId, fromBranchId, toBranchId, from, to } = query;
-    const where: Prisma.StockTransferWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.StockTransferWhereInput = tenantWhere(companyId, "direct", "fromBranch", "toBranch");
     if (status) where.status = status;
     if (branchId) {
       where.AND = [
@@ -535,16 +536,6 @@ export class StockTransfersService {
       if (to) where.requestedAt.lte = new Date(to);
     }
     return where;
-  }
-
-  private tenantWhere(companyId: string): Prisma.StockTransferWhereInput {
-    return {
-      OR: [
-        { companyId },
-        { fromBranch: { companyId } },
-        { toBranch: { companyId } },
-      ],
-    };
   }
 
   // TR-YYYYMMDD-NNNN — sequence per company per hari (shared utility).

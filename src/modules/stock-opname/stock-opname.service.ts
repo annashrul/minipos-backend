@@ -22,6 +22,7 @@ import {
 } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
+import { tenantWhere } from "@/common/utils/tenant";
 
 const OPNAME_ITEM_SELECT = {
   id: true,
@@ -100,7 +101,7 @@ export class StockOpnameService {
     id: string,
   ): Promise<StockOpnameDetailResponse> {
     const row = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: OPNAME_DETAIL_SELECT,
     });
     if (!row) throw new NotFoundException("Stock opname tidak ditemukan");
@@ -144,7 +145,7 @@ export class StockOpnameService {
     dto: SetOpnameItemsDto,
   ): Promise<StockOpnameDetailResponse> {
     const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true, status: true, branchId: true },
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
@@ -213,7 +214,7 @@ export class StockOpnameService {
     id: string,
   ): Promise<StockOpnameDetailResponse> {
     const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true, status: true },
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
@@ -241,7 +242,7 @@ export class StockOpnameService {
     id: string,
   ): Promise<StockOpnameDetailResponse> {
     const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: {
         id: true,
         opnameNumber: true,
@@ -372,7 +373,7 @@ export class StockOpnameService {
     id: string,
   ): Promise<StockOpnameDetailResponse> {
     const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true, status: true },
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
@@ -396,7 +397,7 @@ export class StockOpnameService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.stockOpname.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException("Stock opname tidak ditemukan");
@@ -414,7 +415,7 @@ export class StockOpnameService {
     query: ListStockOpnameQueryDto,
   ): Prisma.StockOpnameWhereInput {
     const { search, status, branchId, from, to } = query;
-    const where: Prisma.StockOpnameWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.StockOpnameWhereInput = tenantWhere(companyId, "direct", "branch");
     if (status) where.status = status;
     if (branchId) where.branchId = branchId;
     if (search) {
@@ -426,12 +427,6 @@ export class StockOpnameService {
       if (to) where.createdAt.lte = new Date(to);
     }
     return where;
-  }
-
-  private tenantWhere(companyId: string): Prisma.StockOpnameWhereInput {
-    return {
-      OR: [{ companyId }, { branch: { companyId } }],
-    };
   }
 
   // OP-YYYYMMDD-NNNN — sequence per company per hari (shared utility).

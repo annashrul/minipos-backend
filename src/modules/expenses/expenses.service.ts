@@ -9,6 +9,7 @@ import type {
 } from "./dto/expenses.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 import { ExpensesRepository, type RawExpense } from "./expenses.repository";
 
 @Injectable()
@@ -21,7 +22,7 @@ export class ExpensesService {
   ): Promise<PaginatedResponse<ExpenseResponse>> {
     const { search, category, branchId, from, to, page, perPage } = query;
 
-    const where = this.tenantWhere(companyId);
+    const where: Prisma.ExpenseWhereInput = tenantWhere(companyId, "direct", "branch");
     if (search) {
       where.OR = [
         { description: { contains: search, mode: "insensitive" } },
@@ -47,7 +48,7 @@ export class ExpensesService {
   async findById(companyId: string, id: string): Promise<ExpenseResponse> {
     const expense = await this.repo.findOne({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!expense) throw new NotFoundException("Expense not found");
     return toExpenseResponse(expense);
@@ -79,7 +80,7 @@ export class ExpensesService {
   ): Promise<ExpenseResponse> {
     const existing = await this.repo.findById({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Expense not found");
 
@@ -103,7 +104,7 @@ export class ExpensesService {
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findById({
       id,
-      ...this.tenantWhere(companyId),
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Expense not found");
     await this.repo.delete(id);
@@ -115,7 +116,7 @@ export class ExpensesService {
     query: ListExpensesQueryDto,
   ): Promise<ExpenseSummaryResponse> {
     const { category, branchId, from, to } = query;
-    const where = this.tenantWhere(companyId);
+    const where: Prisma.ExpenseWhereInput = tenantWhere(companyId, "direct", "branch");
     if (category) where.category = category;
     if (branchId) where.branchId = branchId;
     if (from || to) {
@@ -143,7 +144,7 @@ export class ExpensesService {
   }
 
   async stats(companyId: string, branchId?: string) {
-    const base: Prisma.ExpenseWhereInput = this.tenantWhere(companyId);
+    const base: Prisma.ExpenseWhereInput = tenantWhere(companyId, "direct", "branch");
     if (branchId) base.branchId = branchId;
 
     const now = new Date();
@@ -163,12 +164,6 @@ export class ExpensesService {
       thisMonthAmount: thisMonth._sum.amount ?? 0,
       todayCount: today._count._all,
       todayAmount: today._sum.amount ?? 0,
-    };
-  }
-
-  private tenantWhere(companyId: string): Prisma.ExpenseWhereInput {
-    return {
-      OR: [{ companyId }, { branch: { companyId } }],
     };
   }
 

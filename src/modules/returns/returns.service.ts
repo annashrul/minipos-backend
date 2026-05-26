@@ -9,6 +9,7 @@ import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 import type {
   CreateReturnDto,
   ListReturnsQueryDto,
@@ -190,7 +191,7 @@ export class ReturnsService {
     id: string,
   ): Promise<ReturnDetailResponse> {
     const ret = await this.prisma.returnExchange.findFirst({
-      where: { id, ...this.tenantWhereClause(companyId) },
+      where: { id, ...tenantWhere(companyId, "transaction.user") },
       select: RETURN_DETAIL_SELECT,
     });
     if (!ret) throw new NotFoundException("Return not found");
@@ -394,7 +395,7 @@ export class ReturnsService {
     // Frontend hanya expose 1 tombol "Setujui", jadi tanpa langkah ini stok
     // tidak pernah balik ke gudang.
     const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...this.tenantWhereClause(companyId) },
+      where: { id, ...tenantWhere(companyId, "transaction.user") },
       select: {
         id: true,
         status: true,
@@ -528,7 +529,7 @@ export class ReturnsService {
     dto: RejectReturnDto,
   ): Promise<ReturnDetailResponse> {
     const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...this.tenantWhereClause(companyId) },
+      where: { id, ...tenantWhere(companyId, "transaction.user") },
       select: { id: true, status: true, notes: true },
     });
     if (!existing) throw new NotFoundException("Return not found");
@@ -564,7 +565,7 @@ export class ReturnsService {
     id: string,
   ): Promise<ReturnDetailResponse> {
     const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...this.tenantWhereClause(companyId) },
+      where: { id, ...tenantWhere(companyId, "transaction.user") },
       select: {
         id: true,
         status: true,
@@ -851,7 +852,7 @@ export class ReturnsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...this.tenantWhereClause(companyId) },
+      where: { id, ...tenantWhere(companyId, "transaction.user") },
       select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException("Return not found");
@@ -875,7 +876,7 @@ export class ReturnsService {
   ): Prisma.ReturnExchangeWhereInput {
     const { search, type, status, customerId, branchId, from, to } = query;
     const where: Prisma.ReturnExchangeWhereInput =
-      this.tenantWhereClause(companyId);
+      tenantWhere(companyId, "transaction.user");
 
     if (search) {
       where.OR = [
@@ -897,16 +898,6 @@ export class ReturnsService {
       if (to) where.createdAt.lte = new Date(to);
     }
     return where;
-  }
-
-  private tenantWhereClause(
-    companyId: string,
-  ): Prisma.ReturnExchangeWhereInput {
-    return {
-      transaction: {
-        user: { companyId },
-      },
-    };
   }
 
   private async adjustStock(

@@ -18,6 +18,7 @@ import type {
 } from "./dto/debts.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 import { PrismaService } from "../prisma/prisma.service";
 
 const DEBT_SELECT = {
@@ -109,7 +110,7 @@ export class DebtsService {
 
   async findById(companyId: string, id: string): Promise<DebtDetailResponse> {
     const debt = await this.prisma.debt.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: DEBT_DETAIL_SELECT,
     });
     if (!debt) throw new NotFoundException("Debt not found");
@@ -190,7 +191,7 @@ export class DebtsService {
     dto: PayDebtDto,
   ): Promise<DebtDetailResponse> {
     const debt = await this.prisma.debt.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: {
         id: true,
         totalAmount: true,
@@ -247,7 +248,7 @@ export class DebtsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.debt.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true, paidAmount: true },
     });
     if (!existing) throw new NotFoundException("Debt not found");
@@ -406,7 +407,7 @@ export class DebtsService {
   ): Promise<Prisma.DebtWhereInput> {
     const { type, status, partyType, partyId, branchId, overdue, from, to } =
       query;
-    const where: Prisma.DebtWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.DebtWhereInput = tenantWhere(companyId, "direct", "branch");
     if (type) where.type = type;
     if (status) where.status = status;
     if (partyType) where.partyType = partyType;
@@ -422,12 +423,6 @@ export class DebtsService {
       if (to) where.createdAt.lte = new Date(to);
     }
     return where;
-  }
-
-  private tenantWhere(companyId: string): Prisma.DebtWhereInput {
-    return {
-      OR: [{ companyId }, { branch: { companyId } }],
-    };
   }
 
   private async createInstallments(

@@ -15,6 +15,7 @@ import type {
 } from "./dto/closing-reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { paginate } from "../../common/utils/pagination";
+import { tenantWhere } from "@/common/utils/tenant";
 
 const CLOSING_REPORT_SELECT = {
   id: true,
@@ -66,7 +67,7 @@ export class ClosingReportsService {
   ): Promise<ClosingReportListResponse> {
     const { search, branchId, cashierUserId, from, to, page, perPage } = query;
 
-    const where: Prisma.ClosingReportWhereInput = this.tenantWhere(companyId);
+    const where: Prisma.ClosingReportWhereInput = tenantWhere(companyId, "direct", "branch");
     if (branchId) where.branchId = branchId;
     if (cashierUserId) where.cashierUserId = cashierUserId;
     if (search) {
@@ -97,7 +98,7 @@ export class ClosingReportsService {
     id: string,
   ): Promise<ClosingReportResponse> {
     const report = await this.prisma.closingReport.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: CLOSING_REPORT_SELECT,
     });
     if (!report) throw new NotFoundException("Closing report not found");
@@ -109,7 +110,7 @@ export class ClosingReportsService {
     shiftId: string,
   ): Promise<ClosingReportResponse | null> {
     const report = await this.prisma.closingReport.findFirst({
-      where: { shiftId, ...this.tenantWhere(companyId) },
+      where: { shiftId, ...tenantWhere(companyId, "direct", "branch") },
       select: CLOSING_REPORT_SELECT,
     });
     return report ? toClosingReportResponse(report) : null;
@@ -298,7 +299,7 @@ export class ClosingReportsService {
     dto: UpdateClosingReportDto,
   ): Promise<ClosingReportResponse> {
     const existing = await this.prisma.closingReport.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true },
     });
     if (!existing) throw new NotFoundException("Closing report not found");
@@ -530,7 +531,7 @@ export class ClosingReportsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.prisma.closingReport.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
+      where: { id, ...tenantWhere(companyId, "direct", "branch") },
       select: { id: true },
     });
     if (!existing) throw new NotFoundException("Closing report not found");
@@ -538,11 +539,6 @@ export class ClosingReportsService {
     return { success: true };
   }
 
-  private tenantWhere(companyId: string): Prisma.ClosingReportWhereInput {
-    return {
-      OR: [{ companyId }, { branch: { companyId } }],
-    };
-  }
 }
 
 function toClosingReportResponse(r: RawClosingReport): ClosingReportResponse {
