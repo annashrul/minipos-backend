@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   ActivityLogResponse,
@@ -11,44 +11,15 @@ import type {
 } from "./dto/audit-logs.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const AUDIT_LOG_SELECT = {
-  id: true,
-  userId: true,
-  branchId: true,
-  action: true,
-  entity: true,
-  entityId: true,
-  details: true,
-  ipAddress: true,
-  userAgent: true,
-  createdAt: true,
-  user: { select: { id: true, name: true } },
-  branch: { select: { id: true, name: true } },
-} satisfies Prisma.AuditLogSelect;
-
-type RawAuditLog = Prisma.AuditLogGetPayload<{
-  select: typeof AUDIT_LOG_SELECT;
-}>;
-
-const ACTIVITY_LOG_SELECT = {
-  id: true,
-  userId: true,
-  action: true,
-  description: true,
-  metadata: true,
-  createdAt: true,
-  user: { select: { id: true, name: true } },
-} satisfies Prisma.ActivityLogSelect;
-
-type RawActivityLog = Prisma.ActivityLogGetPayload<{
-  select: typeof ACTIVITY_LOG_SELECT;
-}>;
+import {
+  AuditLogsRepository,
+  type RawAuditLog,
+  type RawActivityLog,
+} from "./audit-logs.repository";
 
 @Injectable()
 export class AuditLogsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: AuditLogsRepository) {}
 
   // ===========================
   // AuditLog
@@ -62,14 +33,8 @@ export class AuditLogsService {
     const where = this.buildAuditWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
-      this.prisma.auditLog.findMany({
-        where,
-        select: AUDIT_LOG_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.auditLog.count({ where }),
+      this.repo.findManyAuditLogs(where, (page - 1) * perPage, perPage),
+      this.repo.countAuditLogs(where),
     ]);
 
     return paginate(rows.map(toAuditLogResponse), total, page, perPage);
@@ -79,9 +44,9 @@ export class AuditLogsService {
     companyId: string,
     id: string,
   ): Promise<AuditLogResponse> {
-    const row = await this.prisma.auditLog.findFirst({
-      where: { id, ...this.auditTenantWhere(companyId) },
-      select: AUDIT_LOG_SELECT,
+    const row = await this.repo.findOneAuditLog({
+      id,
+      ...this.auditTenantWhere(companyId),
     });
     if (!row) throw new NotFoundException("Audit log not found");
     return toAuditLogResponse(row);
@@ -92,14 +57,10 @@ export class AuditLogsService {
     entity: string,
     entityId: string,
   ): Promise<AuditLogResponse[]> {
-    const rows = await this.prisma.auditLog.findMany({
-      where: {
-        entity,
-        entityId,
-        ...this.auditTenantWhere(companyId),
-      },
-      select: AUDIT_LOG_SELECT,
-      orderBy: { createdAt: "desc" },
+    const rows = await this.repo.findAuditLogsByEntity({
+      entity,
+      entityId,
+      ...this.auditTenantWhere(companyId),
     });
     return rows.map(toAuditLogResponse);
   }
@@ -117,35 +78,14 @@ export class AuditLogsService {
     }
 
     const [total, byActionRaw, byEntityRaw, byUserRaw] = await Promise.all([
-      this.prisma.auditLog.count({ where }),
-      this.prisma.auditLog.groupBy({
-        by: ["action"],
-        where,
-        _count: { _all: true },
-        orderBy: { _count: { action: "desc" } },
-      }),
-      this.prisma.auditLog.groupBy({
-        by: ["entity"],
-        where,
-        _count: { _all: true },
-        orderBy: { _count: { entity: "desc" } },
-      }),
-      this.prisma.auditLog.groupBy({
-        by: ["userId"],
-        where,
-        _count: { _all: true },
-        orderBy: { _count: { userId: "desc" } },
-        take: 20,
-      }),
+      this.repo.countAuditLogs(where),
+      this.repo.groupByAction(where),
+      this.repo.groupByEntity(where),
+      this.repo.groupByUser(where, 20),
     ]);
 
     const userIds = byUserRaw.map((u) => u.userId);
-    const users = userIds.length
-      ? await this.prisma.user.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, name: true },
-        })
-      : [];
+    const users = await this.repo.findUsersByIds(userIds);
     const userMap = new Map(users.map((u) => [u.id, u.name]));
 
     return {
@@ -178,14 +118,8 @@ export class AuditLogsService {
     const where = this.buildActivityWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
-      this.prisma.activityLog.findMany({
-        where,
-        select: ACTIVITY_LOG_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.activityLog.count({ where }),
+      this.repo.findManyActivityLogs(where, (page - 1) * perPage, perPage),
+      this.repo.countActivityLogs(where),
     ]);
 
     return paginate(rows.map(toActivityLogResponse), total, page, perPage);
@@ -195,9 +129,9 @@ export class AuditLogsService {
     companyId: string,
     id: string,
   ): Promise<ActivityLogResponse> {
-    const row = await this.prisma.activityLog.findFirst({
-      where: { id, user: { companyId } },
-      select: ACTIVITY_LOG_SELECT,
+    const row = await this.repo.findOneActivityLog({
+      id,
+      user: { companyId },
     });
     if (!row) throw new NotFoundException("Activity log not found");
     return toActivityLogResponse(row);
@@ -208,14 +142,11 @@ export class AuditLogsService {
     dto: CreateActivityLogDto,
   ): Promise<ActivityLogResponse> {
     const metadata = serializeMetadata(dto.metadata);
-    const created = await this.prisma.activityLog.create({
-      data: {
-        userId,
-        action: dto.action,
-        description: dto.description ?? null,
-        metadata,
-      },
-      select: ACTIVITY_LOG_SELECT,
+    const created = await this.repo.createActivityLog({
+      userId,
+      action: dto.action,
+      description: dto.description ?? null,
+      metadata,
     });
     return toActivityLogResponse(created);
   }

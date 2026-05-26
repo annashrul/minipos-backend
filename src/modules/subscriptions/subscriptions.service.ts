@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -14,31 +14,18 @@ import type {
   SubscriptionListResponse,
   SubscriptionResponse,
 } from "./dto/subscriptions.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const SUBSCRIPTION_SELECT = {
-  id: true,
-  companyId: true,
-  plan: true,
-  amount: true,
-  durationMonths: true,
-  billingType: true,
-  status: true,
-  planStartDate: true,
-  planEndDate: true,
-  notes: true,
-  approvedBy: true,
-  approvedAt: true,
-  createdAt: true,
-} satisfies Prisma.SubscriptionPaymentSelect;
-
-type RawSubscription = Prisma.SubscriptionPaymentGetPayload<{
-  select: typeof SUBSCRIPTION_SELECT;
-}>;
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  SubscriptionsRepository,
+  type RawSubscription,
+} from "./subscriptions.repository";
 
 @Injectable()
 export class SubscriptionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: SubscriptionsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async list(
     companyId: string,
@@ -55,14 +42,8 @@ export class SubscriptionsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.subscriptionPayment.findMany({
-        where,
-        select: SUBSCRIPTION_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.subscriptionPayment.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -76,31 +57,17 @@ export class SubscriptionsService {
     companyId: string,
     id: string,
   ): Promise<SubscriptionResponse> {
-    const sub = await this.prisma.subscriptionPayment.findFirst({
-      where: { id, companyId },
-      select: SUBSCRIPTION_SELECT,
-    });
+    const sub = await this.repo.findOne({ id, companyId });
     if (!sub) throw new NotFoundException("Subscription tidak ditemukan");
     return toSubscriptionResponse(sub);
   }
 
   async getCurrent(companyId: string): Promise<CurrentSubscriptionResponse> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { plan: true, planExpiresAt: true },
-    });
+    const company = await this.repo.findCompanyPlan(companyId);
     if (!company) throw new NotFoundException("Company tidak ditemukan");
 
     const now = new Date();
-    const subscription = await this.prisma.subscriptionPayment.findFirst({
-      where: {
-        companyId,
-        status: "PAID",
-        planEndDate: { gte: now },
-      },
-      select: SUBSCRIPTION_SELECT,
-      orderBy: { planEndDate: "desc" },
-    });
+    const subscription = await this.repo.findCurrentPaid(companyId, now);
 
     const isActive =
       company.plan !== "FREE" &&
@@ -131,19 +98,16 @@ export class SubscriptionsService {
       );
     }
 
-    const created = await this.prisma.subscriptionPayment.create({
-      data: {
-        companyId,
-        plan: dto.plan,
-        amount: dto.amount,
-        durationMonths: dto.durationMonths,
-        billingType: dto.billingType ?? "MONTHLY",
-        status: "PENDING",
-        planStartDate: start,
-        planEndDate: end,
-        notes: dto.notes ?? null,
-      },
-      select: SUBSCRIPTION_SELECT,
+    const created = await this.repo.create({
+      companyId,
+      plan: dto.plan,
+      amount: dto.amount,
+      durationMonths: dto.durationMonths,
+      billingType: dto.billingType ?? "MONTHLY",
+      status: "PENDING",
+      planStartDate: start,
+      planEndDate: end,
+      notes: dto.notes ?? null,
     });
 
     return toSubscriptionResponse(created);
@@ -155,10 +119,7 @@ export class SubscriptionsService {
     id: string,
     dto: MarkSubscriptionPaidDto,
   ): Promise<SubscriptionResponse> {
-    const existing = await this.prisma.subscriptionPayment.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, plan: true, planEndDate: true },
-    });
+    const existing = await this.repo.findStatus(id, companyId);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
@@ -179,7 +140,21 @@ export class SubscriptionsService {
       const sub = await tx.subscriptionPayment.update({
         where: { id },
         data,
-        select: SUBSCRIPTION_SELECT,
+        select: {
+          id: true,
+          companyId: true,
+          plan: true,
+          amount: true,
+          durationMonths: true,
+          billingType: true,
+          status: true,
+          planStartDate: true,
+          planEndDate: true,
+          notes: true,
+          approvedBy: true,
+          approvedAt: true,
+          createdAt: true,
+        },
       });
 
       await tx.company.update({
@@ -200,10 +175,7 @@ export class SubscriptionsService {
     companyId: string,
     id: string,
   ): Promise<SubscriptionResponse> {
-    const existing = await this.prisma.subscriptionPayment.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id, companyId);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
@@ -211,11 +183,7 @@ export class SubscriptionsService {
       );
     }
 
-    const updated = await this.prisma.subscriptionPayment.update({
-      where: { id },
-      data: { status: "CANCELLED" },
-      select: SUBSCRIPTION_SELECT,
-    });
+    const updated = await this.repo.update(id, { status: "CANCELLED" });
 
     return toSubscriptionResponse(updated);
   }
@@ -229,10 +197,7 @@ export class SubscriptionsService {
       throw new ForbiddenException("Hanya super-admin yang bisa menghapus");
     }
 
-    const existing = await this.prisma.subscriptionPayment.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id, companyId);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status === "PAID") {
       throw new BadRequestException(
@@ -240,7 +205,7 @@ export class SubscriptionsService {
       );
     }
 
-    await this.prisma.subscriptionPayment.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

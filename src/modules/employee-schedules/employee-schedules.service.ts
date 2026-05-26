@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -16,28 +16,10 @@ import type {
 } from "./dto/employee-schedules.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const SCHEDULE_SELECT = {
-  id: true,
-  userId: true,
-  user: { select: { id: true, name: true, email: true, role: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  date: true,
-  shiftStart: true,
-  shiftEnd: true,
-  shiftLabel: true,
-  status: true,
-  notes: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.EmployeeScheduleSelect;
-
-type RawSchedule = Prisma.EmployeeScheduleGetPayload<{
-  select: typeof SCHEDULE_SELECT;
-}>;
+import {
+  EmployeeSchedulesRepository,
+  type RawSchedule,
+} from "./employee-schedules.repository";
 
 const SHIFT_LABEL_BY_TYPE: Record<string, string> = {
   MORNING: "Pagi",
@@ -49,9 +31,9 @@ const SHIFT_LABEL_BY_TYPE: Record<string, string> = {
 
 @Injectable()
 export class EmployeeSchedulesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: EmployeeSchedulesRepository) {}
 
-  // No companyId column on EmployeeSchedule â€” scope through user.companyId.
+  // No companyId column on EmployeeSchedule — scope through user.companyId.
   private tenantWhere(companyId: string): Prisma.EmployeeScheduleWhereInput {
     return { user: { is: { companyId } } };
   }
@@ -87,14 +69,8 @@ export class EmployeeSchedulesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.employeeSchedule.findMany({
-        where,
-        select: SCHEDULE_SELECT,
-        orderBy: { date: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.employeeSchedule.count({ where }),
+      this.repo.findMany(where, { date: "desc" }, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toScheduleResponse), total, page, perPage);
@@ -104,9 +80,9 @@ export class EmployeeSchedulesService {
     companyId: string,
     id: string,
   ): Promise<EmployeeScheduleResponse> {
-    const row = await this.prisma.employeeSchedule.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: SCHEDULE_SELECT,
+    const row = await this.repo.findOne({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!row) throw new NotFoundException("Schedule not found");
     return toScheduleResponse(row);
@@ -127,11 +103,7 @@ export class EmployeeSchedulesService {
     };
     if (branchId) where.branchId = branchId;
 
-    const rows = await this.prisma.employeeSchedule.findMany({
-      where,
-      select: SCHEDULE_SELECT,
-      orderBy: [{ shiftStart: "asc" }],
-    });
+    const rows = await this.repo.findManyByWhere(where, [{ shiftStart: "asc" }]);
     return rows.map(toScheduleResponse);
   }
 
@@ -145,10 +117,7 @@ export class EmployeeSchedulesService {
     const data = this.buildCreateData(dto, actorId);
 
     try {
-      const created = await this.prisma.employeeSchedule.create({
-        data,
-        select: SCHEDULE_SELECT,
-      });
+      const created = await this.repo.create(data);
       return toScheduleResponse(created);
     } catch (err) {
       throwIfUniqueConstraint(err, "Jadwal sudah ada untuk user ini di waktu tersebut");
@@ -170,16 +139,19 @@ export class EmployeeSchedulesService {
       ),
     );
     if (userIds.length) {
-      const validUsers = await this.prisma.user.count({
-        where: { id: { in: userIds }, companyId, deletedAt: null },
+      const validUsers = await this.repo.countUsers({
+        id: { in: userIds },
+        companyId,
+        deletedAt: null,
       });
       if (validUsers !== userIds.length) {
         throw new NotFoundException("One or more users not found");
       }
     }
     if (branchIds.length) {
-      const validBranches = await this.prisma.branch.count({
-        where: { id: { in: branchIds }, companyId },
+      const validBranches = await this.repo.countBranches({
+        id: { in: branchIds },
+        companyId,
       });
       if (validBranches !== branchIds.length) {
         throw new NotFoundException("One or more branches not found");
@@ -187,11 +159,8 @@ export class EmployeeSchedulesService {
     }
 
     const rows = dto.schedules.map((s) => this.buildCreateData(s, actorId));
-    const result = await this.prisma.employeeSchedule.createMany({
-      data: rows,
-      skipDuplicates: true,
-    });
-    return { created: result.count };
+    const count = await this.repo.createMany(rows);
+    return { created: count };
   }
 
   async update(
@@ -199,9 +168,9 @@ export class EmployeeSchedulesService {
     id: string,
     dto: UpdateEmployeeScheduleDto,
   ): Promise<EmployeeScheduleResponse> {
-    const existing = await this.prisma.employeeSchedule.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findExistence({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Schedule not found");
 
@@ -230,11 +199,7 @@ export class EmployeeSchedulesService {
     }
 
     try {
-      const updated = await this.prisma.employeeSchedule.update({
-        where: { id },
-        data,
-        select: SCHEDULE_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toScheduleResponse(updated);
     } catch (err) {
       throwIfUniqueConstraint(err, "Jadwal sudah ada untuk user ini di waktu tersebut");
@@ -246,17 +211,13 @@ export class EmployeeSchedulesService {
     id: string,
     status: ScheduleStatusDto,
   ): Promise<EmployeeScheduleResponse> {
-    const existing = await this.prisma.employeeSchedule.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findExistence({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Schedule not found");
 
-    const updated = await this.prisma.employeeSchedule.update({
-      where: { id },
-      data: { status },
-      select: SCHEDULE_SELECT,
-    });
+    const updated = await this.repo.update(id, { status });
     return toScheduleResponse(updated);
   }
 
@@ -264,16 +225,16 @@ export class EmployeeSchedulesService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.employeeSchedule.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findExistence({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Schedule not found");
-    await this.prisma.employeeSchedule.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // — Helpers ——————————————————————————————————————————————————
 
   private async assertReferences(
     companyId: string,
@@ -281,16 +242,17 @@ export class EmployeeSchedulesService {
     branchId?: string | null,
   ) {
     if (userId) {
-      const user = await this.prisma.user.findFirst({
-        where: { id: userId, companyId, deletedAt: null },
-        select: { id: true },
+      const user = await this.repo.findUser({
+        id: userId,
+        companyId,
+        deletedAt: null,
       });
       if (!user) throw new NotFoundException("User not found");
     }
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true },
+      const branch = await this.repo.findBranch({
+        id: branchId,
+        companyId,
       });
       if (!branch) throw new NotFoundException("Branch not found");
     }
@@ -360,7 +322,7 @@ function toScheduleResponse(s: RawSchedule): EmployeeScheduleResponse {
   };
 }
 
-// "YYYY-MM-DD" or ISO datetime â†’ Date at noon UTC (mirrors web action).
+// "YYYY-MM-DD" or ISO datetime → Date at noon UTC (mirrors web action).
 function parseLocalDate(input: string): Date {
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
     return new Date(`${input}T12:00:00.000Z`);

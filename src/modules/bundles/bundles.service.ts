@@ -1,8 +1,4 @@
-﻿import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
+﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
@@ -14,52 +10,18 @@ import type {
 } from "./dto/bundles.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import {
+  BUNDLE_SELECT,
+  BundlesRepository,
+  type RawBundle,
+} from "./bundles.repository";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-
-const BUNDLE_SELECT = {
-  id: true,
-  code: true,
-  name: true,
-  description: true,
-  imageUrl: true,
-  sellingPrice: true,
-  totalBasePrice: true,
-  categoryId: true,
-  category: { select: { id: true, name: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  barcode: true,
-  isActive: true,
-  createdAt: true,
-  updatedAt: true,
-  items: {
-    select: {
-      id: true,
-      productId: true,
-      product: {
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          sellingPrice: true,
-          purchasePrice: true,
-        },
-      },
-      quantity: true,
-      sortOrder: true,
-    },
-    orderBy: { sortOrder: "asc" },
-  },
-} satisfies Prisma.ProductBundleSelect;
-
-type RawBundle = Prisma.ProductBundleGetPayload<{
-  select: typeof BUNDLE_SELECT;
-}>;
 
 @Injectable()
 export class BundlesService {
   constructor(
+    private readonly repo: BundlesRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
@@ -110,24 +72,15 @@ export class BundlesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.productBundle.findMany({
-        where,
-        select: BUNDLE_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.productBundle.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toBundleResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<BundleResponse> {
-    const bundle = await this.prisma.productBundle.findFirst({
-      where: { id, companyId },
-      select: BUNDLE_SELECT,
-    });
+    const bundle = await this.repo.findOne({ id, companyId });
     if (!bundle) throw new NotFoundException("Bundle not found");
     return toBundleResponse(bundle);
   }
@@ -146,28 +99,25 @@ export class BundlesService {
     const totalBasePrice = await this.computeTotalBasePrice(dto.items);
 
     try {
-      const created = await this.prisma.productBundle.create({
-        data: {
-          code: dto.code,
-          name: dto.name,
-          description: dto.description ?? null,
-          imageUrl: dto.imageUrl ?? null,
-          sellingPrice: dto.sellingPrice,
-          totalBasePrice,
-          categoryId: dto.categoryId ?? null,
-          branchId: dto.branchId ?? null,
-          barcode: dto.barcode ?? null,
-          isActive: dto.isActive ?? true,
-          companyId,
-          items: {
-            create: dto.items.map((i) => ({
-              productId: i.productId,
-              quantity: i.quantity,
-              sortOrder: i.sortOrder ?? 0,
-            })),
-          },
+      const created = await this.repo.create({
+        code: dto.code,
+        name: dto.name,
+        description: dto.description ?? null,
+        imageUrl: dto.imageUrl ?? null,
+        sellingPrice: dto.sellingPrice,
+        totalBasePrice,
+        categoryId: dto.categoryId ?? null,
+        branchId: dto.branchId ?? null,
+        barcode: dto.barcode ?? null,
+        isActive: dto.isActive ?? true,
+        companyId,
+        items: {
+          create: dto.items.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            sortOrder: i.sortOrder ?? 0,
+          })),
         },
-        select: BUNDLE_SELECT,
       });
       this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: created.id });
       return toBundleResponse(created);
@@ -182,10 +132,7 @@ export class BundlesService {
     id: string,
     dto: UpdateBundleDto,
   ): Promise<BundleResponse> {
-    const existing = await this.prisma.productBundle.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Bundle not found");
 
     await this.assertReferences(
@@ -242,12 +189,9 @@ export class BundlesService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.productBundle.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Bundle not found");
-    await this.prisma.productBundle.delete({ where: { id } });
+    await this.repo.delete(id);
     this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: id });
     return { success: true };
   }
@@ -256,9 +200,7 @@ export class BundlesService {
     companyId: string,
     ids: string[],
   ): Promise<{ count: number }> {
-    const { count } = await this.prisma.productBundle.deleteMany({
-      where: { id: { in: ids }, companyId },
-    });
+    const count = await this.repo.deleteMany(companyId, ids);
     if (count > 0) this.realtime.emit(EVENTS.BUNDLE_UPDATED, {});
     return { count };
   }
@@ -270,25 +212,16 @@ export class BundlesService {
     items: BundleItemInputDto[] | null,
   ) {
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.findBranch(companyId, branchId);
       if (!branch) throw new NotFoundException("Branch not found");
     }
     if (categoryId) {
-      const category = await this.prisma.category.findFirst({
-        where: { id: categoryId, companyId },
-        select: { id: true },
-      });
+      const category = await this.repo.findCategory(companyId, categoryId);
       if (!category) throw new NotFoundException("Category not found");
     }
     if (items && items.length > 0) {
       const productIds = items.map((i) => i.productId);
-      const products = await this.prisma.product.findMany({
-        where: { id: { in: productIds }, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const products = await this.repo.findProducts(companyId, productIds);
       if (products.length !== new Set(productIds).size) {
         throw new NotFoundException(
           "Salah satu produk komponen tidak ditemukan",
@@ -301,10 +234,9 @@ export class BundlesService {
     items: BundleItemInputDto[],
   ): Promise<number> {
     if (items.length === 0) return 0;
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: items.map((i) => i.productId) } },
-      select: { id: true, sellingPrice: true },
-    });
+    const products = await this.repo.findProductPrices(
+      items.map((i) => i.productId),
+    );
     const priceMap = new Map(products.map((p) => [p.id, p.sellingPrice]));
     return items.reduce(
       (s, i) => s + (priceMap.get(i.productId) ?? 0) * i.quantity,

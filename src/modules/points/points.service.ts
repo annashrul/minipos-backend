@@ -16,28 +16,18 @@ import type {
 } from "./dto/points.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
+import { PointsRepository, type RawHistory } from "./points.repository";
 import { PrismaService } from "../prisma/prisma.service";
 
 const POINTS_PER_RUPIAH = 10000;
 const RUPIAH_PER_POINT = 100;
 
-const HISTORY_SELECT = {
-  id: true,
-  customerId: true,
-  points: true,
-  type: true,
-  reference: true,
-  description: true,
-  createdAt: true,
-} satisfies Prisma.CustomerPointHistorySelect;
-
-type RawHistory = Prisma.CustomerPointHistoryGetPayload<{
-  select: typeof HISTORY_SELECT;
-}>;
-
 @Injectable()
 export class PointsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: PointsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async getCustomerPoints(
     companyId: string,
@@ -45,20 +35,15 @@ export class PointsService {
   ): Promise<CustomerPointsResponse> {
     const customer = await this.assertCustomer(companyId, customerId);
 
-    const [earnedAgg, redeemedAgg] = await Promise.all([
-      this.prisma.customerPointHistory.aggregate({
-        where: { customerId, type: "EARN" },
-        _sum: { points: true },
-      }),
-      this.prisma.customerPointHistory.aggregate({
-        where: { customerId, type: { in: ["REDEEM", "EXPIRED"] } },
-        _sum: { points: true },
+    const [totalEarned, totalRedeemedRaw] = await Promise.all([
+      this.repo.aggregatePoints(customerId, "EARN"),
+      this.repo.aggregatePoints(customerId, {
+        in: ["REDEEM", "EXPIRED"],
       }),
     ]);
 
-    const totalEarned = earnedAgg._sum.points ?? 0;
     // redeem/expired stored as negative; flip sign for "total redeemed"
-    const totalRedeemed = Math.abs(redeemedAgg._sum.points ?? 0);
+    const totalRedeemed = Math.abs(totalRedeemedRaw);
 
     return {
       customerId: customer.id,
@@ -85,14 +70,8 @@ export class PointsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.customerPointHistory.findMany({
-        where,
-        select: HISTORY_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.customerPointHistory.count({ where }),
+      this.repo.findManyHistory(where, (page - 1) * perPage, perPage),
+      this.repo.countHistory(where),
     ]);
 
     return paginate(rows.map(toHistoryResponse), total, page, perPage);
@@ -257,10 +236,7 @@ export class PointsService {
   }
 
   private async assertCustomer(companyId: string, customerId: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, companyId },
-      select: { id: true, points: true },
-    });
+    const customer = await this.repo.findCustomer(companyId, customerId);
     if (!customer) throw new NotFoundException("Customer not found");
     return customer;
   }

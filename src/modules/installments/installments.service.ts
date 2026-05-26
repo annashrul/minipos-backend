@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -14,20 +14,26 @@ import type {
   UpcomingInstallmentResponse,
   UpdateOverdueInstallmentsResponse,
 } from "./dto/installments.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  InstallmentsRepository,
+  type RawDebtDetail,
+  type RawUpcomingInstallment,
+} from "./installments.repository";
 
 @Injectable()
 export class InstallmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: InstallmentsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async createPlan(
     companyId: string,
     userId: string,
     input: CreateInstallmentPlanDto,
   ): Promise<{ success: true }> {
-    const debt = await this.prisma.debt.findFirst({
-      where: { id: input.debtId, companyId },
-    });
+    const debt = await this.repo.findDebt(input.debtId, companyId);
     if (!debt) {
       throw new NotFoundException("Data hutang/piutang tidak ditemukan");
     }
@@ -133,20 +139,7 @@ export class InstallmentsService {
       throw new BadRequestException("Jumlah harus lebih dari 0");
     }
 
-    const installment = await this.prisma.installment.findUnique({
-      where: { id: installmentId },
-      include: {
-        debt: {
-          select: {
-            id: true,
-            companyId: true,
-            totalAmount: true,
-            paidAmount: true,
-            remainingAmount: true,
-          },
-        },
-      },
-    });
+    const installment = await this.repo.findInstallmentForPay(installmentId);
     if (!installment || installment.debt.companyId !== companyId) {
       throw new NotFoundException("Cicilan tidak ditemukan");
     }
@@ -208,68 +201,10 @@ export class InstallmentsService {
     companyId: string,
     debtId: string,
   ): Promise<InstallmentsByDebtResponse | null> {
-    const debt = await this.prisma.debt.findFirst({
-      where: { id: debtId, companyId },
-      select: {
-        id: true,
-        totalAmount: true,
-        paidAmount: true,
-        remainingAmount: true,
-        status: true,
-        downPayment: true,
-        installmentCount: true,
-        installmentInterval: true,
-        partyName: true,
-        description: true,
-        dueDate: true,
-        installments: { orderBy: { installmentNo: "asc" } },
-        payments: {
-          orderBy: { paidAt: "desc" },
-          select: {
-            id: true,
-            amount: true,
-            method: true,
-            notes: true,
-            paidAt: true,
-          },
-        },
-      },
-    });
+    const debt = await this.repo.findDebtWithInstallments(debtId, companyId);
     if (!debt) return null;
 
-    return {
-      id: debt.id,
-      totalAmount: debt.totalAmount,
-      paidAmount: debt.paidAmount,
-      remainingAmount: debt.remainingAmount,
-      status: debt.status,
-      downPayment: debt.downPayment,
-      installmentCount: debt.installmentCount,
-      installmentInterval: debt.installmentInterval,
-      partyName: debt.partyName,
-      description: debt.description,
-      dueDate: debt.dueDate ? debt.dueDate.toISOString() : null,
-      installments: debt.installments.map<InstallmentRecord>((i) => ({
-        id: i.id,
-        debtId: i.debtId,
-        installmentNo: i.installmentNo,
-        amount: i.amount,
-        dueDate: i.dueDate.toISOString(),
-        paidAmount: i.paidAmount,
-        paidAt: i.paidAt ? i.paidAt.toISOString() : null,
-        status: i.status,
-        notes: i.notes,
-        createdAt: i.createdAt.toISOString(),
-        updatedAt: i.updatedAt.toISOString(),
-      })),
-      payments: debt.payments.map((p) => ({
-        id: p.id,
-        amount: p.amount,
-        method: p.method,
-        notes: p.notes,
-        paidAt: p.paidAt.toISOString(),
-      })),
-    };
+    return toDebtDetailResponse(debt);
   }
 
   async getUpcomingDue(
@@ -280,67 +215,17 @@ export class InstallmentsService {
     const future = new Date();
     future.setDate(future.getDate() + daysAhead);
 
-    const installments = await this.prisma.installment.findMany({
-      where: {
-        status: { in: ["UNPAID", "PARTIAL"] },
-        dueDate: { lte: future },
-        debt: { companyId },
-      },
-      include: {
-        debt: {
-          select: {
-            partyName: true,
-            description: true,
-            type: true,
-            referenceType: true,
-            referenceId: true,
-          },
-        },
-      },
-      orderBy: { dueDate: "asc" },
-      take: 50,
-    });
+    const installments = await this.repo.findUpcoming(companyId, future);
 
-    return installments.map((inst) => ({
-      id: inst.id,
-      debtId: inst.debtId,
-      installmentNo: inst.installmentNo,
-      amount: inst.amount,
-      dueDate: inst.dueDate.toISOString(),
-      paidAmount: inst.paidAmount,
-      paidAt: inst.paidAt ? inst.paidAt.toISOString() : null,
-      status: inst.status,
-      notes: inst.notes,
-      createdAt: inst.createdAt.toISOString(),
-      updatedAt: inst.updatedAt.toISOString(),
-      isOverdue: new Date(inst.dueDate) < now,
-      daysUntilDue: Math.ceil(
-        (new Date(inst.dueDate).getTime() - now.getTime()) /
-          (1000 * 60 * 60 * 24),
-      ),
-      debt: {
-        partyName: inst.debt.partyName,
-        description: inst.debt.description,
-        type: inst.debt.type,
-        referenceType: inst.debt.referenceType,
-        referenceId: inst.debt.referenceId,
-      },
-    }));
+    return installments.map((inst) => toUpcomingResponse(inst, now));
   }
 
   async updateOverdue(
     companyId: string,
   ): Promise<UpdateOverdueInstallmentsResponse> {
     const now = new Date();
-    const result = await this.prisma.installment.updateMany({
-      where: {
-        status: "UNPAID",
-        dueDate: { lt: now },
-        debt: { companyId },
-      },
-      data: { status: "OVERDUE" },
-    });
-    return { updated: result.count };
+    const updated = await this.repo.updateOverdue(companyId, now);
+    return { updated };
   }
 
   previewSchedule(
@@ -374,4 +259,73 @@ export class InstallmentsService {
 
     return schedule;
   }
+}
+
+function toDebtDetailResponse(
+  debt: RawDebtDetail,
+): InstallmentsByDebtResponse {
+  return {
+    id: debt.id,
+    totalAmount: debt.totalAmount,
+    paidAmount: debt.paidAmount,
+    remainingAmount: debt.remainingAmount,
+    status: debt.status,
+    downPayment: debt.downPayment,
+    installmentCount: debt.installmentCount,
+    installmentInterval: debt.installmentInterval,
+    partyName: debt.partyName,
+    description: debt.description,
+    dueDate: debt.dueDate ? debt.dueDate.toISOString() : null,
+    installments: debt.installments.map<InstallmentRecord>((i) => ({
+      id: i.id,
+      debtId: i.debtId,
+      installmentNo: i.installmentNo,
+      amount: i.amount,
+      dueDate: i.dueDate.toISOString(),
+      paidAmount: i.paidAmount,
+      paidAt: i.paidAt ? i.paidAt.toISOString() : null,
+      status: i.status,
+      notes: i.notes,
+      createdAt: i.createdAt.toISOString(),
+      updatedAt: i.updatedAt.toISOString(),
+    })),
+    payments: debt.payments.map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      method: p.method,
+      notes: p.notes,
+      paidAt: p.paidAt.toISOString(),
+    })),
+  };
+}
+
+function toUpcomingResponse(
+  inst: RawUpcomingInstallment,
+  now: Date,
+): UpcomingInstallmentResponse {
+  return {
+    id: inst.id,
+    debtId: inst.debtId,
+    installmentNo: inst.installmentNo,
+    amount: inst.amount,
+    dueDate: inst.dueDate.toISOString(),
+    paidAmount: inst.paidAmount,
+    paidAt: inst.paidAt ? inst.paidAt.toISOString() : null,
+    status: inst.status,
+    notes: inst.notes,
+    createdAt: inst.createdAt.toISOString(),
+    updatedAt: inst.updatedAt.toISOString(),
+    isOverdue: new Date(inst.dueDate) < now,
+    daysUntilDue: Math.ceil(
+      (new Date(inst.dueDate).getTime() - now.getTime()) /
+        (1000 * 60 * 60 * 24),
+    ),
+    debt: {
+      partyName: inst.debt.partyName,
+      description: inst.debt.description,
+      type: inst.debt.type,
+      referenceType: inst.debt.referenceType,
+      referenceId: inst.debt.referenceId,
+    },
+  };
 }
