@@ -9,10 +9,11 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateProductDto,
   ListProductsQueryDto,
-  ProductListResponse,
   ProductResponse,
   UpdateProductDto,
-} from "@/contracts";
+} from "./dto/products.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PRODUCT_SELECT = {
@@ -144,7 +145,7 @@ export class ProductsService {
   async list(
     companyId: string,
     query: ListProductsQueryDto,
-  ): Promise<ProductListResponse> {
+  ): Promise<PaginatedResponse<ProductResponse>> {
     const {
       search,
       categoryId,
@@ -208,11 +209,7 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    return {
-      products: rows.map(toProductResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toProductResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<ProductResponse> {

@@ -10,7 +10,7 @@ import {
   type WhatsAppBaileysSendTextBodyDto,
   type WhatsAppReceiptLinkQueryDto,
   type WhatsAppReceiptTextParamsDto,
-} from "@/contracts";
+} from "./dto/whatsapp-receipt.dto";
 import { z } from "zod";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { WhatsappCompany } from "../auth/current-company.decorator";

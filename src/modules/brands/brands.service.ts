@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -6,33 +6,36 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  BrandListResponse,
   BrandResponse,
   CreateBrandDto,
   ListBrandsQueryDto,
   UpdateBrandDto,
-} from "@/contracts";
+} from "./dto/brands.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import { BrandsRepository, type RawBrand } from "./brands.repository";
 import { PrismaService } from "../prisma/prisma.service";
-
-const BRAND_SELECT = {
-  id: true,
-  name: true,
-  kind: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { products: true } },
-} satisfies Prisma.BrandSelect;
-
-type RawBrand = Prisma.BrandGetPayload<{ select: typeof BRAND_SELECT }>;
 
 @Injectable()
 export class BrandsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: BrandsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, withProducts] = await Promise.all([
+      this.prisma.brand.count({ where }),
+      this.prisma.brand.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, withProducts, withoutProducts: total - withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListBrandsQueryDto,
-  ): Promise<BrandListResponse> {
+  ): Promise<PaginatedResponse<BrandResponse>> {
     const { search, kind, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.BrandWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
@@ -53,28 +56,15 @@ export class BrandsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.brand.findMany({
-        where,
-        select: BRAND_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.brand.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    return {
-      brands: rows.map(toBrandResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBrandResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<BrandResponse> {
-    const brand = await this.prisma.brand.findFirst({
-      where: { id, companyId },
-      select: BRAND_SELECT,
-    });
+    const brand = await this.repo.findOne({ id, companyId });
     if (!brand) throw new NotFoundException("Brand not found");
     return toBrandResponse(brand);
   }
@@ -84,9 +74,10 @@ export class BrandsService {
     dto: CreateBrandDto,
   ): Promise<BrandResponse> {
     try {
-      const created = await this.prisma.brand.create({
-        data: { name: dto.name, kind: dto.kind ?? "PRODUCT", companyId },
-        select: BRAND_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        kind: dto.kind ?? "PRODUCT",
+        companyId,
       });
       return toBrandResponse(created);
     } catch (err) {
@@ -105,10 +96,7 @@ export class BrandsService {
     id: string,
     dto: UpdateBrandDto,
   ): Promise<BrandResponse> {
-    const existing = await this.prisma.brand.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findOne({ id, companyId });
     if (!existing) throw new NotFoundException("Brand not found");
 
     const data: Prisma.BrandUpdateInput = {};
@@ -116,11 +104,7 @@ export class BrandsService {
     if (dto.kind !== undefined) data.kind = dto.kind;
 
     try {
-      const updated = await this.prisma.brand.update({
-        where: { id },
-        data,
-        select: BRAND_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toBrandResponse(updated);
     } catch (err) {
       if (
@@ -134,17 +118,14 @@ export class BrandsService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.brand.findFirst({
-      where: { id, companyId },
-      select: { id: true, _count: { select: { products: true } } },
-    });
+    const existing = await this.repo.findWithCounts(companyId, id);
     if (!existing) throw new NotFoundException("Brand not found");
     if (existing._count.products > 0) {
       throw new BadRequestException(
         `Brand masih dipakai ${existing._count.products} produk`,
       );
     }
-    await this.prisma.brand.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

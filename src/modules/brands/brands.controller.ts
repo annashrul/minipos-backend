@@ -16,7 +16,7 @@ import {
   type CreateBrandDto,
   type ListBrandsQueryDto,
   type UpdateBrandDto,
-} from "@/contracts";
+} from "./dto/brands.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -36,6 +36,13 @@ export class BrandsController {
     query: ListBrandsQueryDto,
   ) {
     const data = await this.brands.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("brands", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.brands.summary(companyId);
     return { data };
   }
 

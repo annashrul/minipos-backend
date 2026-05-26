@@ -19,7 +19,7 @@ import {
   type ListModifierGroupsQueryDto,
   type UpdateModifierGroupDto,
   type AttachProductModifierDto,
-} from "@/contracts";
+} from "./dto/modifiers.dto";
 import { ModifiersService } from "./modifiers.service";
 
 @Controller("modifiers")
@@ -34,6 +34,12 @@ export class ModifiersController {
     const parsed: ListModifierGroupsQueryDto =
       ListModifierGroupsQuerySchema.parse(query);
     const data = await this.service.list(companyId, parsed);
+    return { data };
+  }
+
+  @Get("summary")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.service.summary(companyId);
     return { data };
   }
 

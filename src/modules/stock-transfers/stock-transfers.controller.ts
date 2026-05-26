@@ -13,11 +13,11 @@ import {
   CreateStockTransferSchema,
   ListStockTransfersQuerySchema,
   ReceiveStockTransferSchema,
-  type AuthUser,
   type CreateStockTransferDto,
   type ListStockTransfersQueryDto,
   type ReceiveStockTransferDto,
-} from "@/contracts";
+} from "./dto/stock-transfers.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -38,6 +38,16 @@ export class StockTransfersController {
     query: ListStockTransfersQueryDto,
   ) {
     const data = await this.transfers.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("stock-transfers", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.transfers.summary(companyId, branchId);
     return { data };
   }
 

@@ -16,7 +16,7 @@ import {
   type CreateUserDto,
   type ListUsersQueryDto,
   type UpdateUserDto,
-} from "@/contracts";
+} from "./dto/users.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -35,6 +35,16 @@ export class UsersController {
     @Query(new ZodValidationPipe(ListUsersQuerySchema)) query: ListUsersQueryDto,
   ) {
     const data = await this.users.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("users", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.users.summary(companyId, branchId || undefined);
     return { data };
   }
 

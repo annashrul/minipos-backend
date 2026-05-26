@@ -4,6 +4,8 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   ClosePurchaseDto,
   ClosePurchaseResponse,
@@ -12,7 +14,6 @@ import type {
   GoodsReceiptResponse,
   ListPurchaseTransactionLogQueryDto,
   ListPurchasesQueryDto,
-  PurchaseListResponse,
   PurchaseOrderDetailResponse,
   PurchaseOrderItemResponse,
   PurchaseOrderResponse,
@@ -24,7 +25,7 @@ import type {
   ReceivePurchaseResponse,
   UpdatePurchaseDto,
   UpdatePurchaseStatusDto,
-} from "@/contracts";
+} from "./dto/purchases.dto";
 import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
@@ -142,25 +143,22 @@ export class PurchasesService {
   async list(
     companyId: string,
     query: ListPurchasesQueryDto,
-  ): Promise<PurchaseListResponse> {
+  ): Promise<PaginatedResponse<PurchaseOrderResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
       this.prisma.purchaseOrder.findMany({
         where,
         select: PO_SELECT,
         orderBy: { orderDate: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.purchaseOrder.count({ where }),
     ]);
 
-    return {
-      purchases: rows.map(toPurchaseResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toPurchaseResponse), total, page, perPage);
   }
 
   async summary(
@@ -1267,7 +1265,14 @@ export class PurchasesService {
   ): Prisma.PurchaseOrderWhereInput {
     const { search, status, supplierId, branchId, from, to } = query;
     const where: Prisma.PurchaseOrderWhereInput = this.tenantWhere(companyId);
-    if (status) where.status = status;
+    if (status) {
+      const statuses = typeof status === "string" && status.includes(",")
+        ? status.split(",").map((s) => s.trim())
+        : Array.isArray(status) ? status : [status];
+      where.status = statuses.length > 1
+        ? { in: statuses as Prisma.EnumPurchaseOrderStatusFilter["in"] }
+        : (statuses[0] as Prisma.EnumPurchaseOrderStatusFilter);
+    }
     if (supplierId) where.supplierId = supplierId;
     if (branchId) where.branchId = branchId;
     if (search) {

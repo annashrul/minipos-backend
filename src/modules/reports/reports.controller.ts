@@ -12,7 +12,7 @@ import {
   type ProductReportQueryDto,
   type ProfitLossReportQueryDto,
   type SalesReportQueryDto,
-} from "@/contracts";
+} from "./dto/reports.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

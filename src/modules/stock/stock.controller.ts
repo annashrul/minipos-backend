@@ -13,11 +13,11 @@ import {
   ListStockMovementsQuerySchema,
   StockCardQuerySchema,
   type AdjustStockDto,
-  type AuthUser,
   type ListBranchStockQueryDto,
   type ListStockMovementsQueryDto,
   type StockCardQueryDto,
-} from "@/contracts";
+} from "./dto/stock.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -38,6 +38,16 @@ export class StockController {
     query: ListStockMovementsQueryDto,
   ) {
     const data = await this.stock.listMovements(companyId, query);
+    return { data };
+  }
+
+  @Get("movements/summary")
+  @RequireAccess("stock", "view")
+  async movementSummary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.stock.movementSummary(companyId, branchId);
     return { data };
   }
 

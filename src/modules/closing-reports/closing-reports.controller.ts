@@ -16,7 +16,7 @@ import {
   type ListClosingReportsQueryDto,
   type RecloseShiftDto,
   type UpdateClosingReportDto,
-} from "@/contracts";
+} from "./dto/closing-reports.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

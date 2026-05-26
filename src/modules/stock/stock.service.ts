@@ -3,7 +3,9 @@
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, type StockMovementType } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   AdjustStockDto,
   BranchStockListResponse,
@@ -13,12 +15,19 @@ import type {
   StockCardEntry,
   StockCardQueryDto,
   StockCardResponse,
-  StockMovementListResponse,
   StockMovementResponse,
-} from "@/contracts";
+} from "./dto/stock.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+
+const TYPE_GROUPS: Record<string, StockMovementType[]> = {
+  IN: ["IN", "MANUAL_IN", "PURCHASE_RECEIVE", "RETURN_IN"],
+  OUT: ["OUT", "MANUAL_OUT", "SALE", "RETURN_OUT", "WASTE", "RECIPE_DEDUCT", "RTV"],
+  ADJUSTMENT: ["ADJUSTMENT", "OPNAME_ADJUSTMENT"],
+  TRANSFER: ["TRANSFER", "TRANSFER_IN", "TRANSFER_OUT"],
+  OPNAME: ["OPNAME"],
+};
 
 const MOVEMENT_SELECT = {
   id: true,
@@ -70,7 +79,7 @@ export class StockService {
   async listMovements(
     companyId: string,
     query: ListStockMovementsQueryDto,
-  ): Promise<StockMovementListResponse> {
+  ): Promise<PaginatedResponse<StockMovementResponse>> {
     const { productId, branchId, type, refType, reference, from, to, page, perPage } =
       query;
 
@@ -79,7 +88,10 @@ export class StockService {
     };
     if (productId) where.productId = productId;
     if (branchId) where.branchId = branchId;
-    if (type) where.type = type;
+    if (type) {
+      const group = TYPE_GROUPS[type as string];
+      where.type = group ? { in: group } : type;
+    }
     if (refType) where.refType = refType;
     if (reference) {
       where.reference = { contains: reference, mode: "insensitive" };
@@ -101,10 +113,35 @@ export class StockService {
       this.prisma.stockMovement.count({ where }),
     ]);
 
+    return paginate(rows.map(toMovementResponse), total, page, perPage);
+  }
+
+  async movementSummary(
+    companyId: string,
+    branchId?: string,
+  ) {
+    const where: Prisma.StockMovementWhereInput = {
+      product: { companyId },
+      ...(branchId ? { branchId } : {}),
+    };
+
+    const [inCount, outCount, adjCount, transferCount, opnameCount, total] =
+      await Promise.all([
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.IN } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.OUT } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.ADJUSTMENT } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.TRANSFER } } }),
+        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.OPNAME } } }),
+        this.prisma.stockMovement.count({ where }),
+      ]);
+
     return {
-      movements: rows.map(toMovementResponse),
       total,
-      totalPages: Math.ceil(total / perPage),
+      inCount,
+      outCount,
+      adjCount,
+      transferCount,
+      opnameCount,
     };
   }
 

@@ -16,7 +16,7 @@ import {
   type CreateAccountDto,
   type ListAccountsQueryDto,
   type UpdateAccountDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
 import { ZodValidationPipe } from "../../../common/pipes/zod.pipe";
 import { AccessGuard } from "../../auth/access.guard";
 import { CurrentCompany } from "../../auth/current-company.decorator";

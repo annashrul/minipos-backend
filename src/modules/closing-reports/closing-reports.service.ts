@@ -12,7 +12,7 @@ import type {
   PaymentSummaryEntry,
   RecloseShiftDto,
   UpdateClosingReportDto,
-} from "@/contracts";
+} from "./dto/closing-reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const CLOSING_REPORT_SELECT = {

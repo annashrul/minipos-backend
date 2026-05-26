@@ -13,14 +13,15 @@ import type {
   ListRacksQueryDto,
   ProductRackLookupResponse,
   RackDetailResponse,
-  RackListResponse,
   RackMovementListResponse,
   RackResponse,
   ReportDiscrepancyDto,
   SetRackStockDto,
   TransferRackStockDto,
   UpdateRackDto,
-} from "@/contracts";
+} from "./dto/racks.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const RACK_SELECT = {
@@ -42,10 +43,21 @@ type RawRack = Prisma.RackGetPayload<{ select: typeof RACK_SELECT }>;
 export class RacksService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async summary(companyId: string, branchId?: string) {
+    const where: Prisma.RackWhereInput = { companyId };
+    if (branchId) where.branchId = branchId;
+    const [total, active, inactive] = await Promise.all([
+      this.prisma.rack.count({ where }),
+      this.prisma.rack.count({ where: { ...where, isActive: true } }),
+      this.prisma.rack.count({ where: { ...where, isActive: false } }),
+    ]);
+    return { total, active, inactive };
+  }
+
   async list(
     companyId: string,
     query: ListRacksQueryDto,
-  ): Promise<RackListResponse> {
+  ): Promise<PaginatedResponse<RackResponse>> {
     const { search, branchId, isActive, page, perPage } = query;
     const where: Prisma.RackWhereInput = { companyId };
     if (branchId) where.branchId = branchId;
@@ -121,11 +133,7 @@ export class RacksService {
       }),
     );
 
-    return {
-      racks: rows.map((r) => toRackResponse(r, stockMap.get(r.id))),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map((r) => toRackResponse(r, stockMap.get(r.id))), total, page, perPage);
   }
 
   async findById(

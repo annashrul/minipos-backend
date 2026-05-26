@@ -9,19 +9,19 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CreateGiftCardSchema,
   ListGiftCardsQuerySchema,
   RedeemGiftCardSchema,
   TopupGiftCardSchema,
   UpdateGiftCardSchema,
-  type AuthUser,
   type CreateGiftCardDto,
   type ListGiftCardsQueryDto,
   type RedeemGiftCardDto,
   type TopupGiftCardDto,
   type UpdateGiftCardDto,
-} from "@/contracts";
+} from "./dto/gift-cards.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -42,6 +42,16 @@ export class GiftCardsController {
     query: ListGiftCardsQueryDto,
   ) {
     const data = await this.giftCards.list(companyId, query);
+    return { data };
+  }
+
+  @Get("stats")
+  @RequireAccess("gift-cards", "view")
+  async stats(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.giftCards.stats(companyId, branchId);
     return { data };
   }
 

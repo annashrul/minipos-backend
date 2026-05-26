@@ -8,17 +8,17 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CashMovementSchema,
   CloseShiftSchema,
   ListShiftsQuerySchema,
   OpenShiftSchema,
-  type AuthUser,
   type CashMovementDto,
   type CloseShiftDto,
   type ListShiftsQueryDto,
   type OpenShiftDto,
-} from "@/contracts";
+} from "./dto/shifts.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

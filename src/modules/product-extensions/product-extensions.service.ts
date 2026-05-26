@@ -19,13 +19,19 @@ import type {
   UpdateBranchPriceDto,
   UpdateProductUnitDto,
   UpdateTierPriceDto,
+} from "./dto/product-extensions.dto";
+import type {
   ProductVariantResponse,
   ProductVariantListResponse,
   ReplaceProductVariantsDto,
+} from "./dto/product-variants.dto";
+import type {
   ProductBranchSkuResponse,
   ProductBranchSkuListResponse,
   ReplaceProductBranchSkusDto,
-} from "@/contracts";
+} from "./dto/product-branch-skus.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const UNIT_SELECT = {
@@ -324,6 +330,79 @@ export class ProductExtensionsService {
   // ============================================================
   // BRANCH PRODUCT PRICES
   // ============================================================
+
+  async productsWithBranchPrices(
+    companyId: string,
+    query: { branchId: string; search?: string; page?: number; perPage?: number },
+  ) {
+    const { branchId, search, page = 1, perPage = 20 } = query;
+
+    const where: Prisma.ProductWhereInput = {
+      companyId,
+      isActive: true,
+      deletedAt: null,
+    };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { code: { contains: search, mode: "insensitive" } },
+        { barcode: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [products, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          sellingPrice: true,
+          purchasePrice: true,
+          stock: true,
+          unit: true,
+          barcode: true,
+          imageUrl: true,
+          category: { select: { id: true, name: true } },
+          branchPrices: {
+            where: { branchId },
+            select: {
+              id: true,
+              sellingPrice: true,
+              purchasePrice: true,
+            },
+            take: 1,
+          },
+        },
+        orderBy: { name: "asc" },
+        skip: (page - 1) * perPage,
+        take: perPage,
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    const items = products.map((p) => {
+      const bp = p.branchPrices[0] ?? null;
+      return {
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        sellingPrice: p.sellingPrice,
+        purchasePrice: p.purchasePrice,
+        stock: p.stock,
+        unit: p.unit,
+        barcode: p.barcode,
+        imageUrl: p.imageUrl,
+        category: p.category,
+        branchPriceId: bp?.id ?? null,
+        branchSellingPrice: bp?.sellingPrice ?? null,
+        branchPurchasePrice: bp?.purchasePrice ?? null,
+        hasCustomPrice: bp !== null,
+      };
+    });
+
+    return paginate(items, total, page, perPage);
+  }
 
   async listBranchPrices(
     companyId: string,

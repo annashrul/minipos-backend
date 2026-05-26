@@ -8,12 +8,13 @@ import type {
   BulkCreateEmployeeScheduleResponse,
   BulkCreateEmployeeSchedulesDto,
   CreateEmployeeScheduleDto,
-  EmployeeScheduleListResponse,
   EmployeeScheduleResponse,
   ListEmployeeSchedulesQueryDto,
   ScheduleStatusDto,
   UpdateEmployeeScheduleDto,
-} from "@/contracts";
+} from "./dto/employee-schedules.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const SCHEDULE_SELECT = {
@@ -57,7 +58,7 @@ export class EmployeeSchedulesService {
   async list(
     companyId: string,
     query: ListEmployeeSchedulesQueryDto,
-  ): Promise<EmployeeScheduleListResponse> {
+  ): Promise<PaginatedResponse<EmployeeScheduleResponse>> {
     const { search, userId, branchId, status, from, to, page, perPage } =
       query;
 
@@ -95,11 +96,7 @@ export class EmployeeSchedulesService {
       this.prisma.employeeSchedule.count({ where }),
     ]);
 
-    return {
-      schedules: rows.map(toScheduleResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toScheduleResponse), total, page, perPage);
   }
 
   async findById(

@@ -10,7 +10,7 @@ import {
 import {
   ReplaceProductVariantsSchema,
   type ReplaceProductVariantsDto,
-} from "@/contracts";
+} from "./dto/product-variants.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

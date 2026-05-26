@@ -3,7 +3,7 @@ import type {
   AccessMenuDto,
   MeAccessMatrixResponse,
   MeMenusResponse,
-} from "@/contracts";
+} from "./dto/me.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

@@ -12,11 +12,11 @@ import {
   AutoAwardBadgesSchema,
   CreateCashierBadgeSchema,
   ListCashierBadgesQuerySchema,
-  type AuthUser,
   type AutoAwardBadgesDto,
   type CreateCashierBadgeDto,
   type ListCashierBadgesQueryDto,
-} from "@/contracts";
+} from "./dto/cashier.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

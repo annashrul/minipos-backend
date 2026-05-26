@@ -34,7 +34,7 @@ import type {
   TrialBalanceQueryDto,
   TrialBalanceResponse,
   TrialBalanceRowResponse,
-} from "@/contracts";
+} from "./dto/accounting-reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 // ===========================

@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { type AuthUser } from "@/contracts";
 import {
   CreateSalesTargetSchema,
   EvaluateBadgesSchema,
@@ -16,14 +17,13 @@ import {
   LeaderboardQuerySchema,
   ListSalesTargetsQuerySchema,
   UpdateSalesTargetSchema,
-  type AuthUser,
   type CreateSalesTargetDto,
   type EvaluateBadgesDto,
   type GetSalesBadgesQueryDto,
   type LeaderboardQueryDto,
   type ListSalesTargetsQueryDto,
   type UpdateSalesTargetDto,
-} from "@/contracts";
+} from "./dto/sales-targets.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

@@ -18,7 +18,7 @@ import {
   type ListPromotionsQueryDto,
   type TogglePromotionDto,
   type UpdatePromotionDto,
-} from "@/contracts";
+} from "./dto/promotions.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -38,6 +38,13 @@ export class PromotionsController {
     query: ListPromotionsQueryDto,
   ) {
     const data = await this.promotions.list(companyId, query);
+    return { data };
+  }
+
+  @Get("stats")
+  @RequireAccess("promotions", "view")
+  async stats(@CurrentCompany() companyId: string) {
+    const data = await this.promotions.stats(companyId);
     return { data };
   }
 

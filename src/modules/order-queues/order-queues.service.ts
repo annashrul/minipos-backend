@@ -9,10 +9,11 @@ import type {
   CreateOrderQueueFromTransactionDto,
   ListOrderQueuesQueryDto,
   OrderQueueItemStatusDto,
-  OrderQueueListResponse,
   OrderQueueResponse,
   OrderQueueStatusDto,
-} from "@/contracts";
+} from "./dto/order-queues.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const QUEUE_SELECT = {
@@ -56,7 +57,7 @@ export class OrderQueuesService {
   async list(
     companyId: string,
     query: ListOrderQueuesQueryDto,
-  ): Promise<OrderQueueListResponse> {
+  ): Promise<PaginatedResponse<OrderQueueResponse>> {
     const { branchId, status, tableId, from, to, page, perPage } = query;
 
     const where: Prisma.OrderQueueWhereInput = {
@@ -85,11 +86,7 @@ export class OrderQueuesService {
       this.prisma.orderQueue.count({ where }),
     ]);
 
-    return {
-      orders: rows.map(toQueueResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toQueueResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<OrderQueueResponse> {

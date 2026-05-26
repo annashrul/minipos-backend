@@ -1,4 +1,4 @@
-﻿import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -11,45 +11,22 @@ import type {
   ListVouchersQueryDto,
   RedeemVoucherDto,
   VoucherGenerateResponse,
-  VoucherListResponse,
   VoucherResponse,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-
-const VOUCHER_SELECT = {
-  id: true,
-  code: true,
-  promotionId: true,
-  isUsed: true,
-  usedBy: true,
-  usedAt: true,
-  expiresAt: true,
-  createdAt: true,
-  promotion: {
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      value: true,
-      voucherCode: true,
-      isActive: true,
-      companyId: true,
-    },
-  },
-} satisfies Prisma.VoucherSelect;
-
-type RawVoucher = Prisma.VoucherGetPayload<{ select: typeof VOUCHER_SELECT }>;
+} from "./dto/vouchers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import { VouchersRepository, type RawVoucher } from "./vouchers.repository";
 
 const MAX_GENERATE_ATTEMPTS = 5;
 
 @Injectable()
 export class VouchersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: VouchersRepository) {}
 
   async list(
     companyId: string,
     query: ListVouchersQueryDto,
-  ): Promise<VoucherListResponse> {
+  ): Promise<PaginatedResponse<VoucherResponse>> {
     const { promotionId, isUsed, search, page, perPage } = query;
 
     const where: Prisma.VoucherWhereInput = {
@@ -62,28 +39,15 @@ export class VouchersService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.voucher.findMany({
-        where,
-        select: VOUCHER_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.voucher.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    return {
-      vouchers: rows.map(toVoucherResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toVoucherResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<VoucherResponse> {
-    const voucher = await this.prisma.voucher.findFirst({
-      where: { id, promotion: { companyId } },
-      select: VOUCHER_SELECT,
-    });
+    const voucher = await this.repo.findOne({ id, promotion: { companyId } });
     if (!voucher) throw new NotFoundException("Voucher not found");
     return toVoucherResponse(voucher);
   }
@@ -92,9 +56,9 @@ export class VouchersService {
     companyId: string,
     code: string,
   ): Promise<VoucherResponse | null> {
-    const voucher = await this.prisma.voucher.findFirst({
-      where: { code, promotion: { companyId } },
-      select: VOUCHER_SELECT,
+    const voucher = await this.repo.findOne({
+      code,
+      promotion: { companyId },
     });
     return voucher ? toVoucherResponse(voucher) : null;
   }
@@ -103,10 +67,7 @@ export class VouchersService {
     companyId: string,
     dto: GenerateVouchersDto,
   ): Promise<VoucherGenerateResponse> {
-    const promotion = await this.prisma.promotion.findFirst({
-      where: { id: dto.promotionId, companyId },
-      select: { id: true },
-    });
+    const promotion = await this.repo.findPromotion(companyId, dto.promotionId);
     if (!promotion) throw new NotFoundException("Promotion not found");
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
@@ -115,11 +76,7 @@ export class VouchersService {
       while (codes.size < dto.count) {
         codes.add(buildVoucherCode(dto.prefix));
       }
-      // De-duplicate against existing DB codes
-      const existing = await this.prisma.voucher.findMany({
-        where: { code: { in: Array.from(codes) } },
-        select: { code: true },
-      });
+      const existing = await this.repo.findExistingCodes(Array.from(codes));
       if (existing.length === 0) break;
       for (const row of existing) codes.delete(row.code);
     }
@@ -132,13 +89,13 @@ export class VouchersService {
 
     const list = Array.from(codes);
     try {
-      const result = await this.prisma.voucher.createMany({
-        data: list.map((code) => ({
+      const result = await this.repo.createMany(
+        list.map((code) => ({
           code,
           promotionId: dto.promotionId,
           expiresAt,
         })),
-      });
+      );
       return { created: result.count, codes: list };
     } catch (err) {
       if (
@@ -156,13 +113,9 @@ export class VouchersService {
     id: string,
     dto: RedeemVoucherDto,
   ): Promise<VoucherResponse> {
-    const voucher = await this.prisma.voucher.findFirst({
-      where: { id, promotion: { companyId } },
-      select: {
-        id: true,
-        isUsed: true,
-        expiresAt: true,
-      },
+    const voucher = await this.repo.findMeta({
+      id,
+      promotion: { companyId },
     });
     if (!voucher) throw new NotFoundException("Voucher not found");
     if (voucher.isUsed) {
@@ -172,22 +125,18 @@ export class VouchersService {
       throw new BadRequestException("Voucher sudah kedaluwarsa");
     }
 
-    const updated = await this.prisma.voucher.update({
-      where: { id },
-      data: {
-        isUsed: true,
-        usedAt: new Date(),
-        usedBy: dto.usedBy ?? null,
-      },
-      select: VOUCHER_SELECT,
+    const updated = await this.repo.update(id, {
+      isUsed: true,
+      usedAt: new Date(),
+      usedBy: dto.usedBy ?? null,
     });
     return toVoucherResponse(updated);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const voucher = await this.prisma.voucher.findFirst({
-      where: { id, promotion: { companyId } },
-      select: { id: true, isUsed: true },
+    const voucher = await this.repo.findMeta({
+      id,
+      promotion: { companyId },
     });
     if (!voucher) throw new NotFoundException("Voucher not found");
     if (voucher.isUsed) {
@@ -195,7 +144,7 @@ export class VouchersService {
         "Voucher yang sudah digunakan tidak bisa dihapus",
       );
     }
-    await this.prisma.voucher.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

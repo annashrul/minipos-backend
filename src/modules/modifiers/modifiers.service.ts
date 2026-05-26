@@ -8,11 +8,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import type {
   CreateModifierGroupDto,
   ListModifierGroupsQueryDto,
-  ModifierGroupListResponse,
   ModifierGroupResponse,
   UpdateModifierGroupDto,
   AttachProductModifierDto,
-} from "@/contracts";
+} from "./dto/modifiers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 
 const GROUP_INCLUDE = {
   options: {
@@ -57,7 +58,7 @@ export class ModifiersService {
   async list(
     companyId: string,
     query: ListModifierGroupsQueryDto,
-  ): Promise<ModifierGroupListResponse> {
+  ): Promise<PaginatedResponse<ModifierGroupResponse>> {
     const { search, isActive, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.ModifierGroupWhereInput = { companyId };
     if (search) where.name = { contains: search, mode: "insensitive" };
@@ -88,11 +89,7 @@ export class ModifiersService {
       this.prisma.modifierGroup.count({ where }),
     ]);
 
-    return {
-      groups: rows.map(toGroupResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toGroupResponse), total, page, perPage);
   }
 
   async findById(
@@ -263,6 +260,15 @@ export class ModifiersService {
     if (!group) throw new NotFoundException("Modifier group not found");
     await this.prisma.modifierGroup.delete({ where: { id } });
     return { success: true as const };
+  }
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, active] = await Promise.all([
+      this.prisma.modifierGroup.count({ where }),
+      this.prisma.modifierGroup.count({ where: { ...where, isActive: true } }),
+    ]);
+    return { total, active, inactive: total - active };
   }
 
   // â”€â”€ Product attachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

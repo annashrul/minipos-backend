@@ -16,7 +16,7 @@ import {
   type CreateCategoryDto,
   type ListCategoriesQueryDto,
   type UpdateCategoryDto,
-} from "@/contracts";
+} from "./dto/categories.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -36,6 +36,13 @@ export class CategoriesController {
     query: ListCategoriesQueryDto,
   ) {
     const data = await this.categories.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("categories", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.categories.summary(companyId);
     return { data };
   }
 

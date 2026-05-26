@@ -10,10 +10,10 @@ import {
 import {
   WhatsappBotConfigUpdateSchema,
   WhatsappBotTestSchema,
-  type AuthUser,
   type WhatsappBotConfigUpdateDto,
   type WhatsappBotTestDto,
-} from "@/contracts";
+} from "./dto/whatsapp-bot.dto";
+import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentUser } from "../auth/current-user.decorator";

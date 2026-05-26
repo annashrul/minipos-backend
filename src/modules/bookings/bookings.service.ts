@@ -14,7 +14,7 @@ import type {
   ListBookingsQueryDto,
   TransitionBookingStatusDto,
   UpdateBookingDto,
-} from "@/contracts";
+} from "./dto/bookings.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 

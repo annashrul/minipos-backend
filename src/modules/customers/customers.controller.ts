@@ -16,7 +16,7 @@ import {
   type CreateCustomerDto,
   type ListCustomersQueryDto,
   type UpdateCustomerDto,
-} from "@/contracts";
+} from "./dto/customers.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -36,6 +36,13 @@ export class CustomersController {
     query: ListCustomersQueryDto,
   ) {
     const data = await this.customers.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("customers", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.customers.summary(companyId);
     return { data };
   }
 

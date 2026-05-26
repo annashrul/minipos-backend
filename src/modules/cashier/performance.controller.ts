@@ -2,10 +2,10 @@
 import {
   CashierPerformanceLeaderboardQuerySchema,
   CashierPerformanceQuerySchema,
-  type AuthUser,
   type CashierPerformanceLeaderboardQueryDto,
   type CashierPerformanceQueryDto,
-} from "@/contracts";
+} from "./dto/cashier.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

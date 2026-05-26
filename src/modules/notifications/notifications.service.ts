@@ -2,7 +2,7 @@
 import type {
   NotificationExpiringListResponse,
   NotificationLowStockListResponse,
-} from "@/contracts";
+} from "./dto/notifications.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 /**

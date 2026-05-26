@@ -16,7 +16,7 @@ import type {
   SetPlanActionAccessDto,
   SetPlanMenuAccessDto,
   UpdatePlanAccessDto,
-} from "@/contracts";
+} from "./dto/plans.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 

@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -7,34 +7,35 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateSupplierDto,
   ListSuppliersQueryDto,
-  SupplierListResponse,
   SupplierResponse,
   UpdateSupplierDto,
-} from "@/contracts";
+} from "./dto/suppliers.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import { SuppliersRepository, type RawSupplier } from "./suppliers.repository";
 import { PrismaService } from "../prisma/prisma.service";
-
-const SUPPLIER_SELECT = {
-  id: true,
-  name: true,
-  contact: true,
-  address: true,
-  email: true,
-  isActive: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { products: true } },
-} satisfies Prisma.SupplierSelect;
-
-type RawSupplier = Prisma.SupplierGetPayload<{ select: typeof SUPPLIER_SELECT }>;
 
 @Injectable()
 export class SuppliersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: SuppliersRepository,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, active, withProducts] = await Promise.all([
+      this.prisma.supplier.count({ where }),
+      this.prisma.supplier.count({ where: { ...where, isActive: true } }),
+      this.prisma.supplier.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, active, inactive: total - active, withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListSuppliersQueryDto,
-  ): Promise<SupplierListResponse> {
+  ): Promise<PaginatedResponse<SupplierResponse>> {
     const { search, isActive, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.SupplierWhereInput = { companyId };
     if (search) {
@@ -64,28 +65,15 @@ export class SuppliersService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.supplier.findMany({
-        where,
-        select: SUPPLIER_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.supplier.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    return {
-      suppliers: rows.map(toSupplierResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toSupplierResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<SupplierResponse> {
-    const supplier = await this.prisma.supplier.findFirst({
-      where: { id, companyId },
-      select: SUPPLIER_SELECT,
-    });
+    const supplier = await this.repo.findOne({ id, companyId });
     if (!supplier) throw new NotFoundException("Supplier not found");
     return toSupplierResponse(supplier);
   }
@@ -94,16 +82,13 @@ export class SuppliersService {
     companyId: string,
     dto: CreateSupplierDto,
   ): Promise<SupplierResponse> {
-    const created = await this.prisma.supplier.create({
-      data: {
-        name: dto.name,
-        contact: dto.contact ?? null,
-        address: dto.address ?? null,
-        email: dto.email ?? null,
-        isActive: dto.isActive ?? true,
-        companyId,
-      },
-      select: SUPPLIER_SELECT,
+    const created = await this.repo.create({
+      name: dto.name,
+      contact: dto.contact ?? null,
+      address: dto.address ?? null,
+      email: dto.email ?? null,
+      isActive: dto.isActive ?? true,
+      companyId,
     });
     return toSupplierResponse(created);
   }
@@ -113,10 +98,7 @@ export class SuppliersService {
     id: string,
     dto: UpdateSupplierDto,
   ): Promise<SupplierResponse> {
-    const existing = await this.prisma.supplier.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findOne({ id, companyId });
     if (!existing) throw new NotFoundException("Supplier not found");
 
     const data: Prisma.SupplierUpdateInput = {};
@@ -126,26 +108,19 @@ export class SuppliersService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
-    const updated = await this.prisma.supplier.update({
-      where: { id },
-      data,
-      select: SUPPLIER_SELECT,
-    });
+    const updated = await this.repo.update(id, data);
     return toSupplierResponse(updated);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.supplier.findFirst({
-      where: { id, companyId },
-      select: { id: true, _count: { select: { products: true } } },
-    });
+    const existing = await this.repo.findWithCounts(companyId, id);
     if (!existing) throw new NotFoundException("Supplier not found");
     if (existing._count.products > 0) {
       throw new BadRequestException(
         `Supplier masih dipakai ${existing._count.products} produk`,
       );
     }
-    await this.prisma.supplier.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

@@ -14,7 +14,6 @@ import {
   TrialBalanceQuerySchema,
   type AccountingAgingQueryDto,
   type AccountingDashboardQueryDto,
-  type AuthUser,
   type BalanceSheetQueryDto,
   type CashFlowQueryDto,
   type ClosingChecklistQueryDto,
@@ -25,7 +24,8 @@ import {
   type IncomeStatementQueryDto,
   type TaxSummaryQueryDto,
   type TrialBalanceQueryDto,
-} from "@/contracts";
+} from "./dto/accounting-reports.dto";
+import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

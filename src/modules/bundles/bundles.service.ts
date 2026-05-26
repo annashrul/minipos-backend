@@ -6,12 +6,13 @@
 import { Prisma } from "@prisma/client";
 import type {
   BundleItemInputDto,
-  BundleListResponse,
   BundleResponse,
   CreateBundleDto,
   ListBundlesQueryDto,
   UpdateBundleDto,
-} from "@/contracts";
+} from "./dto/bundles.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
@@ -65,7 +66,7 @@ export class BundlesService {
   async list(
     companyId: string,
     query: ListBundlesQueryDto,
-  ): Promise<BundleListResponse> {
+  ): Promise<PaginatedResponse<BundleResponse>> {
     const {
       search,
       categoryId,
@@ -118,11 +119,7 @@ export class BundlesService {
       this.prisma.productBundle.count({ where }),
     ]);
 
-    return {
-      bundles: rows.map(toBundleResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBundleResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<BundleResponse> {

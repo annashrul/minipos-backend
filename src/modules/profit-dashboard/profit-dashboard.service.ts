@@ -7,7 +7,7 @@ import type {
   ProfitOverviewResponse,
   ProfitPeriodDto,
   ProfitTrendEntry,
-} from "@/contracts";
+} from "./dto/profit-dashboard.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 type Period = ProfitPeriodDto;

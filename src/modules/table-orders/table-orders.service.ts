@@ -20,7 +20,7 @@ import type {
   TablePaymentResponse,
   TableSessionListResponse,
   TableSessionResponse,
-} from "@/contracts";
+} from "./dto/table-orders.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
 

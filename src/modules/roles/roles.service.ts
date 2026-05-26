@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -10,95 +10,61 @@ import type {
   ListRolesQueryDto,
   MenuTreeResponse,
   RoleDetailResponse,
-  RoleListResponse,
   RoleResponse,
   ToggleRoleActionPermissionDto,
   ToggleRoleMenuPermissionDto,
   UpdateRoleDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
+} from "./dto/roles.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import { RolesRepository, type RawRole } from "./roles.repository";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-
-const ROLE_SELECT = {
-  id: true,
-  key: true,
-  name: true,
-  description: true,
-  color: true,
-  isSystem: true,
-  isActive: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.AppRoleSelect;
-
-type RawRole = Prisma.AppRoleGetPayload<{ select: typeof ROLE_SELECT }>;
 
 @Injectable()
 export class RolesService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: RolesRepository,
     private readonly realtime: RealtimeService,
   ) {}
 
   async list(
     companyId: string,
     query: ListRolesQueryDto,
-  ): Promise<RoleListResponse> {
+  ): Promise<PaginatedResponse<RoleResponse>> {
     const { search, page, perPage } = query;
     const where: Prisma.AppRoleWhereInput = {};
     if (search) where.name = { contains: search, mode: "insensitive" };
 
     const [rows, total] = await Promise.all([
-      this.prisma.appRole.findMany({
-        where,
-        select: ROLE_SELECT,
-        orderBy: [{ isSystem: "desc" }, { name: "asc" }],
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.appRole.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    const userCounts = await this.countUsersForRoles(
+    const userCounts = await this.repo.countUsersForRoles(
       companyId,
       rows.map((r) => r.key),
     );
 
-    return {
-      roles: rows.map((r) => toRoleResponse(r, userCounts.get(r.key) ?? 0)),
+    return paginate(
+      rows.map((r) => toRoleResponse(r, userCounts.get(r.key) ?? 0)),
       total,
-      totalPages: Math.ceil(total / perPage),
-    };
+      page,
+      perPage,
+    );
   }
 
   async findById(
     companyId: string,
     id: string,
   ): Promise<RoleDetailResponse> {
-    const role = await this.prisma.appRole.findUnique({
-      where: { id },
-      select: ROLE_SELECT,
-    });
+    const role = await this.repo.findById(id);
     if (!role) throw new NotFoundException("Role tidak ditemukan");
 
     const [menus, menuPerms, actionPerms, userCount] = await Promise.all([
-      this.prisma.appMenu.findMany({
-        select: {
-          id: true,
-          actions: { select: { id: true } },
-        },
-      }),
-      this.prisma.roleMenuPermission.findMany({
-        where: { role: role.key },
-        select: { menuId: true, allowed: true },
-      }),
-      this.prisma.roleActionPermission.findMany({
-        where: { role: role.key },
-        select: { menuActionId: true, allowed: true },
-      }),
-      this.prisma.user.count({
-        where: { role: role.key, companyId, deletedAt: null },
-      }),
+      this.repo.findMenusWithActions(),
+      this.repo.findMenuPermissions(role.key),
+      this.repo.findActionPermissions(role.key),
+      this.repo.countUsersByRole(companyId, role.key),
     ]);
 
     const menuPermMap = new Map(
@@ -127,7 +93,7 @@ export class RolesService {
   }
 
   async create(
-    _companyId: string,
+    companyId: string,
     dto: CreateRoleDto,
   ): Promise<RoleDetailResponse> {
     const key = generateRoleKey(dto.name);
@@ -138,7 +104,7 @@ export class RolesService {
     await this.assertReferences(dto.menuPermissions, dto.actionPermissions);
 
     try {
-      const role = await this.prisma.$transaction(async (tx) => {
+      const role = await this.repo.tx.$transaction(async (tx) => {
         const created = await tx.appRole.create({
           data: {
             key,
@@ -147,7 +113,7 @@ export class RolesService {
             color: dto.color ?? null,
             isSystem: false,
           },
-          select: ROLE_SELECT,
+          select: { id: true, key: true },
         });
 
         if (dto.menuPermissions.length > 0) {
@@ -176,7 +142,7 @@ export class RolesService {
       });
 
       this.realtime.emit(EVENTS.MENU_ACCESS_UPDATED, { role: role.key });
-      return this.findById(_companyId, role.id);
+      return this.findById(companyId, role.id);
     } catch (err) {
       throwOnDup(err);
       throw err;
@@ -188,10 +154,7 @@ export class RolesService {
     id: string,
     dto: UpdateRoleDto,
   ): Promise<RoleDetailResponse> {
-    const existing = await this.prisma.appRole.findUnique({
-      where: { id },
-      select: { id: true, key: true, isSystem: true },
-    });
+    const existing = await this.repo.findMetaById(id);
     if (!existing) throw new NotFoundException("Role tidak ditemukan");
     if (existing.isSystem) {
       throw new BadRequestException("Role sistem tidak bisa diubah");
@@ -212,7 +175,7 @@ export class RolesService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     try {
-      await this.prisma.$transaction(async (tx) => {
+      await this.repo.tx.$transaction(async (tx) => {
         if (Object.keys(data).length > 0) {
           await tx.appRole.update({ where: { id }, data });
         }
@@ -261,23 +224,18 @@ export class RolesService {
   }
 
   async delete(_companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.appRole.findUnique({
-      where: { id },
-      select: { id: true, key: true, isSystem: true },
-    });
+    const existing = await this.repo.findMetaById(id);
     if (!existing) throw new NotFoundException("Role tidak ditemukan");
     if (existing.isSystem) {
       throw new BadRequestException("Role sistem tidak bisa dihapus");
     }
 
-    const userCount = await this.prisma.user.count({
-      where: { role: existing.key, deletedAt: null },
-    });
+    const userCount = await this.repo.countUsersByRole(_companyId, existing.key);
     if (userCount > 0) {
       throw new BadRequestException(`Role masih dipakai ${userCount} user`);
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.repo.tx.$transaction(async (tx) => {
       await tx.roleMenuPermission.deleteMany({
         where: { role: existing.key },
       });
@@ -294,7 +252,7 @@ export class RolesService {
   async setMenuPermission(
     dto: ToggleRoleMenuPermissionDto,
   ): Promise<{ success: true }> {
-    await this.prisma.roleMenuPermission.upsert({
+    await this.repo.tx.roleMenuPermission.upsert({
       where: {
         role_menuId: { role: dto.role, menuId: dto.menuId },
       },
@@ -312,7 +270,7 @@ export class RolesService {
   async setActionPermission(
     dto: ToggleRoleActionPermissionDto,
   ): Promise<{ success: true }> {
-    await this.prisma.roleActionPermission.upsert({
+    await this.repo.tx.roleActionPermission.upsert({
       where: {
         role_menuActionId: {
           role: dto.role,
@@ -331,28 +289,7 @@ export class RolesService {
   }
 
   async listMenus(): Promise<MenuTreeResponse> {
-    const menus = await this.prisma.appMenu.findMany({
-      orderBy: [{ group: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-      select: {
-        id: true,
-        key: true,
-        name: true,
-        path: true,
-        group: true,
-        sortOrder: true,
-        isActive: true,
-        actions: {
-          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-          select: {
-            id: true,
-            key: true,
-            name: true,
-            sortOrder: true,
-            isActive: true,
-          },
-        },
-      },
-    });
+    const menus = await this.repo.listMenuTree();
 
     return {
       menus: menus.map((m) => ({
@@ -374,23 +311,6 @@ export class RolesService {
     };
   }
 
-  private async countUsersForRoles(
-    companyId: string,
-    keys: string[],
-  ): Promise<Map<string, number>> {
-    if (keys.length === 0) return new Map();
-    const grouped = await this.prisma.user.groupBy({
-      by: ["role"],
-      where: { role: { in: keys }, companyId, deletedAt: null },
-      _count: { _all: true },
-    });
-    const map = new Map<string, number>();
-    for (const g of grouped) {
-      map.set(g.role, g._count._all);
-    }
-    return map;
-  }
-
   private async assertReferences(
     menuPerms: { menuId: string }[],
     actionPerms: { menuActionId: string }[],
@@ -401,20 +321,14 @@ export class RolesService {
     );
 
     if (menuIds.length > 0) {
-      const found = await this.prisma.appMenu.findMany({
-        where: { id: { in: menuIds } },
-        select: { id: true },
-      });
+      const found = await this.repo.findMenusByIds(menuIds);
       if (found.length !== menuIds.length) {
         throw new NotFoundException("Sebagian menu tidak ditemukan");
       }
     }
 
     if (actionIds.length > 0) {
-      const found = await this.prisma.menuAction.findMany({
-        where: { id: { in: actionIds } },
-        select: { id: true },
-      });
+      const found = await this.repo.findActionsByIds(actionIds);
       if (found.length !== actionIds.length) {
         throw new NotFoundException("Sebagian action menu tidak ditemukan");
       }

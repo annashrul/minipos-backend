@@ -1,5 +1,5 @@
 ﻿import { Injectable } from "@nestjs/common";
-import type { PlatformDashboardStatsResponse } from "@/contracts";
+import type { PlatformDashboardStatsResponse } from "./dto/platform-dashboard.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

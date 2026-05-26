@@ -26,7 +26,7 @@ import {
   type SetRackStockDto,
   type TransferRackStockDto,
   type UpdateRackDto,
-} from "@/contracts";
+} from "./dto/racks.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -47,6 +47,16 @@ export class RacksController {
     query: ListRacksQueryDto,
   ) {
     const data = await this.racks.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("racks", "view")
+  async summary(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.racks.summary(companyId, branchId);
     return { data };
   }
 

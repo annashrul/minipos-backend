@@ -6,20 +6,21 @@
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import type {
   CreateReturnDto,
   ListReturnsQueryDto,
   RejectReturnDto,
   ReturnDetailResponse,
   ReturnItemResponse,
-  ReturnListResponse,
   ReturnResponse,
   ReturnSummaryResponse,
   SearchExchangeProductsQueryDto,
   SearchExchangeProductsResponse,
   SearchReturnTransactionQueryDto,
   SearchReturnTransactionResponse,
-} from "@/contracts";
+} from "./dto/returns.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const RETURN_SELECT = {
@@ -91,8 +92,9 @@ export class ReturnsService {
   async list(
     companyId: string,
     query: ListReturnsQueryDto,
-  ): Promise<ReturnListResponse> {
+  ): Promise<PaginatedResponse<ReturnResponse>> {
     const where = this.buildListWhere(companyId, query);
+    const { page, perPage } = query;
 
     const dir: "asc" | "desc" = query.sortDir ?? "asc";
     let orderBy: Prisma.ReturnExchangeOrderByWithRelationInput = {
@@ -115,17 +117,13 @@ export class ReturnsService {
         where,
         select: RETURN_SELECT,
         orderBy,
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.returnExchange.count({ where }),
     ]);
 
-    return {
-      returns: rows.map((r) => toReturnResponse(r, 0)),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map((r) => toReturnResponse(r, 0)), total, page, perPage);
   }
 
   async summary(

@@ -15,7 +15,7 @@ import type {
   ServiceOrderStatus,
   TransitionStatusDto,
   UpdateServiceOrderDto,
-} from "@/contracts";
+} from "./dto/service-order.dto";
 import {
   dayRange,
   nextDocumentNumber,

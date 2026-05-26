@@ -1,4 +1,4 @@
-﻿import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -9,68 +9,32 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateGiftCardDto,
   GiftCardDetailResponse,
-  GiftCardListResponse,
   GiftCardResponse,
   GiftCardTransactionResponse,
   ListGiftCardsQueryDto,
   RedeemGiftCardDto,
   TopupGiftCardDto,
   UpdateGiftCardDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-
-const GIFT_CARD_SELECT = {
-  id: true,
-  code: true,
-  initialBalance: true,
-  currentBalance: true,
-  status: true,
-  customerId: true,
-  customer: { select: { id: true, name: true, phone: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  companyId: true,
-  expiresAt: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.GiftCardSelect;
-
-const GIFT_CARD_DETAIL_SELECT = {
-  ...GIFT_CARD_SELECT,
-  transactions: {
-    select: {
-      id: true,
-      giftCardId: true,
-      type: true,
-      amount: true,
-      balanceBefore: true,
-      balanceAfter: true,
-      reference: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  },
-} satisfies Prisma.GiftCardSelect;
-
-type RawGiftCard = Prisma.GiftCardGetPayload<{
-  select: typeof GIFT_CARD_SELECT;
-}>;
-type RawGiftCardDetail = Prisma.GiftCardGetPayload<{
-  select: typeof GIFT_CARD_DETAIL_SELECT;
-}>;
+} from "./dto/gift-cards.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import {
+  GiftCardsRepository,
+  GIFT_CARD_DETAIL_SELECT,
+  type RawGiftCard,
+  type RawGiftCardDetail,
+} from "./gift-cards.repository";
 
 const MAX_GENERATE_ATTEMPTS = 5;
 
 @Injectable()
 export class GiftCardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: GiftCardsRepository) {}
 
   async list(
     companyId: string,
     query: ListGiftCardsQueryDto,
-  ): Promise<GiftCardListResponse> {
+  ): Promise<PaginatedResponse<GiftCardResponse>> {
     const {
       customerId,
       branchId,
@@ -112,30 +76,20 @@ export class GiftCardsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.giftCard.findMany({
-        where,
-        select: GIFT_CARD_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.giftCard.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    return {
-      giftCards: rows.map(toGiftCardResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toGiftCardResponse), total, page, perPage);
   }
 
   async findById(
     companyId: string,
     id: string,
   ): Promise<GiftCardDetailResponse> {
-    const giftCard = await this.prisma.giftCard.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: GIFT_CARD_DETAIL_SELECT,
+    const giftCard = await this.repo.findDetail({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!giftCard) throw new NotFoundException("Gift card not found");
     return toGiftCardDetailResponse(giftCard);
@@ -145,9 +99,9 @@ export class GiftCardsService {
     companyId: string,
     code: string,
   ): Promise<GiftCardResponse | null> {
-    const giftCard = await this.prisma.giftCard.findFirst({
-      where: { code, ...this.tenantWhere(companyId) },
-      select: GIFT_CARD_SELECT,
+    const giftCard = await this.repo.findOne({
+      code,
+      ...this.tenantWhere(companyId),
     });
     return giftCard ? toGiftCardResponse(giftCard) : null;
   }
@@ -162,19 +116,16 @@ export class GiftCardsService {
 
     const code = await this.resolveCode(dto.code);
     try {
-      const created = await this.prisma.giftCard.create({
-        data: {
-          code,
-          initialBalance: dto.initialBalance,
-          currentBalance: dto.initialBalance,
-          status: "ACTIVE",
-          customerId: dto.customerId ?? null,
-          branchId: dto.branchId ?? null,
-          companyId,
-          expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
-          createdBy: userId,
-        },
-        select: GIFT_CARD_SELECT,
+      const created = await this.repo.create({
+        code,
+        initialBalance: dto.initialBalance,
+        currentBalance: dto.initialBalance,
+        status: "ACTIVE",
+        customerId: dto.customerId ?? null,
+        branchId: dto.branchId ?? null,
+        companyId,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+        createdBy: userId,
       });
       return toGiftCardResponse(created);
     } catch (err) {
@@ -193,7 +144,7 @@ export class GiftCardsService {
     id: string,
     dto: TopupGiftCardDto,
   ): Promise<GiftCardDetailResponse> {
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.repo.tx.$transaction(async (tx) => {
       const card = await tx.giftCard.findFirst({
         where: { id, ...this.tenantWhere(companyId) },
         select: { id: true, currentBalance: true, status: true },
@@ -237,7 +188,7 @@ export class GiftCardsService {
     id: string,
     dto: RedeemGiftCardDto,
   ): Promise<GiftCardDetailResponse> {
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.repo.tx.$transaction(async (tx) => {
       const card = await tx.giftCard.findFirst({
         where: { id, ...this.tenantWhere(companyId) },
         select: {
@@ -295,9 +246,9 @@ export class GiftCardsService {
     id: string,
     dto: UpdateGiftCardDto,
   ): Promise<GiftCardResponse> {
-    const card = await this.prisma.giftCard.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true, status: true },
+    const card = await this.repo.findMeta({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!card) throw new NotFoundException("Gift card not found");
 
@@ -313,18 +264,14 @@ export class GiftCardsService {
       data.expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
     }
 
-    const updated = await this.prisma.giftCard.update({
-      where: { id },
-      data,
-      select: GIFT_CARD_SELECT,
-    });
+    const updated = await this.repo.update(id, data);
     return toGiftCardResponse(updated);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const card = await this.prisma.giftCard.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true, currentBalance: true, initialBalance: true },
+    const card = await this.repo.findMeta({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!card) throw new NotFoundException("Gift card not found");
     if (card.currentBalance !== card.initialBalance) {
@@ -332,11 +279,49 @@ export class GiftCardsService {
         "Gift card sudah pernah dipakai, tidak bisa dihapus",
       );
     }
-    await this.prisma.$transaction(async (tx) => {
+    await this.repo.tx.$transaction(async (tx) => {
       await tx.giftCardTransaction.deleteMany({ where: { giftCardId: id } });
       await tx.giftCard.delete({ where: { id } });
     });
     return { success: true };
+  }
+
+  async stats(companyId: string, branchId?: string) {
+    const where: Prisma.GiftCardWhereInput = this.tenantWhere(companyId);
+    if (branchId) where.branchId = branchId;
+
+    const now = new Date();
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+
+    const [total, active, activeAgg, allAgg, expiringSoon] = await Promise.all([
+      this.repo.count(where),
+      this.repo.count({ ...where, status: "ACTIVE" }),
+      this.repo.tx.giftCard.aggregate({
+        where: { ...where, status: "ACTIVE" },
+        _sum: { currentBalance: true },
+      }),
+      this.repo.tx.giftCard.aggregate({
+        where,
+        _sum: { initialBalance: true, currentBalance: true },
+      }),
+      this.repo.count({
+        ...where,
+        status: "ACTIVE",
+        expiresAt: { gte: now, lte: thirtyDaysFromNow },
+      }),
+    ]);
+
+    const totalBalance = allAgg._sum.initialBalance ?? 0;
+    const currentBalance = allAgg._sum.currentBalance ?? 0;
+
+    return {
+      total,
+      totalActiveCards: active,
+      totalBalanceOutstanding: activeAgg._sum.currentBalance ?? 0,
+      totalRedeemed: totalBalance - currentBalance,
+      expiringSoon,
+    };
   }
 
   private tenantWhere(companyId: string): Prisma.GiftCardWhereInput {
@@ -350,27 +335,18 @@ export class GiftCardsService {
   }
 
   private async assertCustomer(companyId: string, customerId: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, companyId },
-      select: { id: true },
-    });
+    const customer = await this.repo.findCustomer(companyId, customerId);
     if (!customer) throw new NotFoundException("Customer not found");
   }
 
   private async assertBranch(companyId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(companyId, branchId);
     if (!branch) throw new NotFoundException("Branch not found");
   }
 
   private async resolveCode(provided?: string): Promise<string> {
     if (provided && provided.length > 0) {
-      const exists = await this.prisma.giftCard.findUnique({
-        where: { code: provided },
-        select: { id: true },
-      });
+      const exists = await this.repo.findByCode(provided);
       if (exists) {
         throw new ConflictException("Kode gift card sudah digunakan");
       }
@@ -378,10 +354,7 @@ export class GiftCardsService {
     }
     for (let i = 0; i < MAX_GENERATE_ATTEMPTS; i++) {
       const code = `GC-${randomBytes(6).toString("hex").toUpperCase()}`;
-      const exists = await this.prisma.giftCard.findUnique({
-        where: { code },
-        select: { id: true },
-      });
+      const exists = await this.repo.findByCode(code);
       if (!exists) return code;
     }
     throw new ConflictException(

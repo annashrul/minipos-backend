@@ -16,7 +16,7 @@ import {
   type EarnPointsDto,
   type ListPointHistoryQueryDto,
   type RedeemPointsDto,
-} from "@/contracts";
+} from "./dto/points.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

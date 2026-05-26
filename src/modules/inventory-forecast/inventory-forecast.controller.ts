@@ -8,7 +8,7 @@ import {
   type ForecastSummaryQueryDto,
   type InventoryForecastQueryDto,
   type ProductSalesTrendQueryDto,
-} from "@/contracts";
+} from "./dto/inventory-forecast.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -71,8 +71,13 @@ export class InventoryForecastController {
     @Query(new ZodValidationPipe(InventoryForecastQuerySchema))
     query: InventoryForecastQueryDto,
   ) {
-    const all = await this.service.getForecast(companyId, query);
-    const data = all.filter(
+    const result = await this.service.getForecast(companyId, {
+      ...query,
+      riskLevel: undefined,
+      page: undefined,
+      perPage: undefined,
+    });
+    const data = result.items.filter(
       (p) => p.riskLevel === "CRITICAL" || p.riskLevel === "WARNING",
     );
     return { data };

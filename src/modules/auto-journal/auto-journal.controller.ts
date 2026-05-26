@@ -1,9 +1,9 @@
 ﻿import { Body, Controller, Post, UseGuards } from "@nestjs/common";
 import {
   CreateAutoJournalSchema,
-  type AuthUser,
   type CreateAutoJournalDto,
-} from "@/contracts";
+} from "./dto/auto-journal.dto";
+import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

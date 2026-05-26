@@ -1,14 +1,16 @@
 ﻿import { Body, Controller, Get, Patch, Post, Query } from "@nestjs/common";
 import { z } from "zod";
+import { type AuthUser } from "@/contracts";
 import {
   MeAccessMatrixQuerySchema,
-  VerifyAuthorizationSchema,
-  type AuthUser,
   type MeAccessMatrixQueryDto,
   type MeAccessMatrixResponse,
   type MeMenusResponse,
+} from "./dto/me.dto";
+import {
+  VerifyAuthorizationSchema,
   type VerifyAuthorizationDto,
-} from "@/contracts";
+} from "../users/dto/users.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 
 const UpdateBusinessUnitSchema = z.object({

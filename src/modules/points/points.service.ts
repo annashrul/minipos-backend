@@ -10,11 +10,12 @@ import type {
   EarnPointsDto,
   EarnResultResponse,
   ListPointHistoryQueryDto,
-  PointHistoryListResponse,
   PointHistoryResponse,
   RedeemPointsDto,
   RedeemResultResponse,
-} from "@/contracts";
+} from "./dto/points.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const POINTS_PER_RUPIAH = 10000;
@@ -70,7 +71,8 @@ export class PointsService {
   async listHistory(
     companyId: string,
     query: ListPointHistoryQueryDto,
-  ): Promise<PointHistoryListResponse> {
+  ): Promise<PaginatedResponse<PointHistoryResponse>> {
+    const { page, perPage } = query;
     const where: Prisma.CustomerPointHistoryWhereInput = {
       customer: { companyId },
     };
@@ -87,17 +89,13 @@ export class PointsService {
         where,
         select: HISTORY_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.customerPointHistory.count({ where }),
     ]);
 
-    return {
-      histories: rows.map(toHistoryResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toHistoryResponse), total, page, perPage);
   }
 
   async earn(

@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import type {
   AutoJournalResponse,
   CreateAutoJournalDto,
-} from "@/contracts";
+} from "./dto/auto-journal.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 type LineInput = {

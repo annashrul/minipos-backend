@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -6,42 +6,38 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
-  CategoryListResponse,
   CategoryResponse,
   CreateCategoryDto,
   ListCategoriesQueryDto,
   UpdateCategoryDto,
-} from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
+} from "./dto/categories.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import { CategoriesRepository, type RawCategory } from "./categories.repository";
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-
-const CATEGORY_SELECT = {
-  id: true,
-  name: true,
-  description: true,
-  parentId: true,
-  parent: { select: { id: true, name: true } },
-  kind: true,
-  brandId: true,
-  brand: { select: { id: true, name: true } },
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { products: true } },
-} satisfies Prisma.CategorySelect;
-
-type RawCategory = Prisma.CategoryGetPayload<{ select: typeof CATEGORY_SELECT }>;
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class CategoriesService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: CategoriesRepository,
     private readonly realtime: RealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  async summary(companyId: string) {
+    const where = { companyId };
+    const [total, withProducts] = await Promise.all([
+      this.prisma.category.count({ where }),
+      this.prisma.category.count({ where: { ...where, products: { some: {} } } }),
+    ]);
+    return { total, withProducts, empty: total - withProducts };
+  }
 
   async list(
     companyId: string,
     query: ListCategoriesQueryDto,
-  ): Promise<CategoryListResponse> {
+  ): Promise<PaginatedResponse<CategoryResponse>> {
     const {
       search,
       parentId,
@@ -93,28 +89,15 @@ export class CategoriesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.category.findMany({
-        where,
-        select: CATEGORY_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.category.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
-    return {
-      categories: rows.map(toCategoryResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toCategoryResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<CategoryResponse> {
-    const category = await this.prisma.category.findFirst({
-      where: { id, companyId },
-      select: CATEGORY_SELECT,
-    });
+    const category = await this.repo.findOne({ id, companyId });
     if (!category) throw new NotFoundException("Category not found");
     return toCategoryResponse(category);
   }
@@ -125,16 +108,13 @@ export class CategoriesService {
   ): Promise<CategoryResponse> {
     if (dto.parentId) await this.ensureSameCompany(companyId, dto.parentId);
     try {
-      const created = await this.prisma.category.create({
-        data: {
-          name: dto.name,
-          description: dto.description ?? null,
-          parentId: dto.parentId ?? null,
-          kind: dto.kind ?? "PRODUCT",
-          brandId: dto.brandId ?? null,
-          companyId,
-        },
-        select: CATEGORY_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        description: dto.description ?? null,
+        parentId: dto.parentId ?? null,
+        kind: dto.kind ?? "PRODUCT",
+        brandId: dto.brandId ?? null,
+        companyId,
       });
       this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: created.id });
       return toCategoryResponse(created);
@@ -149,10 +129,7 @@ export class CategoriesService {
     id: string,
     dto: UpdateCategoryDto,
   ): Promise<CategoryResponse> {
-    const existing = await this.prisma.category.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById(companyId, id);
     if (!existing) throw new NotFoundException("Category not found");
 
     if (dto.parentId) {
@@ -178,11 +155,7 @@ export class CategoriesService {
     }
 
     try {
-      const updated = await this.prisma.category.update({
-        where: { id },
-        data,
-        select: CATEGORY_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: updated.id });
       return toCategoryResponse(updated);
     } catch (err) {
@@ -192,10 +165,7 @@ export class CategoriesService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.category.findFirst({
-      where: { id, companyId },
-      select: { id: true, _count: { select: { products: true, children: true } } },
-    });
+    const existing = await this.repo.findWithCounts(companyId, id);
     if (!existing) throw new NotFoundException("Category not found");
     if (existing._count.products > 0) {
       throw new BadRequestException(
@@ -205,16 +175,13 @@ export class CategoriesService {
     if (existing._count.children > 0) {
       throw new BadRequestException("Kategori masih memiliki sub-kategori");
     }
-    await this.prisma.category.delete({ where: { id } });
+    await this.repo.delete(id);
     this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: id });
     return { success: true };
   }
 
   private async ensureSameCompany(companyId: string, parentId: string) {
-    const parent = await this.prisma.category.findFirst({
-      where: { id: parentId, companyId },
-      select: { id: true },
-    });
+    const parent = await this.repo.findById(companyId, parentId);
     if (!parent) throw new NotFoundException("Parent category not found");
   }
 }

@@ -17,7 +17,7 @@ import type {
   ResetPasswordResponse,
   VerifyPhoneOtpDto,
   VerifyPhoneOtpResponse,
-} from "@/contracts";
+} from "./dto/register.dto";
 import { PLATFORM_WA_SENDER_ID } from "../auth/current-company.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";

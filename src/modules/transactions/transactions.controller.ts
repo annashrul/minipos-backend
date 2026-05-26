@@ -19,7 +19,7 @@ import {
   type RefundTransactionDto,
   type TransactionStatsQueryDto,
   type VoidTransactionDto,
-} from "@/contracts";
+} from "./dto/transactions.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";

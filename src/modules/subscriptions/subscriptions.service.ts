@@ -5,15 +5,15 @@
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { AuthUser } from "@/contracts";
 import type {
-  AuthUser,
   CreateSubscriptionDto,
   CurrentSubscriptionResponse,
   ListSubscriptionsQueryDto,
   MarkSubscriptionPaidDto,
   SubscriptionListResponse,
   SubscriptionResponse,
-} from "@/contracts";
+} from "./dto/subscriptions.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const SUBSCRIPTION_SELECT = {

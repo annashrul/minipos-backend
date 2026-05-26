@@ -16,8 +16,9 @@ import type {
   ListJournalsQueryDto,
   UpdateJournalDto,
   VoidJournalDto,
-} from "@/contracts";
+} from "../dto/accounting.dto";
 import { PrismaService } from "../../prisma/prisma.service";
+import { paginate } from "../../../common/utils/pagination";
 
 const JOURNAL_SELECT = {
   id: true,
@@ -91,11 +92,7 @@ export class JournalsService {
       this.prisma.journalEntry.count({ where }),
     ]);
 
-    return {
-      journals: rows.map(toJournalResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toJournalResponse), total, query.page, query.perPage);
   }
 
   async findById(

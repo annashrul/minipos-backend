@@ -12,7 +12,7 @@ import type {
   PreviewInstallmentScheduleDto,
   UpcomingInstallmentResponse,
   UpdateOverdueInstallmentsResponse,
-} from "@/contracts";
+} from "./dto/installments.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()

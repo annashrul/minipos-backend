@@ -7,11 +7,13 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type {
   RecipeResponse,
-  RecipeYieldEstimatesResponse,
   RecipeYieldSummaryResponse,
   UpsertRecipeDto,
   YieldEstimateQueryDto,
-} from "@/contracts";
+} from "./dto/recipes.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
+import type { RecipeYieldRow } from "./dto/recipes.dto";
 
 const RECIPE_INCLUDE = {
   ingredients: {
@@ -187,7 +189,7 @@ export class RecipesService {
   async getYieldEstimates(
     companyId: string,
     query: YieldEstimateQueryDto,
-  ): Promise<RecipeYieldEstimatesResponse> {
+  ): Promise<{ branchId: string | null } & PaginatedResponse<RecipeYieldRow>> {
     const {
       branchId,
       search,
@@ -362,17 +364,12 @@ export class RecipesService {
 
     // PAGINATE.
     const total = filtered.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
     const start = (page - 1) * limit;
     const items = filtered.slice(start, start + limit);
 
     return {
       branchId: branchId ?? null,
-      items,
-      total,
-      page,
-      limit,
-      totalPages,
+      ...paginate(items, total, page, limit),
     };
   }
 

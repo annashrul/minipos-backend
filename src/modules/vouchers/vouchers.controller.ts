@@ -15,7 +15,7 @@ import {
   type GenerateVouchersDto,
   type ListVouchersQueryDto,
   type RedeemVoucherDto,
-} from "@/contracts";
+} from "./dto/vouchers.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";

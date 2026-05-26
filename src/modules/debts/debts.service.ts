@@ -7,7 +7,6 @@ import { Prisma } from "@prisma/client";
 import type {
   CreateDebtDto,
   DebtDetailResponse,
-  DebtListResponse,
   DebtPaymentResponse,
   DebtResponse,
   DebtSummaryResponse,
@@ -15,7 +14,9 @@ import type {
   InstallmentResponse,
   ListDebtsQueryDto,
   PayDebtDto,
-} from "@/contracts";
+} from "./dto/debts.dto";
+import type { PaginatedResponse } from "../../common/types/response";
+import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
 
 const DEBT_SELECT = {
@@ -84,7 +85,8 @@ export class DebtsService {
   async list(
     companyId: string,
     query: ListDebtsQueryDto,
-  ): Promise<DebtListResponse> {
+  ): Promise<PaginatedResponse<DebtResponse>> {
+    const { page, perPage } = query;
     const where = await this.buildListWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
@@ -92,17 +94,13 @@ export class DebtsService {
         where,
         select: DEBT_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
+        skip: (page - 1) * perPage,
+        take: perPage,
       }),
       this.prisma.debt.count({ where }),
     ]);
 
-    return {
-      debts: rows.map(toDebtResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toDebtResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<DebtDetailResponse> {
@@ -269,7 +267,7 @@ export class DebtsService {
     });
 
     const now = new Date();
-    const [payable, receivable, overdueAgg] = await Promise.all([
+    const [payable, receivable, overdueAgg, totalCount, unpaidCount, partialCount, paidCount] = await Promise.all([
       this.prisma.debt.aggregate({
         where: { ...where, type: "PAYABLE" },
         _sum: { totalAmount: true, remainingAmount: true },
@@ -289,6 +287,10 @@ export class DebtsService {
         _sum: { remainingAmount: true },
         _count: { _all: true },
       }),
+      this.prisma.debt.count({ where }),
+      this.prisma.debt.count({ where: { ...where, status: "UNPAID" } }),
+      this.prisma.debt.count({ where: { ...where, status: "PARTIAL" } }),
+      this.prisma.debt.count({ where: { ...where, status: "PAID" } }),
     ]);
 
     return {
@@ -305,6 +307,13 @@ export class DebtsService {
       overdue: {
         count: overdueAgg._count._all,
         remaining: overdueAgg._sum.remainingAmount ?? 0,
+      },
+      byStatus: {
+        total: totalCount,
+        unpaid: unpaidCount,
+        partial: partialCount,
+        paid: paidCount,
+        overdue: overdueAgg._count._all,
       },
     };
   }

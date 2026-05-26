@@ -16,7 +16,7 @@ import {
   type CreateBranchDto,
   type ListBranchesQueryDto,
   type UpdateBranchDto,
-} from "@/contracts";
+} from "./dto/branches.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
 import { AccessGuard } from "../auth/access.guard";
 import { CurrentCompany } from "../auth/current-company.decorator";
@@ -36,6 +36,13 @@ export class BranchesController {
     query: ListBranchesQueryDto,
   ) {
     const data = await this.branches.list(companyId, query);
+    return { data };
+  }
+
+  @Get("summary")
+  @RequireAccess("branches", "view")
+  async summary(@CurrentCompany() companyId: string) {
+    const data = await this.branches.summary(companyId);
     return { data };
   }
 
