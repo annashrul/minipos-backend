@@ -14,6 +14,7 @@ import type {
   UpdateClosingReportDto,
 } from "./dto/closing-reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
+import { paginate } from "../../common/utils/pagination";
 
 const CLOSING_REPORT_SELECT = {
   id: true,
@@ -88,11 +89,7 @@ export class ClosingReportsService {
       this.prisma.closingReport.count({ where }),
     ]);
 
-    return {
-      reports: rows.map(toClosingReportResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toClosingReportResponse), total, page, perPage);
   }
 
   async findById(

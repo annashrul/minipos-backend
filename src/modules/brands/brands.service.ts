@@ -27,7 +27,7 @@ export class BrandsService {
     const where = { companyId };
     const [total, withProducts] = await Promise.all([
       this.prisma.brand.count({ where }),
-      this.prisma.brand.count({ where: { ...where, products: { some: {} } } }),
+      this.prisma.brand.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
     ]);
     return { total, withProducts, withoutProducts: total - withProducts };
   }
@@ -127,6 +127,17 @@ export class BrandsService {
     }
     await this.repo.delete(id);
     return { success: true };
+  }
+
+  async bulkDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number; skipped: string[] }> {
+    const [count, skipped] = await Promise.all([
+      this.repo.deleteManyWithoutProducts(companyId, ids),
+      this.repo.findSkipped(companyId, ids),
+    ]);
+    return { count, skipped };
   }
 }
 

@@ -70,6 +70,16 @@ export class BundlesController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("bundles", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.bundles.bulkDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Delete(":id")
   @RequireAccess("bundles", "delete")
   async delete(

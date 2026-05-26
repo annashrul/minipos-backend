@@ -62,7 +62,12 @@ export type ClosingReportResponse = {
 };
 
 export type ClosingReportListResponse = {
-  reports: ClosingReportResponse[];
-  total: number;
-  totalPages: number;
+  items: ClosingReportResponse[];
+  meta: {
+    total: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    count: number;
+  };
 };

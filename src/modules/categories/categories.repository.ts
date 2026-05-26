@@ -13,7 +13,7 @@ export const CATEGORY_SELECT = {
   brand: { select: { id: true, name: true } },
   createdAt: true,
   updatedAt: true,
-  _count: { select: { products: true } },
+  _count: { select: { products: { where: { deletedAt: null } } } },
 } satisfies Prisma.CategorySelect;
 
 export type RawCategory = Prisma.CategoryGetPayload<{
@@ -73,7 +73,7 @@ export class CategoriesRepository {
       where: { id, companyId },
       select: {
         id: true,
-        _count: { select: { products: true, children: true } },
+        _count: { select: { products: { where: { deletedAt: null } }, children: true } },
       },
     });
   }

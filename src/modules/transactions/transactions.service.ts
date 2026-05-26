@@ -21,6 +21,7 @@ import type {
 import { DebtsService } from "../debts/debts.service";
 import { PointsService } from "../points/points.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { paginate } from "../../common/utils/pagination";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
 
@@ -187,11 +188,7 @@ export class TransactionsService {
       this.prisma.transaction.count({ where }),
     ]);
 
-    return {
-      transactions: rows.map(toTransactionResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toTransactionResponse), total, page, perPage);
   }
 
   async findById(

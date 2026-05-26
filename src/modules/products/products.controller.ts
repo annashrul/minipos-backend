@@ -210,6 +210,16 @@ export class ProductsController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("products", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.products.bulkSoftDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Delete(":id")
   @RequireAccess("products", "delete")
   async delete(

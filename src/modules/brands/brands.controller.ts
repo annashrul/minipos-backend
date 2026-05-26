@@ -1,4 +1,4 @@
-﻿import {
+import {
   Body,
   Controller,
   Delete,
@@ -53,6 +53,16 @@ export class BrandsController {
     @Param("id") id: string,
   ) {
     const data = await this.brands.findById(companyId, id);
+    return { data };
+  }
+
+  @Post("bulk-delete")
+  @RequireAccess("brands", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.brands.bulkDelete(companyId, body.ids);
     return { data };
   }
 

@@ -56,6 +56,16 @@ export class CategoriesController {
     return { data };
   }
 
+  @Post("bulk-delete")
+  @RequireAccess("categories", "delete")
+  async bulkDelete(
+    @CurrentCompany() companyId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    const data = await this.categories.bulkDelete(companyId, body.ids);
+    return { data };
+  }
+
   @Post()
   @RequireAccess("categories", "create")
   async create(

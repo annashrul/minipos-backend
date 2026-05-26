@@ -29,7 +29,7 @@ export class CategoriesService {
     const where = { companyId };
     const [total, withProducts] = await Promise.all([
       this.prisma.category.count({ where }),
-      this.prisma.category.count({ where: { ...where, products: { some: {} } } }),
+      this.prisma.category.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
     ]);
     return { total, withProducts, empty: total - withProducts };
   }
@@ -175,9 +175,52 @@ export class CategoriesService {
     if (existing._count.children > 0) {
       throw new BadRequestException("Kategori masih memiliki sub-kategori");
     }
-    await this.repo.delete(id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.product.deleteMany({ where: { categoryId: id, deletedAt: { not: null } } });
+      await tx.category.delete({ where: { id } });
+    });
     this.realtime.emit(EVENTS.CATEGORY_UPDATED, { categoryId: id });
     return { success: true };
+  }
+
+  async bulkDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number; skipped: string[] }> {
+    const activeProductFilter = { deletedAt: null };
+    const [skippedRows, deletableRows] = await Promise.all([
+      this.prisma.category.findMany({
+        where: {
+          id: { in: ids },
+          companyId,
+          OR: [
+            { products: { some: activeProductFilter } },
+            { children: { some: {} } },
+          ],
+        },
+        select: { name: true },
+      }),
+      this.prisma.category.findMany({
+        where: {
+          id: { in: ids },
+          companyId,
+          products: { none: activeProductFilter },
+          children: { none: {} },
+        },
+        select: { id: true },
+      }),
+    ]);
+    const deletableIds = deletableRows.map((r) => r.id);
+    let count = 0;
+    if (deletableIds.length > 0) {
+      const result = await this.prisma.$transaction(async (tx) => {
+        await tx.product.deleteMany({ where: { categoryId: { in: deletableIds }, deletedAt: { not: null } } });
+        return tx.category.deleteMany({ where: { id: { in: deletableIds } } });
+      });
+      count = result.count;
+    }
+    if (count > 0) this.realtime.emit(EVENTS.CATEGORY_UPDATED, {});
+    return { count, skipped: skippedRows.map((r) => r.name) };
   }
 
   private async ensureSameCompany(companyId: string, parentId: string) {

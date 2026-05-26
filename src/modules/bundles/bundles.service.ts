@@ -251,6 +251,17 @@ export class BundlesService {
     return { success: true };
   }
 
+  async bulkDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number }> {
+    const { count } = await this.prisma.productBundle.deleteMany({
+      where: { id: { in: ids }, companyId },
+    });
+    if (count > 0) this.realtime.emit(EVENTS.BUNDLE_UPDATED, {});
+    return { count };
+  }
+
   private async assertReferences(
     companyId: string,
     branchId: string | null,

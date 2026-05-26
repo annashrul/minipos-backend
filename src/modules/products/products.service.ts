@@ -840,6 +840,17 @@ export class ProductsService {
     return { success: true };
   }
 
+  async bulkSoftDelete(
+    companyId: string,
+    ids: string[],
+  ): Promise<{ count: number }> {
+    const { count } = await this.prisma.product.updateMany({
+      where: { id: { in: ids }, companyId, deletedAt: null },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    return { count };
+  }
+
   async stats(
     companyId: string,
     branchId?: string,

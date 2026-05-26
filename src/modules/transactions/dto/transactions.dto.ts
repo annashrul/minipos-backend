@@ -116,9 +116,14 @@ export type TransactionDetailResponse = TransactionResponse & {
 };
 
 export type TransactionListResponse = {
-  transactions: TransactionResponse[];
-  total: number;
-  totalPages: number;
+  items: TransactionResponse[];
+  meta: {
+    total: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    count: number;
+  };
 };
 
 export const CheckoutBundleComponentSchema = z.object({
