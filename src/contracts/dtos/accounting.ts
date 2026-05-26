@@ -265,7 +265,12 @@ export type JournalDetailResponse = JournalResponse & {
 };
 
 export type JournalListResponse = {
-  journals: JournalResponse[];
-  total: number;
-  totalPages: number;
+  items: JournalResponse[];
+  meta: {
+    total: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    count: number;
+  };
 };
