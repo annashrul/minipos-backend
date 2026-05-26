@@ -481,15 +481,30 @@ export class TableOrdersService {
       );
     }
 
+    // Pre-build lookup maps per product for O(1) access in the items loop.
+    const unitMapByProduct = new Map<string, Map<string, (typeof products)[0]["units"][0]>>();
+    const modGroupMapByProduct = new Map<string, Map<string, (typeof products)[0]["modifierGroups"][0]>>();
+    const optionMapByGroup = new Map<string, Map<string, (typeof products)[0]["modifierGroups"][0]["modifierGroup"]["options"][0]>>();
+
+    for (const p of products) {
+      unitMapByProduct.set(p.id, new Map(p.units.map((u) => [u.id, u])));
+      modGroupMapByProduct.set(p.id, new Map(p.modifierGroups.map((l) => [l.modifierGroupId, l])));
+      for (const l of p.modifierGroups) {
+        optionMapByGroup.set(l.modifierGroup.id, new Map(l.modifierGroup.options.map((o) => [o.id, o])));
+      }
+    }
+
     let total = 0;
     const itemsData = dto.items.map((i) => {
       const p = productMap.get(i.productId)!;
+      const unitMap = unitMapByProduct.get(p.id)!;
+      const modGroupMap = modGroupMapByProduct.get(p.id)!;
 
       // ── Resolve unit (fallback to base unit when no unitId provided)
       let unitName = p.unit;
       let unitPrice = p.sellingPrice;
       if (i.unitId) {
-        const unit = p.units.find((u) => u.id === i.unitId);
+        const unit = unitMap.get(i.unitId);
         if (!unit) {
           throw new BadRequestException(
             `Satuan tidak valid untuk produk ${p.name}`,
@@ -510,20 +525,16 @@ export class TableOrdersService {
       }> = [];
       const sel = i.modifiers ?? [];
       if (sel.length > 0) {
-        const linkedGroupIds = new Set(
-          p.modifierGroups.map((l) => l.modifierGroupId),
-        );
         for (const s of sel) {
-          if (!linkedGroupIds.has(s.groupId)) {
+          if (!modGroupMap.has(s.groupId)) {
             throw new BadRequestException(
               `Modifier tidak valid untuk produk ${p.name}`,
             );
           }
-          const link = p.modifierGroups.find(
-            (l) => l.modifierGroupId === s.groupId,
-          );
+          const link = modGroupMap.get(s.groupId);
           const group = link?.modifierGroup;
-          const opt = group?.options.find((o) => o.id === s.optionId);
+          const optMap = group ? optionMapByGroup.get(group.id) : undefined;
+          const opt = optMap?.get(s.optionId);
           if (!group || !opt) {
             throw new BadRequestException(`Opsi modifier tidak ditemukan`);
           }

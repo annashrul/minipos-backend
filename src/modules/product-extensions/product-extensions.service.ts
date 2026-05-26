@@ -747,20 +747,25 @@ export class ProductExtensionsService {
     // find-or-create ProductVariant untuk kombinasi tersebut. Ini menghilangkan
     // kebutuhan tab Varian terpisah — variant otomatis di-upsert saat save SKU.
     const resolvedItems = await this.prisma.$transaction(async (tx) => {
+      const variantCandidates = await tx.productVariant.findMany({
+        where: { productId },
+        include: { options: { select: { optionId: true } } },
+      });
+      const variantIdBySignature = new Map<string, string>(
+        variantCandidates.map((v) => [
+          v.options.map((o) => o.optionId).sort().join("|"),
+          v.id,
+        ]),
+      );
+
       const out: typeof dto.items = [];
       for (const item of dto.items) {
         let variantId = item.variantId ?? null;
         if (!variantId && item.optionIds && item.optionIds.length > 0) {
           const sortedIncoming = [...item.optionIds].sort().join("|");
-          const candidates = await tx.productVariant.findMany({
-            where: { productId },
-            include: { options: { select: { optionId: true } } },
-          });
-          const matched = candidates.find(
-            (v) => v.options.map((o) => o.optionId).sort().join("|") === sortedIncoming,
-          );
-          if (matched) {
-            variantId = matched.id;
+          const cachedId = variantIdBySignature.get(sortedIncoming);
+          if (cachedId) {
+            variantId = cachedId;
           } else {
             const created = await tx.productVariant.create({
               data: {
@@ -772,6 +777,7 @@ export class ProductExtensionsService {
               },
             });
             variantId = created.id;
+            variantIdBySignature.set(sortedIncoming, created.id);
           }
         }
         out.push({ ...item, variantId });

@@ -319,6 +319,9 @@ export class ProductsService {
           select: { branchId: true, quantity: true, minStock: true },
         }),
       ]);
+      const priceByBranch = new Map(
+        legacyPrices.map((p) => [p.branchId, p]),
+      );
       const stockByBranch = new Map(
         legacyStocks.map((s) => [s.branchId, s]),
       );
@@ -327,7 +330,7 @@ export class ProductsService {
         ...legacyStocks.map((s) => s.branchId),
       ]);
       effectiveBranchSkus = [...branchIds].map((branchId) => {
-        const pr = legacyPrices.find((p) => p.branchId === branchId);
+        const pr = priceByBranch.get(branchId);
         const st = stockByBranch.get(branchId);
         return {
           // Synthetic id (tidak persist di DB) supaya frontend bisa identify;
@@ -620,6 +623,18 @@ export class ProductsService {
       }
 
       // Resolve variant per item via optionIds find-or-create.
+      // Fetch variants once, build signature → id Map to avoid N+1.
+      const variantCandidates = await tx.productVariant.findMany({
+        where: { productId },
+        include: { options: { select: { optionId: true } } },
+      });
+      const variantIdBySignature = new Map<string, string>(
+        variantCandidates.map((v) => [
+          v.options.map((o) => o.optionId).sort().join("|"),
+          v.id,
+        ]),
+      );
+
       const resolved: Array<{
         branchId: string;
         unitId: string | null;
@@ -645,17 +660,9 @@ export class ProductsService {
         let variantId: string | null = null;
         if (item.optionIds && item.optionIds.length > 0) {
           const sortedIncoming = [...item.optionIds].sort().join("|");
-          const candidates = await tx.productVariant.findMany({
-            where: { productId },
-            include: { options: { select: { optionId: true } } },
-          });
-          const matched = candidates.find(
-            (v) =>
-              v.options.map((o) => o.optionId).sort().join("|") ===
-              sortedIncoming,
-          );
-          if (matched) {
-            variantId = matched.id;
+          const cachedId = variantIdBySignature.get(sortedIncoming);
+          if (cachedId) {
+            variantId = cachedId;
           } else {
             const created = await tx.productVariant.create({
               data: {
@@ -667,6 +674,7 @@ export class ProductsService {
               },
             });
             variantId = created.id;
+            variantIdBySignature.set(sortedIncoming, created.id);
           }
         }
         resolved.push({
