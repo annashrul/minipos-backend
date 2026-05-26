@@ -27,7 +27,7 @@ export class SuppliersService {
     const [total, active, withProducts] = await Promise.all([
       this.prisma.supplier.count({ where }),
       this.prisma.supplier.count({ where: { ...where, isActive: true } }),
-      this.prisma.supplier.count({ where: { ...where, products: { some: {} } } }),
+      this.prisma.supplier.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
     ]);
     return { total, active, inactive: total - active, withProducts };
   }
