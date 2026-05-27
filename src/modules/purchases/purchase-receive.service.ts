@@ -20,7 +20,7 @@ import {
 import {
   toPurchaseDetailResponse,
   toReceiptResponse,
-} from "./purchases.service";
+} from "./purchases.helpers";
 
 @Injectable()
 export class PurchaseReceiveService {

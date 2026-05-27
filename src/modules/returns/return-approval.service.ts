@@ -12,7 +12,7 @@ import type {
 } from "./dto/returns.dto";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { ReturnsRepository, RETURN_DETAIL_SELECT } from "./returns.repository";
-import { toReturnDetailResponse } from "./returns.service";
+import { toReturnDetailResponse } from "./returns.helpers";
 
 @Injectable()
 export class ReturnApprovalService {
