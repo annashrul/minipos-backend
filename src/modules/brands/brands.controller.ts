@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -17,10 +17,10 @@ import {
   type ListBrandsQueryDto,
   type UpdateBrandDto,
 } from "./dto/brands.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { BrandsService } from "./brands.service";
 
 @Controller("brands")

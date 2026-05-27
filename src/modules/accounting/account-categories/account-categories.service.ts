@@ -13,7 +13,7 @@ import type {
   ListAccountCategoriesQueryDto,
   UpdateAccountCategoryDto,
 } from "../dto/accounting.dto";
-import { PrismaService } from "../../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 const CATEGORY_SELECT = {
   id: true,

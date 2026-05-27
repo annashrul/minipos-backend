@@ -3,8 +3,8 @@ import {
   ListPlatformActivityLogsQuerySchema,
   type ListPlatformActivityLogsQueryDto,
 } from "./dto/platform-notifications.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { PlatformOwnerGuard } from "../platform-subscriptions/platform-owner.guard";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { PlatformOwnerGuard } from "@/modules/platform-subscriptions/platform-owner.guard";
 import { PlatformNotificationsService } from "./platform-notifications.service";
 
 @Controller("platform")

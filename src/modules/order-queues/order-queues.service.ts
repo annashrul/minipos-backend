@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -13,11 +13,11 @@ import type {
   OrderQueueResponse,
   OrderQueueStatusDto,
 } from "./dto/order-queues.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { OrderQueuesRepository, type RawQueue } from "./order-queues.repository";
 
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
 
 @Injectable()
 export class OrderQueuesService {

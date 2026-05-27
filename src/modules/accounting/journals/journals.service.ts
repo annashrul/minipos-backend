@@ -19,8 +19,8 @@ import type {
   UpdateJournalDto,
   VoidJournalDto,
 } from "../dto/accounting.dto";
-import { PrismaService } from "../../prisma/prisma.service";
-import { paginate } from "../../../common/utils/pagination";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { paginate } from "@/common/utils/pagination";
 
 const JOURNAL_SELECT = {
   id: true,

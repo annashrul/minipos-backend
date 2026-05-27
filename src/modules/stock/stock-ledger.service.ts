@@ -1,7 +1,7 @@
-import { Injectable } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import { Prisma, StockMovementType } from "@prisma/client";
 import { round2 } from "@/common/utils/math";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 /**
  * Tipe transaksi yg dipakai service ledger. Bukan langsung enum Prisma karena

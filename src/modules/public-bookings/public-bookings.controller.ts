@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Body,
   Controller,
@@ -9,13 +9,13 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { Public } from "../auth/public.decorator";
-import { PrismaService } from "../prisma/prisma.service";
-import { BookingsService } from "../bookings/bookings.service";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-import { RedisService } from "../redis/redis.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { Public } from "@/modules/auth/public.decorator";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { BookingsService } from "@/modules/bookings/bookings.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
+import { RedisService } from "@/modules/redis/redis.service";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 
 /**
  * Schema input dari halaman public `/book/[slug]`. Customer-facing — hanya

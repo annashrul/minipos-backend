@@ -4,8 +4,8 @@ import {
   LogPosActivitySchema,
   type LogPosActivityDto,
 } from "./dto/pos-activity.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { CurrentUser } from "../auth/current-user.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { PosActivityService } from "./pos-activity.service";
 
 @Controller("pos-activity")

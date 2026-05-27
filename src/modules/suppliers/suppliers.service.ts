@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -10,10 +10,10 @@ import type {
   SupplierResponse,
   UpdateSupplierDto,
 } from "./dto/suppliers.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { SuppliersRepository, type RawSupplier } from "./suppliers.repository";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class SuppliersService {

@@ -1,5 +1,5 @@
-import { Controller, Get, UseGuards } from "@nestjs/common";
-import { PlatformOwnerGuard } from "../platform-subscriptions/platform-owner.guard";
+﻿import { Controller, Get, UseGuards } from "@nestjs/common";
+import { PlatformOwnerGuard } from "@/modules/platform-subscriptions/platform-owner.guard";
 import { PlatformDashboardService } from "./platform-dashboard.service";
 
 @Controller("platform/dashboard")

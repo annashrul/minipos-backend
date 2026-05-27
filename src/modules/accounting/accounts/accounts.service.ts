@@ -17,8 +17,8 @@ import type {
   ListAccountsQueryDto,
   UpdateAccountDto,
 } from "../dto/accounting.dto";
-import { PrismaService } from "../../prisma/prisma.service";
-import { paginate } from "../../../common/utils/pagination";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
 
 const ACCOUNT_SELECT = {

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -13,9 +13,9 @@ import type {
   ProductResponse,
   UpdateProductDto,
 } from "./dto/products.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import { ProductsRepository, type RawProduct } from "./products.repository";
 
 const INT32_MAX = 2_147_483_647;

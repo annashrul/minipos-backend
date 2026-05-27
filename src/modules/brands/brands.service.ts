@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -12,10 +12,10 @@ import type {
   ListBrandsQueryDto,
   UpdateBrandDto,
 } from "./dto/brands.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { BrandsRepository, type RawBrand } from "./brands.repository";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class BrandsService {

@@ -9,7 +9,7 @@
 } from "@nestjs/common";
 import { z } from "zod";
 import type { AuthUser } from "@/contracts";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
 import { AuthService } from "./auth.service";
 import { CurrentUser } from "./current-user.decorator";
 import { Public } from "./public.decorator";

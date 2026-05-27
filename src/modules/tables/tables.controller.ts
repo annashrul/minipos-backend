@@ -21,10 +21,10 @@ import {
   type UpdateTableDto,
   type UpdateTableStatusDto,
 } from "./dto/tables.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { TablesService } from "./tables.service";
 
 @Controller("tables")

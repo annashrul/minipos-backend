@@ -1,5 +1,5 @@
-import { Module } from "@nestjs/common";
-import { WhatsappReceiptModule } from "../whatsapp-receipt/whatsapp-receipt.module";
+﻿import { Module } from "@nestjs/common";
+import { WhatsappReceiptModule } from "@/modules/whatsapp-receipt/whatsapp-receipt.module";
 import { RegisterController } from "./register.controller";
 import { RegisterService } from "./register.service";
 

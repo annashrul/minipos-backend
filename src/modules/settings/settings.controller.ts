@@ -16,10 +16,10 @@ import {
   type UpsertSettingDto,
   type UpsertSettingsBulkDto,
 } from "./dto/settings.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { SettingsService } from "./settings.service";
 
 @Controller("settings")

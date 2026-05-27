@@ -1,12 +1,12 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   CreateStockOpnameDto,
   ListStockOpnameQueryDto,

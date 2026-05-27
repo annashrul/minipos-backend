@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   GoodsReceiptDetailItemResponse,
@@ -8,8 +8,8 @@ import type {
   GoodsReceiptStatsResponse,
   ListGoodsReceiptsQueryDto,
 } from "./dto/goods-receipts.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
 import {
   GoodsReceiptsRepository,

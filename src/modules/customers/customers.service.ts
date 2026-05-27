@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -11,10 +11,10 @@ import type {
   ListCustomersQueryDto,
   UpdateCustomerDto,
 } from "./dto/customers.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { CustomersRepository, type RawCustomer } from "./customers.repository";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class CustomersService {

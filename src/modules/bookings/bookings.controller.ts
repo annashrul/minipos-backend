@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -20,11 +20,11 @@ import {
   type UpdateBookingDto,
 } from "./dto/bookings.dto";
 import { type AuthUser } from "@/contracts";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { CurrentUser } from "../auth/current-user.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { BookingsService } from "./bookings.service";
 
 @Controller("bookings")

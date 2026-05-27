@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
+﻿import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
 import {
   WhatsAppBaileysConnectBodySchema,
   WhatsAppBaileysSendReceiptBodySchema,
@@ -12,9 +12,9 @@ import {
   type WhatsAppReceiptTextParamsDto,
 } from "./dto/whatsapp-receipt.dto";
 import { z } from "zod";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { WhatsappCompany } from "../auth/current-company.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { WhatsappCompany } from "@/modules/auth/current-company.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 
 // Setup credentials wa-service — admin minipos input setelah create tenant

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Body,
   Controller,
@@ -14,10 +14,10 @@ import {
   type WhatsappBotTestDto,
 } from "./dto/whatsapp-bot.dto";
 import { type AuthUser } from "@/contracts";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentUser } from "../auth/current-user.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { WhatsappChatbotService } from "./whatsapp-chatbot.service";
 
 @Controller("whatsapp-bot")

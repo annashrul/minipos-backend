@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   HttpCode,
@@ -6,8 +6,8 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { Public } from "../../auth/public.decorator";
-import { PrismaService } from "../../prisma/prisma.service";
+import { Public } from "@/modules/auth/public.decorator";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import { XenditEwalletService } from "./xendit-ewallet.service";
 import { XenditInvoiceService } from "./xendit-invoice.service";
 import { XenditQrService } from "./xendit-qr.service";

@@ -1,6 +1,6 @@
-import { Controller, Get, Res } from "@nestjs/common";
+﻿import { Controller, Get, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { Public } from "../auth/public.decorator";
+import { Public } from "@/modules/auth/public.decorator";
 import { RealtimeService } from "./realtime.service";
 
 @Controller("events")

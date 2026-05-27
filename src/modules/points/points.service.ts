@@ -14,10 +14,10 @@ import type {
   RedeemPointsDto,
   RedeemResultResponse,
 } from "./dto/points.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { PointsRepository, type RawHistory } from "./points.repository";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 const POINTS_PER_RUPIAH = 10000;
 const RUPIAH_PER_POINT = 100;

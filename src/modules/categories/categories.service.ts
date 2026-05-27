@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -13,11 +13,11 @@ import type {
   ListCategoriesQueryDto,
   UpdateCategoryDto,
 } from "./dto/categories.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { CategoriesRepository, type RawCategory } from "./categories.repository";
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class CategoriesService {

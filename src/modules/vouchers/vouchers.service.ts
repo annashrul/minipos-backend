@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+﻿import { randomBytes } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -14,8 +14,8 @@ import type {
   VoucherGenerateResponse,
   VoucherResponse,
 } from "./dto/vouchers.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { VouchersRepository, type RawVoucher } from "./vouchers.repository";
 
 const MAX_GENERATE_ATTEMPTS = 5;

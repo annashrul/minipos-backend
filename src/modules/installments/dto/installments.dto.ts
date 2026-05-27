@@ -1,5 +1,5 @@
-import { z } from "zod";
-import { InstallmentIntervalSchema } from "../../debts/dto/debts.dto";
+﻿import { z } from "zod";
+import { InstallmentIntervalSchema } from "@/modules/debts/dto/debts.dto";
 
 export const CreateInstallmentPlanSchema = z.object({
   debtId: z.string().min(1),

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -11,8 +11,8 @@ import type {
   UpsertRecipeDto,
   YieldEstimateQueryDto,
 } from "./dto/recipes.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type { RecipeYieldRow } from "./dto/recipes.dto";
 import {
   RecipesRepository,

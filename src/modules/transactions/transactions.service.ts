@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   Logger,
@@ -19,12 +19,12 @@ import type {
   TransactionStatsResponse,
   VoidTransactionResponse,
 } from "./dto/transactions.dto";
-import { DebtsService } from "../debts/debts.service";
-import { PointsService } from "../points/points.service";
-import { PrismaService } from "../prisma/prisma.service";
-import { paginate } from "../../common/utils/pagination";
-import { RackStockHelperService } from "../racks/rack-stock-helper.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
+import { DebtsService } from "@/modules/debts/debts.service";
+import { PointsService } from "@/modules/points/points.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { paginate } from "@/common/utils/pagination";
+import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 import {
   TransactionsRepository,
   TX_DETAIL_SELECT,
@@ -32,8 +32,8 @@ import {
   type RawTxDetail,
 } from "./transactions.repository";
 
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
-import { AutoJournalService } from "../auto-journal/auto-journal.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
+import { AutoJournalService } from "@/modules/auto-journal/auto-journal.service";
 
 @Injectable()
 export class TransactionsService {

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -16,10 +16,10 @@ import type {
   ToggleRoleMenuPermissionDto,
   UpdateRoleDto,
 } from "./dto/roles.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { RolesRepository, type RawRole } from "./roles.repository";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
 
 @Injectable()
 export class RolesService {

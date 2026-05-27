@@ -7,8 +7,8 @@
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { AuthUser } from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
-import { RedisService } from "../redis/redis.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { RedisService } from "@/modules/redis/redis.service";
 import { REQUIRE_ACCESS_KEY, RequireAccessMeta } from "./require-access.decorator";
 
 const ACCESS_CACHE_TTL_SECONDS = 60;

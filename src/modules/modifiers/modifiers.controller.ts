@@ -9,7 +9,7 @@
   Put,
   Query,
 } from "@nestjs/common";
-import { CurrentCompany } from "../auth/current-company.decorator";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import {
   CreateModifierGroupSchema,
   ListModifierGroupsQuerySchema,

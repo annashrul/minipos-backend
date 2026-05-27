@@ -1,6 +1,6 @@
-import { Module } from "@nestjs/common";
-import { BookingsModule } from "../bookings/bookings.module";
-import { WhatsappReceiptModule } from "../whatsapp-receipt/whatsapp-receipt.module";
+﻿import { Module } from "@nestjs/common";
+import { BookingsModule } from "@/modules/bookings/bookings.module";
+import { WhatsappReceiptModule } from "@/modules/whatsapp-receipt/whatsapp-receipt.module";
 import { PublicBookingsController } from "./public-bookings.controller";
 
 @Module({

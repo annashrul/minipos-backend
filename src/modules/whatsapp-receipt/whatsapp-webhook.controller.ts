@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Body,
   Controller,
@@ -11,14 +11,14 @@ import {
 } from "@nestjs/common";
 import type { RawBodyRequest } from "@nestjs/common";
 import type { Request } from "express";
-import { PrismaService } from "../prisma/prisma.service";
-import { Public } from "../auth/public.decorator";
-import { verifyWaSignature } from "../../common/wa-service/wa-service.signature";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { Public } from "@/modules/auth/public.decorator";
+import { verifyWaSignature } from "@/common/wa-service/wa-service.signature";
 import type {
   WaServiceEventEnvelope,
   WaServiceInboundEvent,
   WaServiceSession,
-} from "../../common/wa-service/wa-service.types";
+} from "@/common/wa-service/wa-service.types";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 
 // Endpoint diakses oleh wa-service (server-to-server) — TIDAK pakai JWT guard.

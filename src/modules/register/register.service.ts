@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -18,10 +18,10 @@ import type {
   VerifyPhoneOtpDto,
   VerifyPhoneOtpResponse,
 } from "./dto/register.dto";
-import { PLATFORM_WA_SENDER_ID } from "../auth/current-company.decorator";
-import { PrismaService } from "../prisma/prisma.service";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
+import { PLATFORM_WA_SENDER_ID } from "@/modules/auth/current-company.decorator";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 
 /**
  * Company self-registration dengan verifikasi OTP via WhatsApp.

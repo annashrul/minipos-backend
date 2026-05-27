@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   ActivityLogResponse,
@@ -9,8 +9,8 @@ import type {
   ListActivityLogsQueryDto,
   ListAuditLogsQueryDto,
 } from "./dto/audit-logs.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import {
   AuditLogsRepository,
   type RawAuditLog,

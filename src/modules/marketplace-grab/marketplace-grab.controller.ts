@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Body,
   Controller,
@@ -10,8 +10,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import type { AuthUser } from "@/contracts";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentUser } from "../auth/current-user.decorator";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { MarketplaceGrabService } from "./marketplace-grab.service";
 
 @Controller("marketplace/grab")

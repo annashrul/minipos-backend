@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -6,8 +6,8 @@ import {
 import { Prisma } from "@prisma/client";
 import { round2 } from "@/common/utils/math";
 import { AssertService } from "@/common/assert/assert.service";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   ClosePurchaseDto,
   ClosePurchaseResponse,
@@ -28,8 +28,8 @@ import type {
   UpdatePurchaseDto,
   UpdatePurchaseStatusDto,
 } from "./dto/purchases.dto";
-import { PrismaService } from "../prisma/prisma.service";
-import { RackStockHelperService } from "../racks/rack-stock-helper.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
 import { tenantWhere } from "@/common/utils/tenant";
 import {
   PurchasesRepository,

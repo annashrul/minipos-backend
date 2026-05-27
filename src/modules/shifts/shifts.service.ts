@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -14,14 +14,14 @@ import type {
   ShiftDetailResponse,
   ShiftResponse,
 } from "./dto/shifts.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import {
   ShiftsRepository,
   type RawShift,
   type RawShiftDetail,
 } from "./shifts.repository";
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
 
 @Injectable()
 export class ShiftsService {

@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from "@nestjs/common";
+﻿import { Body, Controller, Post } from "@nestjs/common";
 import {
   ForgotPasswordSchema,
   RegisterCompanySchema,
@@ -11,8 +11,8 @@ import {
   type ResetPasswordDto,
   type VerifyPhoneOtpDto,
 } from "./dto/register.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { Public } from "../auth/public.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { Public } from "@/modules/auth/public.decorator";
 import { RegisterService } from "./register.service";
 
 @Controller("register")

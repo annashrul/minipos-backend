@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
 import type {
@@ -12,7 +12,7 @@ import {
   SettingsRepository,
   type RawSetting,
 } from "./settings.repository";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
 
 type SettingCategory = "pos" | "receipt" | "kitchen" | null;
 

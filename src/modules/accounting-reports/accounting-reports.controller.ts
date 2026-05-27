@@ -26,11 +26,11 @@ import {
   type TrialBalanceQueryDto,
 } from "./dto/accounting-reports.dto";
 import type { AuthUser } from "@/contracts";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { CurrentUser } from "../auth/current-user.decorator";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { AccountingReportsService } from "./accounting-reports.service";
 
 @Controller("accounting-reports")

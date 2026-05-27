@@ -10,17 +10,17 @@ import {
 import {
   VerifyAuthorizationSchema,
   type VerifyAuthorizationDto,
-} from "../users/dto/users.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
+} from "@/modules/users/dto/users.dto";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
 
 const UpdateBusinessUnitSchema = z.object({
   businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"]),
 });
 type UpdateBusinessUnitDto = z.infer<typeof UpdateBusinessUnitSchema>;
-import { CurrentCompany } from "../auth/current-company.decorator";
-import { CurrentUser } from "../auth/current-user.decorator";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { MeService } from "./me.service";
-import { UsersService } from "../users/users.service";
+import { UsersService } from "@/modules/users/users.service";
 
 @Controller("me")
 export class MeController {

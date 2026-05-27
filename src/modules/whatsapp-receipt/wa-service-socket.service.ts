@@ -1,15 +1,15 @@
-import {
+﻿import {
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
 import { io, type Socket } from "socket.io-client";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import type {
   WaServiceInboundEvent,
   WaServiceSession,
-} from "../../common/wa-service/wa-service.types";
+} from "@/common/wa-service/wa-service.types";
 
 type ConnectionInfo = {
   companyId: string;

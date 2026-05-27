@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -14,8 +14,8 @@ import type {
   ScheduleStatusDto,
   UpdateEmployeeScheduleDto,
 } from "./dto/employee-schedules.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import {
   EmployeeSchedulesRepository,
   type RawSchedule,

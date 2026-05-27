@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -13,8 +13,8 @@ import type {
   UpdateUserDto,
   UserResponse,
 } from "./dto/users.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { UsersRepository, type RawUser } from "./users.repository";
 
 @Injectable()

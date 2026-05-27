@@ -8,15 +8,15 @@ import type {
   ListBundlesQueryDto,
   UpdateBundleDto,
 } from "./dto/bundles.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import {
   BUNDLE_SELECT,
   BundlesRepository,
   type RawBundle,
 } from "./bundles.repository";
-import { PrismaService } from "../prisma/prisma.service";
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
 
 @Injectable()
 export class BundlesService {

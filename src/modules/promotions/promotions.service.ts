@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -11,8 +11,8 @@ import type {
   PromotionResponse,
   UpdatePromotionDto,
 } from "./dto/promotions.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import {
   PROMOTION_SELECT,

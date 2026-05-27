@@ -1,5 +1,5 @@
-import { Module } from "@nestjs/common";
-import { RacksModule } from "../racks/racks.module";
+﻿import { Module } from "@nestjs/common";
+import { RacksModule } from "@/modules/racks/racks.module";
 import { PurchasesController } from "./purchases.controller";
 import { PurchasesRepository } from "./purchases.repository";
 import { PurchasesService } from "./purchases.service";

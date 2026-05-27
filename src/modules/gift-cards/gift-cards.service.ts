@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+﻿import { randomBytes } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -17,8 +17,8 @@ import type {
   TopupGiftCardDto,
   UpdateGiftCardDto,
 } from "./dto/gift-cards.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
 import {
   GiftCardsRepository,

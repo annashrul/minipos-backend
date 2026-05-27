@@ -19,8 +19,8 @@ import {
   type ListPlatformSubscriptionsQueryDto,
   type MarkPlatformSubscriptionPaidDto,
 } from "./dto/platform-subscriptions.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { CurrentUser } from "../auth/current-user.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { PlatformOwnerGuard } from "./platform-owner.guard";
 import { PlatformSubscriptionsService } from "./platform-subscriptions.service";
 

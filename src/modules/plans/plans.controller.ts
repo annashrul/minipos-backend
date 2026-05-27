@@ -20,9 +20,9 @@ import {
   type SetPlanMenuAccessDto,
   type UpdatePlanAccessDto,
 } from "./dto/plans.dto";
-import { ZodValidationPipe } from "../../common/pipes/zod.pipe";
-import { AccessGuard } from "../auth/access.guard";
-import { RequireAccess } from "../auth/require-access.decorator";
+import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { AccessGuard } from "@/modules/auth/access.guard";
+import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { PlansService } from "./plans.service";
 
 @Controller("plans")

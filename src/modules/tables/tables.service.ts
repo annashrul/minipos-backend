@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -12,8 +12,8 @@ import type {
   TableStatusDto,
   UpdateTableDto,
 } from "./dto/tables.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { TablesRepository, type RawTable } from "./tables.repository";
 
 @Injectable()

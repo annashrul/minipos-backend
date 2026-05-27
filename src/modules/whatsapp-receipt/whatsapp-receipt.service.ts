@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   Logger,
@@ -6,14 +6,14 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-import { WaServiceClient } from "../../common/wa-service/wa-service.client";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
+import { WaServiceClient } from "@/common/wa-service/wa-service.client";
 import type {
   WaServiceInboundEvent,
   WaServiceSession,
   WaServiceSessionStage,
-} from "../../common/wa-service/wa-service.types";
+} from "@/common/wa-service/wa-service.types";
 import { WaServiceSocketService } from "./wa-service-socket.service";
 
 // ─── Types eksternal (di-export buat kompatibilitas controller/chatbot) ──

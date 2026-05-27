@@ -1,5 +1,5 @@
-import { Controller, Get } from "@nestjs/common";
-import { CurrentCompany } from "../auth/current-company.decorator";
+﻿import { Controller, Get } from "@nestjs/common";
+import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { NotificationsService } from "./notifications.service";
 
 @Controller("notifications")

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+﻿import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
@@ -36,7 +36,7 @@ import type {
   TrialBalanceResponse,
   TrialBalanceRowResponse,
 } from "./dto/accounting-reports.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import { AccountingReportsRepository } from "./accounting-reports.repository";
 
 // ===========================

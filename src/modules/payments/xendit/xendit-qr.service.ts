@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+﻿import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
-import { PrismaService } from "../../prisma/prisma.service";
-import { EVENTS, RealtimeService } from "../../realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
 import { XenditClient, type XenditQrCode } from "./xendit.client";
 
 type CreateQrInput = {
