@@ -181,17 +181,11 @@ export type TableSessionResponse = {
   orders?: TableOrderResponse[];
 };
 
-export type TableOrderListResponse = {
-  orders: TableOrderResponse[];
-  total: number;
-  totalPages: number;
-};
+/** @deprecated Use PaginatedResponse<TableOrderResponse> instead */
+export type TableOrderListResponse = import("@/common/types/response").PaginatedResponse<TableOrderResponse>;
 
-export type TableSessionListResponse = {
-  sessions: TableSessionResponse[];
-  total: number;
-  totalPages: number;
-};
+/** @deprecated Use PaginatedResponse<TableSessionResponse> instead */
+export type TableSessionListResponse = import("@/common/types/response").PaginatedResponse<TableSessionResponse>;
 
 export type TablePaymentResponse = {
   id: string;

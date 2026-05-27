@@ -105,11 +105,7 @@ export type BranchStockResponse = {
   updatedAt: string;
 };
 
-export type BranchStockListResponse = {
-  stocks: BranchStockResponse[];
-  total: number;
-  totalPages: number;
-};
+// Replaced by PaginatedResponse<BranchStockResponse> from @/common/types/response
 
 // ===== Stock Card / Kartu Stok =====
 export const StockCardQuerySchema = z.object({

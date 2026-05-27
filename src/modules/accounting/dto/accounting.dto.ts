@@ -66,11 +66,7 @@ export type AccountCategoryResponse = {
   createdAt: string;
 };
 
-export type AccountCategoryListResponse = {
-  categories: AccountCategoryResponse[];
-  total: number;
-  totalPages: number;
-};
+// AccountCategoryListResponse removed — use PaginatedResponse<AccountCategoryResponse> instead
 
 // =============================================
 // Accounts (COA)

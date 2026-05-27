@@ -21,7 +21,6 @@ import type {
   PurchaseOrderResponse,
   PurchaseOrderStatusDto,
   PurchaseSummaryResponse,
-  PurchaseTransactionLogListResponse,
   PurchaseTransactionLogResponse,
   ReceivePurchaseDto,
   ReceivePurchaseResponse,
@@ -886,7 +885,7 @@ export class PurchasesService {
   async listTransactionLog(
     companyId: string,
     query: ListPurchaseTransactionLogQueryDto,
-  ): Promise<PurchaseTransactionLogListResponse> {
+  ): Promise<PaginatedResponse<PurchaseTransactionLogResponse>> {
     const where: Prisma.PurchaseTransactionLogWhereInput = { companyId };
     if (query.branchId) where.branchId = query.branchId;
     if (query.status) where.status = query.status;
@@ -966,11 +965,7 @@ export class PurchasesService {
       createdAt: r.createdAt.toISOString(),
     }));
 
-    return {
-      logs,
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(logs, total, query.page, query.perPage);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {

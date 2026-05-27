@@ -93,8 +93,4 @@ export type AccountingPeriodResponse = {
   updatedAt: string;
 };
 
-export type AccountingPeriodListResponse = {
-  periods: AccountingPeriodResponse[];
-  total: number;
-  totalPages: number;
-};
+// AccountingPeriodListResponse removed — use PaginatedResponse<AccountingPeriodResponse> instead

@@ -1,8 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   ListPlatformActivityLogsQueryDto,
-  PlatformActivityLogListResponse,
+  PlatformActivityLogResponse,
   PlatformNotificationListResponse,
 } from "./dto/platform-notifications.dto";
 import {
@@ -17,7 +19,7 @@ export class PlatformNotificationsService {
 
   async listActivityLogs(
     query: ListPlatformActivityLogsQueryDto,
-  ): Promise<PlatformActivityLogListResponse> {
+  ): Promise<PaginatedResponse<PlatformActivityLogResponse>> {
     const { page, perPage, search, action, entity } = query;
     const skip = (page - 1) * perPage;
 
@@ -42,11 +44,7 @@ export class PlatformNotificationsService {
       this.repo.countActivityLogs(where),
     ]);
 
-    return {
-      logs: logs.map(toActivityLogResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(logs.map(toActivityLogResponse), total, page, perPage);
   }
 
   async listNotifications(): Promise<PlatformNotificationListResponse> {

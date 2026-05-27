@@ -159,11 +159,7 @@ export type PurchaseTransactionLogResponse = {
   createdAt: string;
 };
 
-export type PurchaseTransactionLogListResponse = {
-  logs: PurchaseTransactionLogResponse[];
-  total: number;
-  totalPages: number;
-};
+// Replaced by PaginatedResponse<PurchaseTransactionLogResponse> from @/common/types/response
 
 export type ReceivePurchaseResponse = {
   receipt: GoodsReceiptResponse;

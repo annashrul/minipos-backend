@@ -6,8 +6,9 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
-  AccountingPeriodListResponse,
   AccountingPeriodResponse,
   CreateAccountingPeriodDto,
   ListAccountingPeriodsQueryDto,
@@ -25,7 +26,7 @@ export class AccountingPeriodsService {
   async list(
     companyId: string,
     query: ListAccountingPeriodsQueryDto,
-  ): Promise<AccountingPeriodListResponse> {
+  ): Promise<PaginatedResponse<AccountingPeriodResponse>> {
     const { search, status, from, to, page, perPage, sortBy, sortDir } = query;
     const where: Prisma.AccountingPeriodWhereInput = { companyId };
     if (status) where.status = status;
@@ -67,11 +68,7 @@ export class AccountingPeriodsService {
       this.repo.count(where),
     ]);
 
-    return {
-      periods: rows.map(toPeriodResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toPeriodResponse), total, page, perPage);
   }
 
   async findById(

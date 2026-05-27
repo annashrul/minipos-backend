@@ -135,11 +135,7 @@ export type RecurringJournalDetailResponse = RecurringJournalResponse & {
   lines: RecurringJournalLineResponse[];
 };
 
-export type RecurringJournalListResponse = {
-  templates: RecurringJournalResponse[];
-  total: number;
-  totalPages: number;
-};
+// Replaced by PaginatedResponse<RecurringJournalResponse> from @/common/types/response
 
 export type RunRecurringJournalResponse = {
   template: RecurringJournalResponse;

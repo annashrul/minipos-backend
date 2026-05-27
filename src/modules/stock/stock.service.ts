@@ -8,7 +8,6 @@ import type { PaginatedResponse } from "@/common/types/response";
 import { paginate } from "@/common/utils/pagination";
 import type {
   AdjustStockDto,
-  BranchStockListResponse,
   BranchStockResponse,
   ListBranchStockQueryDto,
   ListStockMovementsQueryDto,
@@ -102,7 +101,7 @@ export class StockService {
   async listBranchStock(
     companyId: string,
     query: ListBranchStockQueryDto,
-  ): Promise<BranchStockListResponse> {
+  ): Promise<PaginatedResponse<BranchStockResponse>> {
     const { branchId, search, lowStock, page, perPage } = query;
 
     const branch = await this.repo.findBranch(branchId, companyId);
@@ -131,11 +130,7 @@ export class StockService {
       this.repo.countBranchStock(where),
     ]);
 
-    return {
-      stocks: rows.map(toBranchStockResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBranchStockResponse), total, page, perPage);
   }
 
   async adjust(

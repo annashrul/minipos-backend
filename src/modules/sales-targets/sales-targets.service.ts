@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
+import { paginate } from "@/common/utils/pagination";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateSalesTargetDto,
@@ -144,11 +145,7 @@ export class SalesTargetsService {
     }
     if (status === "FAILED") mapped = mapped.filter((m) => m.status === "FAILED");
 
-    return {
-      salesTargets: mapped,
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(mapped, total, page, perPage);
   }
 
   async findById(

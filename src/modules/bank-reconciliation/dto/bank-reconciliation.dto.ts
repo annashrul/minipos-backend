@@ -131,8 +131,4 @@ export type BankReconciliationDetailResponse = BankReconciliationResponse & {
   items: BankReconciliationItemResponse[];
 };
 
-export type BankReconciliationListResponse = {
-  reconciliations: BankReconciliationResponse[];
-  total: number;
-  totalPages: number;
-};
+// BankReconciliationListResponse removed — use PaginatedResponse<BankReconciliationResponse> instead

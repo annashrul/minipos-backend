@@ -57,11 +57,7 @@ export type PlatformSubscriptionResponse = SubscriptionResponse & {
   companySlug: string;
 };
 
-export type PlatformSubscriptionListResponse = {
-  subscriptions: PlatformSubscriptionResponse[];
-  total: number;
-  totalPages: number;
-};
+// PlatformSubscriptionListResponse removed — use PaginatedResponse<PlatformSubscriptionResponse> instead
 
 export type PlatformCompanyResponse = {
   id: string;

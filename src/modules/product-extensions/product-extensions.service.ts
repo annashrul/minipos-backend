@@ -368,11 +368,7 @@ export class ProductExtensionsService {
       this.repo.countBranchPrices(where),
     ]);
 
-    return {
-      items: rows.map(toBranchPriceResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toBranchPriceResponse), total, page, perPage);
   }
 
   async listBranchPricesForProduct(

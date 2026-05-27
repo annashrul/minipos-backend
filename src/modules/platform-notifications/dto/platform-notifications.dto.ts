@@ -24,11 +24,7 @@ export type PlatformActivityLogResponse = {
   createdAt: string;
 };
 
-export type PlatformActivityLogListResponse = {
-  logs: PlatformActivityLogResponse[];
-  total: number;
-  totalPages: number;
-};
+// PlatformActivityLogListResponse removed — use PaginatedResponse<PlatformActivityLogResponse> instead
 
 export type PlatformNotificationItem = {
   id: string;

@@ -63,11 +63,7 @@ export type SubscriptionResponse = {
   createdAt: string;
 };
 
-export type SubscriptionListResponse = {
-  subscriptions: SubscriptionResponse[];
-  total: number;
-  totalPages: number;
-};
+// Replaced by PaginatedResponse<SubscriptionResponse> from @/common/types/response
 
 export type CurrentSubscriptionResponse = {
   plan: string;

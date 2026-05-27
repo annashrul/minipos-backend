@@ -108,11 +108,8 @@ export type SalesTargetResponse = {
   updatedAt: string;
 };
 
-export type SalesTargetListResponse = {
-  salesTargets: SalesTargetResponse[];
-  total: number;
-  totalPages: number;
-};
+/** @deprecated Use PaginatedResponse<SalesTargetResponse> instead */
+export type SalesTargetListResponse = import("@/common/types/response").PaginatedResponse<SalesTargetResponse>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leaderboard (peringkat user berdasarkan revenue dalam periode)

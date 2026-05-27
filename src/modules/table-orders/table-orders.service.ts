@@ -21,6 +21,7 @@ import type {
   TableSessionListResponse,
   TableSessionResponse,
 } from "./dto/table-orders.dto";
+import { paginate } from "@/common/utils/pagination";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
 import {
@@ -549,11 +550,7 @@ export class TableOrdersService {
       this.repo.findOrdersFull(where, (query.page - 1) * query.perPage, query.perPage),
       this.repo.countOrders(where),
     ]);
-    return {
-      orders: rows.map(toOrderResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toOrderResponse), total, query.page, query.perPage);
   }
 
   async listSessions(
@@ -571,11 +568,7 @@ export class TableOrdersService {
       this.repo.findSessionsFull(where, (query.page - 1) * query.perPage, query.perPage),
       this.repo.countSessions(where),
     ]);
-    return {
-      sessions: rows.map(toSessionResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toSessionResponse), total, query.page, query.perPage);
   }
 
   async approve(

@@ -14,8 +14,8 @@ import type {
   ListRacksQueryDto,
   ProductRackLookupResponse,
   RackDetailResponse,
-  RackMovementListResponse,
   RackResponse,
+  RackStockMovementResponse,
   ReportDiscrepancyDto,
   SetRackStockDto,
   TransferRackStockDto,
@@ -504,7 +504,7 @@ export class RacksService {
   async listMovements(
     companyId: string,
     query: ListRackMovementsQueryDto,
-  ): Promise<RackMovementListResponse> {
+  ): Promise<PaginatedResponse<RackStockMovementResponse>> {
     const { rackId, branchId, productId, type, dateFrom, dateTo, page, perPage } =
       query;
     const where: Prisma.RackStockMovementWhereInput = {
@@ -527,31 +527,29 @@ export class RacksService {
       this.repo.countMovements(where),
     ]);
 
-    return {
-      movements: rows.map((r) => ({
-        id: r.id,
-        productId: r.productId,
-        productCode: r.product.code,
-        productName: r.product.name,
-        unit: r.product.unit,
-        branchId: r.branchId,
-        branchName: r.branch.name,
-        fromRackId: r.fromRackId,
-        fromRackCode: r.fromRack?.code ?? null,
-        toRackId: r.toRackId,
-        toRackCode: r.toRack?.code ?? null,
-        qty: r.qty,
-        type: r.type,
-        refType: r.refType,
-        refId: r.refId,
-        notes: r.notes,
-        byUserId: r.byUserId,
-        byUserName: r.byUser?.name ?? null,
-        createdAt: r.createdAt.toISOString(),
-      })),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    const items: RackStockMovementResponse[] = rows.map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      productCode: r.product.code,
+      productName: r.product.name,
+      unit: r.product.unit,
+      branchId: r.branchId,
+      branchName: r.branch.name,
+      fromRackId: r.fromRackId,
+      fromRackCode: r.fromRack?.code ?? null,
+      toRackId: r.toRackId,
+      toRackCode: r.toRack?.code ?? null,
+      qty: r.qty,
+      type: r.type,
+      refType: r.refType,
+      refId: r.refId,
+      notes: r.notes,
+      byUserId: r.byUserId,
+      byUserName: r.byUser?.name ?? null,
+      createdAt: r.createdAt.toISOString(),
+    }));
+
+    return paginate(items, total, page, perPage);
   }
 
   /**

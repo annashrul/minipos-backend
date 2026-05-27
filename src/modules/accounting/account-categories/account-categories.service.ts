@@ -6,8 +6,9 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
-  AccountCategoryListResponse,
   AccountCategoryResponse,
   CreateAccountCategoryDto,
   ListAccountCategoriesQueryDto,
@@ -36,7 +37,7 @@ export class AccountCategoriesService {
   async list(
     companyId: string,
     query: ListAccountCategoriesQueryDto,
-  ): Promise<AccountCategoryListResponse> {
+  ): Promise<PaginatedResponse<AccountCategoryResponse>> {
     const { search, type, page, perPage } = query;
     const where: Prisma.AccountCategoryWhereInput = { companyId };
     if (type) where.type = type;
@@ -55,11 +56,7 @@ export class AccountCategoriesService {
       this.prisma.accountCategory.count({ where }),
     ]);
 
-    return {
-      categories: rows.map(toCategoryResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toCategoryResponse), total, page, perPage);
   }
 
   async findById(

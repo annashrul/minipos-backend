@@ -6,12 +6,13 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { AuthUser } from "@/contracts";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   CreateSubscriptionDto,
   CurrentSubscriptionResponse,
   ListSubscriptionsQueryDto,
   MarkSubscriptionPaidDto,
-  SubscriptionListResponse,
   SubscriptionResponse,
 } from "./dto/subscriptions.dto";
 import { PrismaService } from "@/modules/prisma/prisma.service";
@@ -30,7 +31,7 @@ export class SubscriptionsService {
   async list(
     companyId: string,
     query: ListSubscriptionsQueryDto,
-  ): Promise<SubscriptionListResponse> {
+  ): Promise<PaginatedResponse<SubscriptionResponse>> {
     const { status, plan, from, to, page, perPage } = query;
     const where: Prisma.SubscriptionPaymentWhereInput = { companyId };
     if (status) where.status = status;
@@ -46,11 +47,7 @@ export class SubscriptionsService {
       this.repo.count(where),
     ]);
 
-    return {
-      subscriptions: rows.map(toSubscriptionResponse),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toSubscriptionResponse), total, page, perPage);
   }
 
   async findById(

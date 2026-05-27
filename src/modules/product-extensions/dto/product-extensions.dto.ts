@@ -126,8 +126,5 @@ export type BranchPriceResponse = {
   updatedAt: string;
 };
 
-export type BranchPriceListResponse = {
-  items: BranchPriceResponse[];
-  total: number;
-  totalPages: number;
-};
+/** @deprecated Use PaginatedResponse<BranchPriceResponse> instead */
+export type BranchPriceListResponse = import("@/common/types/response").PaginatedResponse<BranchPriceResponse>;

@@ -8,13 +8,14 @@ import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { round2 } from "@/common/utils/math";
 import { AssertService } from "@/common/assert/assert.service";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   CreateRecurringJournalDto,
   ListRecurringJournalsQueryDto,
   RecurringJournalDetailResponse,
   RecurringJournalLineInputDto,
   RecurringJournalLineResponse,
-  RecurringJournalListResponse,
   RecurringJournalResponse,
   RunRecurringJournalDto,
   RunRecurringJournalResponse,
@@ -41,7 +42,7 @@ export class RecurringJournalsService {
   async list(
     companyId: string,
     query: ListRecurringJournalsQueryDto,
-  ): Promise<RecurringJournalListResponse> {
+  ): Promise<PaginatedResponse<RecurringJournalResponse>> {
     const where: Prisma.RecurringJournalTemplateWhereInput = { companyId };
     if (query.search) {
       where.name = { contains: query.search, mode: "insensitive" };
@@ -60,11 +61,7 @@ export class RecurringJournalsService {
       this.repo.count(where),
     ]);
 
-    return {
-      templates: rows.map(toTemplateResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toTemplateResponse), total, query.page, query.perPage);
   }
 
   async findById(
@@ -76,7 +73,7 @@ export class RecurringJournalsService {
     return toTemplateDetailResponse(template);
   }
 
-  async listDue(companyId: string): Promise<RecurringJournalListResponse> {
+  async listDue(companyId: string): Promise<PaginatedResponse<RecurringJournalResponse>> {
     const now = new Date();
     const where: Prisma.RecurringJournalTemplateWhereInput = {
       companyId,
@@ -84,11 +81,7 @@ export class RecurringJournalsService {
       nextRunDate: { lte: now },
     };
     const rows = await this.repo.findDue(where);
-    return {
-      templates: rows.map(toTemplateResponse),
-      total: rows.length,
-      totalPages: 1,
-    };
+    return paginate(rows.map(toTemplateResponse), rows.length, 1, rows.length || 1);
   }
 
   async create(

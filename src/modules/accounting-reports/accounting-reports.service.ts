@@ -2,6 +2,7 @@
 import { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
+import { paginate } from "@/common/utils/pagination";
 import type {
   AccountingAgingQueryDto,
   AccountingDashboardQueryDto,
@@ -642,9 +643,7 @@ export class AccountingReportsService {
       ppnKurangBayar,
       pph21: map.get("PPH21")?.total_tax ?? 0,
       pph23: map.get("PPH23")?.total_tax ?? 0,
-      details: details as unknown as import("./dto/accounting-reports.dto").TaxSummaryDetailResponse[],
-      total,
-      totalPages: Math.ceil(total / perPage),
+      ...paginate(details as unknown as import("./dto/accounting-reports.dto").TaxSummaryDetailResponse[], total, page, perPage),
     };
   }
 
@@ -790,11 +789,7 @@ export class AccountingReportsService {
     ]);
 
     const total = Number(countResult[0]?.total ?? 0);
-    return {
-      entries: rows,
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows, total, page, perPage);
   }
 
   // ============================================================

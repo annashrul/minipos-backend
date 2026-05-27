@@ -5,11 +5,12 @@
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { round2 } from "@/common/utils/math";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   BankReconciliationDetailResponse,
   BankReconciliationItemInputDto,
   BankReconciliationItemResponse,
-  BankReconciliationListResponse,
   BankReconciliationResponse,
   CreateBankReconciliationDto,
   ListBankReconciliationsQueryDto,
@@ -38,7 +39,7 @@ export class BankReconciliationService {
   async list(
     companyId: string,
     query: ListBankReconciliationsQueryDto,
-  ): Promise<BankReconciliationListResponse> {
+  ): Promise<PaginatedResponse<BankReconciliationResponse>> {
     const where: Prisma.BankReconciliationWhereInput = { companyId };
     if (query.accountId) where.accountId = query.accountId;
     if (query.status) where.status = query.status;
@@ -53,11 +54,7 @@ export class BankReconciliationService {
       this.repo.count(where),
     ]);
 
-    return {
-      reconciliations: rows.map(toReconResponse),
-      total,
-      totalPages: Math.ceil(total / query.perPage),
-    };
+    return paginate(rows.map(toReconResponse), total, query.page, query.perPage);
   }
 
   async findById(

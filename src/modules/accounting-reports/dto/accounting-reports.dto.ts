@@ -277,10 +277,7 @@ export type TaxSummaryResponse = {
   ppnKurangBayar: number;
   pph21: number;
   pph23: number;
-  details: TaxSummaryDetailResponse[];
-  total: number;
-  totalPages: number;
-};
+} & import("@/common/types/response").PaginatedResponse<TaxSummaryDetailResponse>;
 
 export type EFakturExportResponse = {
   csv: string;
@@ -336,11 +333,8 @@ export type DrillDownEntryResponse = {
   credit: number;
 };
 
-export type DrillDownResponse = {
-  entries: DrillDownEntryResponse[];
-  total: number;
-  totalPages: number;
-};
+/** @deprecated Use PaginatedResponse<DrillDownEntryResponse> instead */
+export type DrillDownResponse = import("@/common/types/response").PaginatedResponse<DrillDownEntryResponse>;
 
 export type ClosingChecklistCheckResponse = {
   key: string;

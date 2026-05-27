@@ -5,13 +5,14 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { AuthUser } from "@/contracts";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   CreatePlatformSubscriptionDto,
   ListPlatformCompaniesQueryDto,
   ListPlatformSubscriptionsQueryDto,
   MarkPlatformSubscriptionPaidDto,
   PlatformCompanyResponse,
-  PlatformSubscriptionListResponse,
   PlatformSubscriptionResponse,
   PlatformSubscriptionStatsResponse,
 } from "./dto/platform-subscriptions.dto";
@@ -31,7 +32,7 @@ export class PlatformSubscriptionsService {
 
   async list(
     query: ListPlatformSubscriptionsQueryDto,
-  ): Promise<PlatformSubscriptionListResponse> {
+  ): Promise<PaginatedResponse<PlatformSubscriptionResponse>> {
     const { companyId, status, plan, from, to, page, perPage } = query;
     const where: Prisma.SubscriptionPaymentWhereInput = {};
     if (companyId) where.companyId = companyId;
@@ -48,11 +49,7 @@ export class PlatformSubscriptionsService {
       this.repo.count(where),
     ]);
 
-    return {
-      subscriptions: rows.map(toPlatformSubscription),
-      total,
-      totalPages: Math.ceil(total / perPage),
-    };
+    return paginate(rows.map(toPlatformSubscription), total, page, perPage);
   }
 
   async findById(id: string): Promise<PlatformSubscriptionResponse> {

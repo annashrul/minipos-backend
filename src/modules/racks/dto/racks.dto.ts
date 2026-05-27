@@ -148,11 +148,7 @@ export type RackStockMovementResponse = {
   createdAt: string;
 };
 
-export type RackMovementListResponse = {
-  movements: RackStockMovementResponse[];
-  total: number;
-  totalPages: number;
-};
+// Replaced by PaginatedResponse<RackStockMovementResponse> from @/common/types/response
 
 export const ReportDiscrepancySchema = z.object({
   rackId: z.string().uuid(),

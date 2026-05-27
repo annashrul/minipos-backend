@@ -344,6 +344,7 @@ function toBrandResponse(brand: RawBrand): BrandResponse {
 - `_count` di-flatten ke field yang bermakna (`productCount`, bukan `_count.products`).
 - Nullable field tetap dipertahankan (`null`, bukan dihilangkan).
 
+
 ---
 
 ## 7. Controller Pattern
