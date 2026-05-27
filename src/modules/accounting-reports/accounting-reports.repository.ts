@@ -722,10 +722,26 @@ export class AccountingReportsRepository {
     branchId: string | undefined,
     companyId: string,
   ): Promise<RawTaxSummaryAggRow[]> {
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawTaxSummaryAggRow[]>(`
+    const fromPlaceholder = `$${paramIdx}`;
+    params.push(toDate(dateFrom));
+    paramIdx++;
+
+    const toPlaceholder = `$${paramIdx}`;
+    params.push(endOfDay(dateTo));
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    const branch = branchSQL(branchId, "je", paramIdx);
+    params.push(...branch.params);
+
+    return this.prisma.$queryRawUnsafe<RawTaxSummaryAggRow[]>(
+      `
       SELECT
         jel."taxType" AS tax_type,
         COALESCE(SUM(COALESCE(jel."taxAmount", 0)), 0)::float AS total_tax,
@@ -737,12 +753,14 @@ export class AccountingReportsRepository {
       JOIN account_categories ac ON ac.id = a."categoryId"
       WHERE je.status = 'POSTED'
         AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
+        AND je.date >= ${fromPlaceholder}
+        AND je.date <= ${toPlaceholder}
+        AND ac."companyId" = ${companyPlaceholder}
+        ${branch.condition}
       GROUP BY jel."taxType"
-    `);
+      `,
+      ...params,
+    );
   }
 
   findTaxSummaryDetails(
@@ -757,15 +775,49 @@ export class AccountingReportsRepository {
     perPage: number,
     offset: number,
   ): Promise<RawTaxSummaryDetailRow[]> {
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const typeFilter =
-      taxType && taxType !== "ALL" ? `AND jel."taxType" = '${taxType}'` : "";
-    const searchFilter = search
-      ? `AND (je."entryNumber" ILIKE '%${search}%' OR je.description ILIKE '%${search}%' OR je.reference ILIKE '%${search}%')`
-      : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawTaxSummaryDetailRow[]>(`
+    const fromPlaceholder = `$${paramIdx}`;
+    params.push(toDate(dateFrom));
+    paramIdx++;
+
+    const toPlaceholder = `$${paramIdx}`;
+    params.push(endOfDay(dateTo));
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    const branch = branchSQL(branchId, "je", paramIdx);
+    params.push(...branch.params);
+    paramIdx += branch.params.length;
+
+    let typeCondition = "";
+    if (taxType && taxType !== "ALL") {
+      typeCondition = `AND jel."taxType" = $${paramIdx}`;
+      params.push(taxType);
+      paramIdx++;
+    }
+
+    let searchCondition = "";
+    if (search) {
+      const searchPattern = `%${search}%`;
+      searchCondition = `AND (je."entryNumber" ILIKE $${paramIdx} OR je.description ILIKE $${paramIdx} OR je.reference ILIKE $${paramIdx})`;
+      params.push(searchPattern);
+      paramIdx++;
+    }
+
+    const limitPlaceholder = `$${paramIdx}`;
+    params.push(perPage);
+    paramIdx++;
+
+    const offsetPlaceholder = `$${paramIdx}`;
+    params.push(offset);
+
+    return this.prisma.$queryRawUnsafe<RawTaxSummaryDetailRow[]>(
+      `
       SELECT
         je."entryNumber" AS entry_number, je.date::text, je.description,
         COALESCE(je.reference, '') AS reference,
@@ -779,15 +831,17 @@ export class AccountingReportsRepository {
       JOIN account_categories ac ON ac.id = a."categoryId"
       WHERE je.status = 'POSTED'
         AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
-        ${typeFilter}
-        ${searchFilter}
+        AND je.date >= ${fromPlaceholder}
+        AND je.date <= ${toPlaceholder}
+        AND ac."companyId" = ${companyPlaceholder}
+        ${branch.condition}
+        ${typeCondition}
+        ${searchCondition}
       ORDER BY ${sortColumn} ${sortDirSql}
-      LIMIT ${perPage} OFFSET ${offset}
-    `);
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `,
+      ...params,
+    );
   }
 
   findTaxSummaryCount(
@@ -798,15 +852,41 @@ export class AccountingReportsRepository {
     taxType: string | undefined,
     search: string | undefined,
   ): Promise<RawCountRow[]> {
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const typeFilter =
-      taxType && taxType !== "ALL" ? `AND jel."taxType" = '${taxType}'` : "";
-    const searchFilter = search
-      ? `AND (je."entryNumber" ILIKE '%${search}%' OR je.description ILIKE '%${search}%' OR je.reference ILIKE '%${search}%')`
-      : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawCountRow[]>(`
+    const fromPlaceholder = `$${paramIdx}`;
+    params.push(toDate(dateFrom));
+    paramIdx++;
+
+    const toPlaceholder = `$${paramIdx}`;
+    params.push(endOfDay(dateTo));
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    const branch = branchSQL(branchId, "je", paramIdx);
+    params.push(...branch.params);
+    paramIdx += branch.params.length;
+
+    let typeCondition = "";
+    if (taxType && taxType !== "ALL") {
+      typeCondition = `AND jel."taxType" = $${paramIdx}`;
+      params.push(taxType);
+      paramIdx++;
+    }
+
+    let searchCondition = "";
+    if (search) {
+      const searchPattern = `%${search}%`;
+      searchCondition = `AND (je."entryNumber" ILIKE $${paramIdx} OR je.description ILIKE $${paramIdx} OR je.reference ILIKE $${paramIdx})`;
+      params.push(searchPattern);
+    }
+
+    return this.prisma.$queryRawUnsafe<RawCountRow[]>(
+      `
       SELECT COUNT(*)::int AS total
       FROM journal_entry_lines jel
       JOIN journal_entries je ON je.id = jel."journalId"
@@ -814,13 +894,15 @@ export class AccountingReportsRepository {
       JOIN account_categories ac ON ac.id = a."categoryId"
       WHERE je.status = 'POSTED'
         AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
-        ${typeFilter}
-        ${searchFilter}
-    `);
+        AND je.date >= ${fromPlaceholder}
+        AND je.date <= ${toPlaceholder}
+        AND ac."companyId" = ${companyPlaceholder}
+        ${branch.condition}
+        ${typeCondition}
+        ${searchCondition}
+      `,
+      ...params,
+    );
   }
 
   // ── E-Faktur ─────────────────────────────────────────────────────
@@ -830,7 +912,8 @@ export class AccountingReportsRepository {
     dateTo: string,
     companyId: string,
   ): Promise<RawEFakturRow[]> {
-    return this.prisma.$queryRawUnsafe<RawEFakturRow[]>(`
+    return this.prisma.$queryRawUnsafe<RawEFakturRow[]>(
+      `
       SELECT
         je.date::text, COALESCE(je.reference, je."entryNumber") AS invoice,
         COALESCE(jel."taxBaseAmount", 0)::float AS dpp,
@@ -843,10 +926,14 @@ export class AccountingReportsRepository {
       JOIN account_categories ac ON ac.id = a."categoryId"
       WHERE je.status = 'POSTED'
         AND jel."taxType" IN ('PPN_KELUARAN', 'PPN_MASUKAN')
-        AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
+        AND je.date >= $1 AND je.date <= $2
+        AND ac."companyId" = $3
       ORDER BY je.date ASC
-    `);
+      `,
+      toDate(dateFrom),
+      endOfDay(dateTo),
+      companyId,
+    );
   }
 
   // ── 8. AP/AR Aging ───────────────────────────────────────────────
@@ -857,11 +944,26 @@ export class AccountingReportsRepository {
     branchId: string | undefined,
     asOfDate: string | undefined,
   ): Promise<RawAgingDetailRow[]> {
-    const asOf = asOfDate ? `'${asOfDate}'::date` : "CURRENT_DATE";
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND d."branchId" = '${branchId}'` : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawAgingDetailRow[]>(`
+    const typePlaceholder = `$${paramIdx}`;
+    params.push(type);
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    const asOfPlaceholder = `$${paramIdx}`;
+    params.push(asOfDate ? toDate(asOfDate) : new Date());
+    paramIdx++;
+
+    const branch = branchSQL(branchId, "d", paramIdx);
+    params.push(...branch.params);
+
+    return this.prisma.$queryRawUnsafe<RawAgingDetailRow[]>(
+      `
       SELECT
         d.id, d."partyName" AS party_name, d."partyType" AS party_type,
         d."totalAmount"::float AS total_amount, d."paidAmount"::float AS paid_amount,
@@ -871,20 +973,22 @@ export class AccountingReportsRepository {
         COALESCE(d.description, '') AS description,
         CASE
           WHEN d."dueDate" IS NULL THEN 'NO_DUE_DATE'
-          WHEN d."dueDate" >= ${asOf} THEN 'CURRENT'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '30 days' THEN '1_30'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '60 days' THEN '31_60'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '90 days' THEN '61_90'
+          WHEN d."dueDate" >= ${asOfPlaceholder}::date THEN 'CURRENT'
+          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '30 days' THEN '1_30'
+          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '60 days' THEN '31_60'
+          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '90 days' THEN '61_90'
           ELSE 'OVER_90'
         END AS aging_bucket,
-        GREATEST(0, EXTRACT(DAY FROM ${asOf} - d."dueDate"))::int AS days_past_due
+        GREATEST(0, EXTRACT(DAY FROM ${asOfPlaceholder}::date - d."dueDate"))::int AS days_past_due
       FROM debts d
-      WHERE d.type = '${type}'
+      WHERE d.type = ${typePlaceholder}
         AND d.status IN ('UNPAID', 'PARTIAL')
-        AND d."companyId" = '${companyId}'
-        ${branchFilter}
+        AND d."companyId" = ${companyPlaceholder}
+        ${branch.condition}
       ORDER BY d."dueDate" ASC NULLS LAST
-    `);
+      `,
+      ...params,
+    );
   }
 
   // ── 9. Drill-Down ────────────────────────────────────────────────
@@ -898,18 +1002,42 @@ export class AccountingReportsRepository {
     perPage: number,
     offset: number,
   ): Promise<RawDrillDownRow[]> {
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const dateFilter =
-      dateFrom && dateTo
-        ? `AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'`
-        : dateFrom
-          ? `AND je.date >= '${dateFrom}'`
-          : dateTo
-            ? `AND je.date <= '${dateTo}'`
-            : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawDrillDownRow[]>(`
+    const accountPlaceholder = `$${paramIdx}`;
+    params.push(accountId);
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    let dateCondition = "";
+    if (dateFrom) {
+      dateCondition += ` AND je.date >= $${paramIdx}`;
+      params.push(toDate(dateFrom));
+      paramIdx++;
+    }
+    if (dateTo) {
+      dateCondition += ` AND je.date <= $${paramIdx}`;
+      params.push(endOfDay(dateTo));
+      paramIdx++;
+    }
+
+    const branch = branchSQL(branchId, "je", paramIdx);
+    params.push(...branch.params);
+    paramIdx += branch.params.length;
+
+    const limitPlaceholder = `$${paramIdx}`;
+    params.push(perPage);
+    paramIdx++;
+
+    const offsetPlaceholder = `$${paramIdx}`;
+    params.push(offset);
+
+    return this.prisma.$queryRawUnsafe<RawDrillDownRow[]>(
+      `
       SELECT je.id AS journal_id, je."entryNumber" AS entry_number, je.date::text,
         je.description, COALESCE(je.reference, '') AS reference,
         COALESCE(je."referenceType", 'MANUAL') AS reference_type,
@@ -918,13 +1046,15 @@ export class AccountingReportsRepository {
       JOIN journal_entries je ON je.id = jel."journalId"
       JOIN accounts a ON a.id = jel."accountId"
       JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE jel."accountId" = '${accountId}'
+      WHERE jel."accountId" = ${accountPlaceholder}
         AND je.status = 'POSTED'
-        AND ac."companyId" = '${companyId}'
-        ${dateFilter} ${branchFilter}
+        AND ac."companyId" = ${companyPlaceholder}
+        ${dateCondition} ${branch.condition}
       ORDER BY je.date DESC, je."createdAt" DESC
-      LIMIT ${perPage} OFFSET ${offset}
-    `);
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `,
+      ...params,
+    );
   }
 
   findDrillDownCount(
@@ -934,28 +1064,46 @@ export class AccountingReportsRepository {
     dateTo: string | undefined,
     branchId: string | undefined,
   ): Promise<RawCountRow[]> {
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const dateFilter =
-      dateFrom && dateTo
-        ? `AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'`
-        : dateFrom
-          ? `AND je.date >= '${dateFrom}'`
-          : dateTo
-            ? `AND je.date <= '${dateTo}'`
-            : "";
+    let paramIdx = 1;
+    const params: unknown[] = [];
 
-    return this.prisma.$queryRawUnsafe<RawCountRow[]>(`
+    const accountPlaceholder = `$${paramIdx}`;
+    params.push(accountId);
+    paramIdx++;
+
+    const companyPlaceholder = `$${paramIdx}`;
+    params.push(companyId);
+    paramIdx++;
+
+    let dateCondition = "";
+    if (dateFrom) {
+      dateCondition += ` AND je.date >= $${paramIdx}`;
+      params.push(toDate(dateFrom));
+      paramIdx++;
+    }
+    if (dateTo) {
+      dateCondition += ` AND je.date <= $${paramIdx}`;
+      params.push(endOfDay(dateTo));
+      paramIdx++;
+    }
+
+    const branch = branchSQL(branchId, "je", paramIdx);
+    params.push(...branch.params);
+
+    return this.prisma.$queryRawUnsafe<RawCountRow[]>(
+      `
       SELECT COUNT(*)::int AS total
       FROM journal_entry_lines jel
       JOIN journal_entries je ON je.id = jel."journalId"
       JOIN accounts a ON a.id = jel."accountId"
       JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE jel."accountId" = '${accountId}'
+      WHERE jel."accountId" = ${accountPlaceholder}
         AND je.status = 'POSTED'
-        AND ac."companyId" = '${companyId}'
-        ${dateFilter} ${branchFilter}
-    `);
+        AND ac."companyId" = ${companyPlaceholder}
+        ${dateCondition} ${branch.condition}
+      `,
+      ...params,
+    );
   }
 
   // ── 10. Period-End Closing ───────────────────────────────────────
@@ -984,7 +1132,8 @@ export class AccountingReportsRepository {
     dateTo: string,
     companyId: string,
   ): Promise<RawTBCheckRow[]> {
-    return this.prisma.$queryRawUnsafe<RawTBCheckRow[]>(`
+    return this.prisma.$queryRawUnsafe<RawTBCheckRow[]>(
+      `
       SELECT
         COALESCE(SUM(jel.debit), 0)::float AS total_debit,
         COALESCE(SUM(jel.credit), 0)::float AS total_credit
@@ -992,8 +1141,11 @@ export class AccountingReportsRepository {
       JOIN journal_entries je ON je.id = jel."journalId"
       JOIN accounts a ON a.id = jel."accountId"
       JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED' AND je.date <= '${dateTo}' AND ac."companyId" = '${companyId}'
-    `);
+      WHERE je.status = 'POSTED' AND je.date <= $1 AND ac."companyId" = $2
+      `,
+      endOfDay(dateTo),
+      companyId,
+    );
   }
 
   findTxnWithoutJournal(
@@ -1001,12 +1153,17 @@ export class AccountingReportsRepository {
     dateFrom: string,
     dateTo: string,
   ): Promise<RawTxnMissingRow[]> {
-    return this.prisma.$queryRawUnsafe<RawTxnMissingRow[]>(`
+    return this.prisma.$queryRawUnsafe<RawTxnMissingRow[]>(
+      `
       SELECT COUNT(*)::int AS count FROM transactions t
-      WHERE t."companyId" = '${companyId}' AND t.status = 'COMPLETED'
-        AND t."createdAt" >= '${dateFrom}' AND t."createdAt" <= '${dateTo} 23:59:59'
+      WHERE t."companyId" = $1 AND t.status = 'COMPLETED'
+        AND t."createdAt" >= $2 AND t."createdAt" <= $3
         AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je."referenceType" = 'TRANSACTION' AND je."referenceId" = t.id)
-    `);
+      `,
+      companyId,
+      toDate(dateFrom),
+      endOfDay(dateTo),
+    );
   }
 
   findIncomeClosingRows(
@@ -1014,7 +1171,8 @@ export class AccountingReportsRepository {
     dateFrom: string,
     dateTo: string,
   ): Promise<RawIncomeClosingRow[]> {
-    return this.prisma.$queryRawUnsafe<RawIncomeClosingRow[]>(`
+    return this.prisma.$queryRawUnsafe<RawIncomeClosingRow[]>(
+      `
       SELECT a.id AS account_id, a.code AS account_code, a.name AS account_name, ac.type AS cat_type,
         CASE
           WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0))::float
@@ -1023,11 +1181,15 @@ export class AccountingReportsRepository {
       FROM accounts a
       JOIN account_categories ac ON ac.id = a."categoryId"
       LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
-      LEFT JOIN journal_entries je ON je.id = jel."journalId" AND je.status = 'POSTED' AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'
-      WHERE ac.type IN ('REVENUE', 'EXPENSE') AND a."isActive" = true AND ac."companyId" = '${companyId}'
+      LEFT JOIN journal_entries je ON je.id = jel."journalId" AND je.status = 'POSTED' AND je.date >= $1 AND je.date <= $2
+      WHERE ac.type IN ('REVENUE', 'EXPENSE') AND a."isActive" = true AND ac."companyId" = $3
       GROUP BY a.id, a.code, a.name, ac.type
       HAVING CASE WHEN ac.type = 'REVENUE' THEN COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0) ELSE COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0) END > 0
-    `);
+      `,
+      toDate(dateFrom),
+      endOfDay(dateTo),
+      companyId,
+    );
   }
 
   findRetainedEarningsAccount(companyId: string) {
