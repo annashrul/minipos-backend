@@ -1242,7 +1242,250 @@ Gunakan checklist ini sebelum menulis atau mereview query.
 9. Gunakan `companyId` langsung di query untuk validasi ownership.
 10. Gunakan pagination dan `orderBy` untuk endpoint list.
 11. Jangan lakukan query di dalam loop jika bisa digabungkan.
-12. Service boleh formatting response, tetapi query logic sebaiknya tetap di repository atau Prisma query.
+12. Service boleh formatting response, tetapi query logic sebaiknya tetap di repository.
+13. Konversi array ke `Map` sebelum loop untuk lookup berulang.
+14. Gunakan parameterized query untuk raw SQL — jangan string interpolation.
+
+---
+
+# 26. Konversi Array ke Map untuk Lookup Berulang
+
+## Masalah
+
+Contoh kurang baik:
+
+```ts
+for (const item of items) {
+  const unit = product.units.find((u) => u.id === item.unitId);
+  const group = product.modifierGroups.find((g) => g.id === item.groupId);
+}
+```
+
+Setiap iterasi melakukan `.find()` yang O(n) — jika ada 100 items dan 50 units, total operasi = 5000.
+
+## Solusi
+
+Konversi array ke `Map` sebelum loop:
+
+```ts
+const unitMap = new Map(product.units.map((u) => [u.id, u]));
+const groupMap = new Map(product.modifierGroups.map((g) => [g.id, g]));
+
+for (const item of items) {
+  const unit = unitMap.get(item.unitId);   // O(1)
+  const group = groupMap.get(item.groupId); // O(1)
+}
+```
+
+## Kapan Harus Pakai Map
+
+- `.find()` dipanggil di dalam loop → **wajib** konversi ke Map.
+- `.find()` dipanggil sekali → tidak perlu Map.
+- Hasil `groupBy` dari Prisma dipakai untuk lookup → konversi ke Map.
+
+```ts
+// groupBy result → Map
+const statusMap = new Map(
+  statusCounts.map((r) => [r.status, r._count]),
+);
+const available = statusMap.get("AVAILABLE") ?? 0;
+```
+
+## Untuk Variant Matching (Set Comparison)
+
+Jika perlu mencocokkan variant berdasarkan kombinasi optionIds:
+
+```ts
+// Build signature map sebelum loop
+const variantIdBySignature = new Map<string, string>(
+  candidates.map((v) => [
+    v.options.map((o) => o.optionId).sort().join("|"),
+    v.id,
+  ]),
+);
+
+// Di dalam loop: O(1) lookup
+const signature = [...item.optionIds].sort().join("|");
+const variantId = variantIdBySignature.get(signature);
+```
+
+## Prinsip
+
+Jangan lakukan lookup berulang dengan `.find()` di dalam loop. Konversi ke `Map` sekali, lalu gunakan `.get()` untuk O(1) access.
+
+---
+
+# 27. Raw SQL: Parameterized Query (Wajib)
+
+## Masalah
+
+Contoh **berbahaya** (SQL Injection):
+
+```ts
+// ❌ DILARANG — string interpolation langsung
+const rows = await prisma.$queryRawUnsafe(`
+  SELECT * FROM transactions
+  WHERE "companyId" = '${companyId}'
+    AND date >= '${dateFrom}'
+    AND description ILIKE '%${search}%'
+`);
+```
+
+User bisa inject SQL via `search = "'; DROP TABLE transactions; --"`.
+
+## Solusi: Parameterized Query
+
+### Opsi 1: Tagged Template (Direkomendasikan)
+
+```ts
+// ✅ Aman — Prisma auto-parameterize
+const rows = await prisma.$queryRaw`
+  SELECT * FROM transactions
+  WHERE "companyId" = ${companyId}
+    AND date >= ${dateFrom}
+`;
+```
+
+### Opsi 2: Positional Parameters
+
+```ts
+// ✅ Aman — pakai $1, $2, $3
+const rows = await prisma.$queryRawUnsafe(
+  `SELECT * FROM transactions
+   WHERE "companyId" = $1
+     AND date >= $2
+     AND date <= $3`,
+  companyId,
+  dateFrom,
+  dateTo,
+);
+```
+
+### Dynamic WHERE Conditions
+
+Untuk kondisi opsional (branchId, search, dll), gunakan parameter counter:
+
+```ts
+const conditions: string[] = [`"companyId" = $1`];
+const params: unknown[] = [companyId];
+let idx = 2;
+
+if (branchId) {
+  conditions.push(`"branchId" = $${idx}`);
+  params.push(branchId);
+  idx++;
+}
+if (search) {
+  conditions.push(`(name ILIKE $${idx} OR code ILIKE $${idx})`);
+  params.push(`%${search}%`);
+  idx++;
+}
+
+const where = conditions.join(" AND ");
+const rows = await prisma.$queryRawUnsafe(
+  `SELECT * FROM transactions WHERE ${where} LIMIT $${idx} OFFSET $${idx + 1}`,
+  ...params,
+  perPage,
+  offset,
+);
+```
+
+### Yang Boleh Di-interpolasi Langsung
+
+Hanya **nilai dari whitelist yang dikontrol server**, bukan input user:
+
+```ts
+// ✅ Aman — sortColumn dari whitelist
+const sortColumnMap: Record<string, string> = {
+  date: 'je.date',
+  amount: 'jel."taxAmount"',
+};
+const sortColumn = sortColumnMap[sortBy] ?? "je.date";
+const sortDir = dir === "asc" ? "ASC" : "DESC";
+
+// Interpolasi langsung (aman karena dari whitelist)
+ORDER BY ${sortColumn} ${sortDir}
+```
+
+## Aturan Kolom camelCase di PostgreSQL
+
+Kolom camelCase **wajib** double-quoted di raw SQL:
+
+```sql
+-- ✅ Benar
+SELECT "companyId", "branchId", "grandTotal" FROM transactions
+
+-- ❌ Salah — PostgreSQL fold ke lowercase
+SELECT companyId, branchId FROM transactions
+-- PostgreSQL baca sebagai: companyid, branchid → column not found
+```
+
+Nama tabel snake_case **tidak perlu** di-quote:
+
+```sql
+-- ✅ Benar (tabel snake_case)
+SELECT * FROM purchase_orders WHERE id = $1
+```
+
+## Prinsip
+
+1. **Jangan pernah** interpolasi user input langsung ke SQL string.
+2. Gunakan `$queryRaw` tagged template atau `$queryRawUnsafe` dengan `$1, $2, $3`.
+3. Kolom camelCase wajib double-quoted di PostgreSQL.
+4. Hanya whitelist values yang boleh di-interpolasi langsung.
+
+---
+
+# 28. Shared Utility Helpers
+
+## Helper yang Tersedia
+
+Gunakan helper dari `src/common/` untuk menghindari duplikasi:
+
+| Helper | Import | Kegunaan |
+|--------|--------|----------|
+| `round2(n)` | `@/common/utils/math` | Pembulatan 2 desimal (currency) |
+| `toDateOnly(date)` | `@/common/utils/date` | Konversi Date/string ke `YYYY-MM-DD` |
+| `paginate(items, total, page, perPage)` | `@/common/utils/pagination` | Format response list + pagination |
+| `throwIfUniqueConstraint(err, msg)` | `@/common/utils/prisma-errors` | Handle Prisma P2002 error |
+| `tenantWhere(companyId, ...paths)` | `@/common/utils/tenant` | Generate multi-tenant WHERE clause |
+| `AssertService` | `@/common/assert/assert.service` | Validasi keberadaan entity (branch, supplier, dll) |
+
+## Contoh Penggunaan
+
+```ts
+import { round2 } from "@/common/utils/math";
+import { toDateOnly } from "@/common/utils/date";
+import { paginate } from "@/common/utils/pagination";
+import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
+import { tenantWhere } from "@/common/utils/tenant";
+
+// round2: pembulatan currency
+const total = round2(price * quantity);
+
+// toDateOnly: format tanggal
+const dateStr = toDateOnly(new Date()); // "2026-05-27"
+
+// paginate: response list
+return paginate(rows.map(toResponse), total, page, perPage);
+
+// throwIfUniqueConstraint: handle unique violation
+try {
+  await this.repo.create(data);
+} catch (err) {
+  throwIfUniqueConstraint(err, "Nama sudah digunakan");
+}
+
+// tenantWhere: multi-tenant scoping
+const where = { id, ...tenantWhere(companyId, "direct", "branch") };
+
+// AssertService: validasi entity
+await this.assert.branch(companyId, dto.branchId);
+```
+
+## Prinsip
+
+Jangan buat fungsi lokal yang sudah ada di `common/`. Cek helper yang tersedia sebelum menulis kode baru.
 
 ---
 
@@ -1263,6 +1506,10 @@ Fokus pada:
 - apakah pagination sudah menggunakan skip, take, dan orderBy
 - apakah count, aggregate, atau groupBy lebih cocok daripada proses manual di JavaScript
 - apakah companyId atau ownership sudah difilter langsung di query
+- apakah ada .find() di dalam loop yang bisa dikonversi ke Map
+- apakah raw SQL sudah parameterized (bukan string interpolation)
+- apakah kolom camelCase sudah double-quoted di raw SQL
+- apakah sudah pakai shared helpers (round2, toDateOnly, paginate, tenantWhere, dll)
 
 Berikan versi query yang lebih clean, aman, dan efisien menggunakan Prisma.
 ```
