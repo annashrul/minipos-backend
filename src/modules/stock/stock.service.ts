@@ -1,11 +1,11 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, type StockMovementType } from "@prisma/client";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   AdjustStockDto,
   BranchStockListResponse,
@@ -17,9 +17,15 @@ import type {
   StockCardResponse,
   StockMovementResponse,
 } from "./dto/stock.dto";
-import { PrismaService } from "../prisma/prisma.service";
-import { RackStockHelperService } from "../racks/rack-stock-helper.service";
-import { RealtimeService, EVENTS } from "../realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
+import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
+import {
+  StockRepository,
+  MOVEMENT_SELECT,
+  type RawMovement,
+  type RawBranchStock,
+} from "./stock.repository";
 
 const TYPE_GROUPS: Record<string, StockMovementType[]> = {
   IN: ["IN", "MANUAL_IN", "PURCHASE_RECEIVE", "RETURN_IN"],
@@ -29,48 +35,10 @@ const TYPE_GROUPS: Record<string, StockMovementType[]> = {
   OPNAME: ["OPNAME"],
 };
 
-const MOVEMENT_SELECT = {
-  id: true,
-  productId: true,
-  product: { select: { id: true, name: true, code: true, unit: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  variantId: true,
-  variantLabel: true,
-  unitId: true,
-  unit: { select: { id: true, name: true, conversionQty: true } },
-  unitQuantity: true,
-  type: true,
-  quantity: true,
-  note: true,
-  reference: true,
-  createdBy: true,
-  createdAt: true,
-} satisfies Prisma.StockMovementSelect;
-
-type RawMovement = Prisma.StockMovementGetPayload<{
-  select: typeof MOVEMENT_SELECT;
-}>;
-
-const BRANCH_STOCK_SELECT = {
-  id: true,
-  branchId: true,
-  productId: true,
-  product: {
-    select: { id: true, code: true, name: true, unit: true },
-  },
-  quantity: true,
-  minStock: true,
-  updatedAt: true,
-} satisfies Prisma.BranchStockSelect;
-
-type RawBranchStock = Prisma.BranchStockGetPayload<{
-  select: typeof BRANCH_STOCK_SELECT;
-}>;
-
 @Injectable()
 export class StockService {
   constructor(
+    private readonly repo: StockRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly rackStockHelper: RackStockHelperService,
@@ -103,14 +71,8 @@ export class StockService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.stockMovement.findMany({
-        where,
-        select: MOVEMENT_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.stockMovement.count({ where }),
+      this.repo.findManyMovements(where, (page - 1) * perPage, perPage),
+      this.repo.countMovements(where),
     ]);
 
     return paginate(rows.map(toMovementResponse), total, page, perPage);
@@ -125,23 +87,15 @@ export class StockService {
       ...(branchId ? { branchId } : {}),
     };
 
-    const [inCount, outCount, adjCount, transferCount, opnameCount, total] =
-      await Promise.all([
-        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.IN } } }),
-        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.OUT } } }),
-        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.ADJUSTMENT } } }),
-        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.TRANSFER } } }),
-        this.prisma.stockMovement.count({ where: { ...where, type: { in: TYPE_GROUPS.OPNAME } } }),
-        this.prisma.stockMovement.count({ where }),
-      ]);
+    const counts = await this.repo.countMovementsByTypeGroups(where, TYPE_GROUPS);
 
     return {
-      total,
-      inCount,
-      outCount,
-      adjCount,
-      transferCount,
-      opnameCount,
+      total: counts.total,
+      inCount: counts.IN,
+      outCount: counts.OUT,
+      adjCount: counts.ADJUSTMENT,
+      transferCount: counts.TRANSFER,
+      opnameCount: counts.OPNAME,
     };
   }
 
@@ -151,10 +105,7 @@ export class StockService {
   ): Promise<BranchStockListResponse> {
     const { branchId, search, lowStock, page, perPage } = query;
 
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(branchId, companyId);
     if (!branch) throw new NotFoundException("Branch not found");
 
     const where: Prisma.BranchStockWhereInput = {
@@ -172,18 +123,12 @@ export class StockService {
       };
     }
     if (lowStock) {
-      where.quantity = { lte: this.prisma.branchStock.fields.minStock };
+      where.quantity = { lte: this.repo.branchStockMinStockField };
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.branchStock.findMany({
-        where,
-        select: BRANCH_STOCK_SELECT,
-        orderBy: { product: { name: "asc" } },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.branchStock.count({ where }),
+      this.repo.findManyBranchStock(where, (page - 1) * perPage, perPage),
+      this.repo.countBranchStock(where),
     ]);
 
     return {
@@ -198,17 +143,11 @@ export class StockService {
     userId: string,
     dto: AdjustStockDto,
   ): Promise<StockMovementResponse> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: dto.productId, companyId, deletedAt: null },
-      select: { id: true, stock: true },
-    });
+    const product = await this.repo.findProduct(dto.productId, companyId);
     if (!product) throw new NotFoundException("Product not found");
 
     const selectedUnit = dto.unitId
-      ? await this.prisma.productUnit.findFirst({
-          where: { id: dto.unitId, productId: dto.productId },
-          select: { id: true, conversionQty: true },
-        })
+      ? await this.repo.findProductUnit(dto.unitId, dto.productId)
       : null;
     if (dto.unitId && !selectedUnit) {
       throw new NotFoundException("Satuan produk tidak ditemukan");
@@ -216,22 +155,17 @@ export class StockService {
     const baseQuantity = dto.quantity * (selectedUnit?.conversionQty ?? 1);
     const branchId = dto.branchId ?? null;
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.findBranch(branchId, companyId);
       if (!branch) throw new NotFoundException("Branch not found");
     }
 
     // Resolve variantLabel utk denormalize ke stockMovement (display di UI).
     let variantLabel: string | null = null;
     if (dto.variantId) {
-      const variant = await this.prisma.productVariant.findFirst({
-        where: { id: dto.variantId, productId: dto.productId },
-        include: {
-          options: { select: { option: { select: { name: true } } } },
-        },
-      });
+      const variant = await this.repo.findProductVariant(
+        dto.variantId,
+        dto.productId,
+      );
       if (!variant) {
         throw new NotFoundException("Variant tidak ditemukan");
       }
@@ -424,16 +358,9 @@ export class StockService {
   ): Promise<
     Array<{ branchId: string; quantity: number; minStock: number }>
   > {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId },
-      select: { id: true },
-    });
+    const product = await this.repo.findProduct(productId, companyId);
     if (!product) return [];
-    const stocks = await this.prisma.branchStock.findMany({
-      where: { productId },
-      select: { branchId: true, quantity: true, minStock: true },
-    });
-    return stocks;
+    return this.repo.findBranchStockByProduct(productId);
   }
 
   /**
@@ -460,32 +387,18 @@ export class StockService {
       perPage,
     } = query;
 
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
-      select: { id: true, name: true, code: true, unit: true },
-    });
+    const product = await this.repo.findProductForCard(productId, companyId);
     if (!product) throw new NotFoundException("Product not found");
 
     let branchInfo: { id: string; name: string } | null = null;
     if (branchId) {
-      const b = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true, name: true },
-      });
+      const b = await this.repo.findBranchWithName(branchId, companyId);
       if (!b) throw new NotFoundException("Branch not found");
       branchInfo = b;
     }
 
     // Daftar varian produk untuk filter dropdown di UI.
-    const productVariants = await this.prisma.productVariant.findMany({
-      where: { productId },
-      select: {
-        id: true,
-        options: {
-          select: { option: { select: { name: true } } },
-        },
-      },
-    });
+    const productVariants = await this.repo.findProductVariants(productId);
     const variantOptions = productVariants.map((v) => ({
       id: v.id,
       label: v.options.map((o) => o.option.name).join(" · "),
@@ -508,19 +421,9 @@ export class StockService {
     // movement DALAM/SETELAH periode. Lebih akurat dari recompute dari awal.
     // Catatan: branch_stock belum di-track per varian — saat user filter
     // varian, opening hanya akurat kalau periode mencakup semua mutasi.
-    const currentStockResult = branchId
-      ? await this.prisma.branchStock.findUnique({
-          where: { branchId_productId: { branchId, productId } },
-          select: { quantity: true },
-        })
-      : await this.prisma.branchStock.aggregate({
-          where: { productId },
-          _sum: { quantity: true },
-        });
     const currentStock = branchId
-      ? (currentStockResult as { quantity: number } | null)?.quantity ?? 0
-      : (currentStockResult as { _sum: { quantity: number | null } })._sum
-          .quantity ?? 0;
+      ? ((await this.repo.findBranchStockUnique(branchId, productId))?.quantity ?? 0)
+      : await this.repo.aggregateBranchStock(productId);
 
     // Sum net IN/OUT dari awal periode sampai sekarang (untuk hitung opening).
     const sinceWhere: Prisma.StockMovementWhereInput = {
@@ -532,15 +435,7 @@ export class StockService {
     if (dateFrom) {
       sinceWhere.createdAt = { gte: new Date(dateFrom) };
     }
-    const sinceMovements = await this.prisma.stockMovement.findMany({
-      where: sinceWhere,
-      select: {
-        type: true,
-        quantity: true,
-        direction: true,
-        createdAt: true,
-      },
-    });
+    const sinceMovements = await this.repo.findMovementsForBalance(sinceWhere);
     let netSinceFrom = 0;
     for (const m of sinceMovements) {
       const dir = resolveDirection(m.type, m.direction);
@@ -551,36 +446,9 @@ export class StockService {
 
     // Page rows + summary periode
     const [rows, total, periodAgg] = await Promise.all([
-      this.prisma.stockMovement.findMany({
-        where,
-        select: {
-          id: true,
-          type: true,
-          direction: true,
-          quantity: true,
-          balanceAfter: true,
-          unitCost: true,
-          totalCost: true,
-          refType: true,
-          refId: true,
-          refNumber: true,
-          reference: true,
-          note: true,
-          createdBy: true,
-          createdAt: true,
-          variantId: true,
-          variantLabel: true,
-          branch: { select: { id: true, name: true } },
-        },
-        orderBy: { createdAt: "asc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.stockMovement.count({ where }),
-      this.prisma.stockMovement.findMany({
-        where,
-        select: { type: true, quantity: true, direction: true },
-      }),
+      this.repo.findStockCardMovements(where, (page - 1) * perPage, perPage),
+      this.repo.countMovements(where),
+      this.repo.findMovementsForPeriodAgg(where),
     ]);
 
     let totalIn = 0;

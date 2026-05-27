@@ -15,23 +15,8 @@ import type {
   TransitionBookingStatusDto,
   UpdateBookingDto,
 } from "./dto/bookings.dto";
-import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
-
-const BOOKING_INCLUDE = {
-  branch: { select: { id: true, name: true } },
-  customer: { select: { id: true, name: true, phone: true } },
-  vehicle: {
-    select: {
-      id: true,
-      plateNumber: true,
-      brand: { select: { name: true } },
-      modelRef: { select: { name: true } },
-    },
-  },
-  mechanic: { select: { id: true, name: true } },
-  table: { select: { id: true, number: true, name: true } },
-} satisfies Prisma.BookingInclude;
+import { BookingsRepository, type RawBooking } from "./bookings.repository";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 
 const VALID_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   PENDING: ["CONFIRMED", "CANCELLED", "NO_SHOW"],
@@ -46,7 +31,7 @@ const VALID_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: BookingsRepository,
     private readonly waReceipt: WhatsappReceiptService,
   ) {}
 
@@ -78,14 +63,8 @@ export class BookingsService {
     }
 
     const [total, items] = await Promise.all([
-      this.prisma.booking.count({ where }),
-      this.prisma.booking.findMany({
-        where,
-        include: BOOKING_INCLUDE,
-        orderBy: { scheduledAt: "asc" },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
+      this.repo.count(where),
+      this.repo.findMany(where, (page - 1) * limit, limit),
     ]);
 
     return {
@@ -97,10 +76,7 @@ export class BookingsService {
   }
 
   async findById(companyId: string, id: string): Promise<BookingResponse> {
-    const b = await this.prisma.booking.findFirst({
-      where: { id, companyId },
-      include: BOOKING_INCLUDE,
-    });
+    const b = await this.repo.findOne({ id, companyId });
     if (!b) throw new NotFoundException("Booking tidak ditemukan");
     return this.toResponse(b);
   }
@@ -132,11 +108,7 @@ export class BookingsService {
       ];
     }
 
-    const groups = await this.prisma.booking.groupBy({
-      by: ["status"],
-      where,
-      _count: { _all: true },
-    });
+    const groups = await this.repo.groupByStatus(where);
     const byStatus: Record<string, number> = {};
     let total = 0;
     for (const g of groups) {
@@ -153,49 +125,37 @@ export class BookingsService {
     userId: string | null,
   ): Promise<BookingResponse> {
     // Verifikasi branch milik company
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: dto.branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranch(companyId, dto.branchId);
     if (!branch) throw new NotFoundException("Branch tidak ditemukan");
 
     // Verifikasi customer (jika dipilih)
     if (dto.customerId) {
-      const c = await this.prisma.customer.findFirst({
-        where: { id: dto.customerId, companyId },
-        select: { id: true },
-      });
+      const c = await this.repo.findCustomer(companyId, dto.customerId);
       if (!c) throw new NotFoundException("Customer tidak ditemukan");
     }
 
     // Verifikasi vehicle (bengkel)
     if (dto.vehicleId) {
-      const v = await this.prisma.vehicle.findFirst({
-        where: { id: dto.vehicleId, companyId },
-        select: { id: true },
-      });
+      const v = await this.repo.findVehicle(companyId, dto.vehicleId);
       if (!v) throw new NotFoundException("Kendaraan tidak ditemukan");
     }
 
-    const created = await this.prisma.booking.create({
-      data: {
-        companyId,
-        branchId: dto.branchId,
-        bookingType: dto.bookingType,
-        scheduledAt: new Date(dto.scheduledAt),
-        durationMin: dto.durationMin ?? null,
-        notes: dto.notes ?? null,
-        customerId: dto.customerId ?? null,
-        customerName: dto.customerName ?? null,
-        customerPhone: dto.customerPhone ?? null,
-        vehicleId: dto.vehicleId ?? null,
-        serviceType: dto.serviceType ?? null,
-        mechanicId: dto.mechanicId ?? null,
-        partySize: dto.partySize ?? null,
-        tableId: dto.tableId ?? null,
-        createdById: userId,
-      },
-      include: BOOKING_INCLUDE,
+    const created = await this.repo.create({
+      companyId,
+      branchId: dto.branchId,
+      bookingType: dto.bookingType,
+      scheduledAt: new Date(dto.scheduledAt),
+      durationMin: dto.durationMin ?? null,
+      notes: dto.notes ?? null,
+      customerId: dto.customerId ?? null,
+      customerName: dto.customerName ?? null,
+      customerPhone: dto.customerPhone ?? null,
+      vehicleId: dto.vehicleId ?? null,
+      serviceType: dto.serviceType ?? null,
+      mechanicId: dto.mechanicId ?? null,
+      partySize: dto.partySize ?? null,
+      tableId: dto.tableId ?? null,
+      createdById: userId,
     });
     return this.toResponse(created);
   }
@@ -205,10 +165,7 @@ export class BookingsService {
     id: string,
     dto: UpdateBookingDto,
   ): Promise<BookingResponse> {
-    const existing = await this.prisma.booking.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) throw new NotFoundException("Booking tidak ditemukan");
     if (
       existing.status === "COMPLETED" ||
@@ -252,11 +209,7 @@ export class BookingsService {
         : { disconnect: true };
     }
 
-    const updated = await this.prisma.booking.update({
-      where: { id },
-      data,
-      include: BOOKING_INCLUDE,
-    });
+    const updated = await this.repo.update(id, data);
     return this.toResponse(updated);
   }
 
@@ -265,10 +218,7 @@ export class BookingsService {
     id: string,
     dto: TransitionBookingStatusDto,
   ): Promise<BookingResponse> {
-    const existing = await this.prisma.booking.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) throw new NotFoundException("Booking tidak ditemukan");
 
     const allowed = VALID_TRANSITIONS[existing.status as BookingStatus];
@@ -287,11 +237,7 @@ export class BookingsService {
       data.completedAt = new Date();
     }
 
-    const updated = await this.prisma.booking.update({
-      where: { id },
-      data,
-      include: BOOKING_INCLUDE,
-    });
+    const updated = await this.repo.update(id, data);
 
     // Kirim WA konfirmasi ke customer ketika status di-set ke CONFIRMED.
     // Fire-and-forget — kalau WA session belum aktif / nomor invalid,
@@ -313,10 +259,7 @@ export class BookingsService {
         try {
           const so = await this.promoteToServiceOrder(companyId, updated);
           if (so) {
-            await this.prisma.booking.update({
-              where: { id: updated.id },
-              data: { serviceOrderId: so.id },
-            });
+            await this.repo.linkServiceOrder(updated.id, so.id);
           }
         } catch (err) {
           this.logger.warn(
@@ -339,7 +282,7 @@ export class BookingsService {
    */
   private async promoteToServiceOrder(
     companyId: string,
-    booking: Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>,
+    booking: RawBooking,
   ): Promise<{ id: string; orderNumber: string } | null> {
     // Resolve customer — link existing kalau sudah ada, atau buat baru
     // dari customerName + customerPhone.
@@ -352,20 +295,14 @@ export class BookingsService {
         return null;
       }
       const phone = booking.customerPhone;
-      const existing = await this.prisma.customer.findFirst({
-        where: { companyId, phone },
-        select: { id: true },
-      });
+      const existing = await this.repo.findCustomerByPhone(companyId, phone);
       if (existing) {
         customerId = existing.id;
       } else {
-        const created = await this.prisma.customer.create({
-          data: {
-            companyId,
-            name: booking.customerName,
-            phone: booking.customerPhone,
-          },
-          select: { id: true },
+        const created = await this.repo.createCustomer({
+          companyId,
+          name: booking.customerName,
+          phone: booking.customerPhone,
         });
         customerId = created.id;
       }
@@ -385,27 +322,21 @@ export class BookingsService {
         return null;
       }
       const plate = parsed.plate.toUpperCase();
-      const existing = await this.prisma.vehicle.findFirst({
-        where: { companyId, plateNumber: plate },
-        select: { id: true },
-      });
+      const existing = await this.repo.findVehicleByPlate(companyId, plate);
       if (existing) {
         vehicleId = existing.id;
       } else {
-        const created = await this.prisma.vehicle.create({
-          data: {
-            companyId,
-            customerId,
-            plateNumber: plate,
-            type: parsed.type ?? "MOTOR",
-            // brand/model tidak di-set dari free-text — admin bisa link
-            // manual ke master setelahnya. notes kendaraan diisi free text
-            // untuk audit.
-            notes:
-              [parsed.brand, parsed.model].filter(Boolean).join(" ") ||
-              null,
-          },
-          select: { id: true },
+        const created = await this.repo.createVehicle({
+          companyId,
+          customerId: customerId!,
+          plateNumber: plate,
+          type: parsed.type ?? "MOTOR",
+          // brand/model tidak di-set dari free-text — admin bisa link
+          // manual ke master setelahnya. notes kendaraan diisi free text
+          // untuk audit.
+          notes:
+            [parsed.brand, parsed.model].filter(Boolean).join(" ") ||
+            null,
         });
         vehicleId = created.id;
       }
@@ -444,22 +375,19 @@ export class BookingsService {
     const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
     const orderNumber = `SO-${yy}${mm}${dd}-${rand}`;
 
-    const so = await this.prisma.serviceOrder.create({
-      data: {
-        orderNumber,
-        companyId,
-        branchId: booking.branchId,
-        vehicleId,
-        customerId,
-        mechanicId: booking.mechanicId ?? null,
-        complaint,
-        notes: `Auto-created dari booking ${booking.id.slice(0, 8).toUpperCase()}`,
-        status: "ANTRIAN",
-        ...(serviceItems.length > 0
-          ? { items: { create: serviceItems } }
-          : {}),
-      },
-      select: { id: true, orderNumber: true },
+    const so = await this.repo.createServiceOrder({
+      orderNumber,
+      companyId,
+      branchId: booking.branchId,
+      vehicleId: vehicleId!,
+      customerId: customerId!,
+      mechanicId: booking.mechanicId ?? null,
+      complaint,
+      notes: `Auto-created dari booking ${booking.id.slice(0, 8).toUpperCase()}`,
+      status: "ANTRIAN",
+      ...(serviceItems.length > 0
+        ? { items: { create: serviceItems } }
+        : {}),
     });
 
     this.logger.log(
@@ -475,15 +403,12 @@ export class BookingsService {
    */
   private async sendConfirmationWa(
     companyId: string,
-    booking: Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>,
+    booking: RawBooking,
   ): Promise<void> {
     const phone = booking.customerPhone ?? booking.customer?.phone ?? null;
     if (!phone) return;
 
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { name: true, phone: true, address: true },
-    });
+    const company = await this.repo.findCompany(companyId);
 
     const customerName = booking.customerName ?? booking.customer?.name ?? "Pelanggan";
     const branchName = booking.branch?.name ?? "—";
@@ -536,23 +461,18 @@ export class BookingsService {
     companyId: string,
     id: string,
   ): Promise<{ id: string; deleted: true }> {
-    const existing = await this.prisma.booking.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) throw new NotFoundException("Booking tidak ditemukan");
     if (existing.status !== "PENDING" && existing.status !== "CANCELLED") {
       throw new BadRequestException(
         "Hanya booking PENDING atau CANCELLED yang bisa dihapus.",
       );
     }
-    await this.prisma.booking.delete({ where: { id } });
+    await this.repo.delete(id);
     return { id, deleted: true };
   }
 
-  private toResponse(
-    b: Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>,
-  ): BookingResponse {
+  private toResponse(b: RawBooking): BookingResponse {
     return {
       id: b.id,
       branchId: b.branchId,

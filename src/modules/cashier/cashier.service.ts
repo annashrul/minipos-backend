@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -20,43 +20,17 @@ import type {
   ReorderCashierFavoritesDto,
   UpdateCashierFavoriteDto,
 } from "./dto/cashier.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  CashierRepository,
+  type RawFavorite,
+  type RawBadge,
+} from "./cashier.repository";
 
 // We encode (badge, level) into the DB `badge` field using a separator,
 // because the schema doesn't have a dedicated `level` column.
 // Format: `${badgeKey}#${level}` (e.g. "TOP_SELLER#1", "VOLUME_KING#3").
 const LEVEL_SEPARATOR = "#";
-
-const FAVORITE_SELECT = {
-  id: true,
-  userId: true,
-  productId: true,
-  sortOrder: true,
-  createdAt: true,
-  product: {
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      sellingPrice: true,
-      imageUrl: true,
-      companyId: true,
-    },
-  },
-} satisfies Prisma.CashierFavoriteSelect;
-
-type RawFavorite = Prisma.CashierFavoriteGetPayload<{
-  select: typeof FAVORITE_SELECT;
-}>;
-
-const BADGE_SELECT = {
-  id: true,
-  userId: true,
-  badge: true,
-  earnedAt: true,
-} satisfies Prisma.CashierBadgeSelect;
-
-type RawBadge = Prisma.CashierBadgeGetPayload<{ select: typeof BADGE_SELECT }>;
 
 type AutoAwardRule = {
   badge: string;
@@ -78,24 +52,20 @@ const VOLUME_KING_RULES: AutoAwardRule[] = [
 
 @Injectable()
 export class CashierService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: CashierRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
   // Favorites
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
 
   async listFavorites(
     companyId: string,
     userId: string,
   ): Promise<CashierFavoriteResponse[]> {
-    const rows = await this.prisma.cashierFavorite.findMany({
-      where: {
-        userId,
-        product: { companyId },
-      },
-      select: FAVORITE_SELECT,
-      orderBy: { sortOrder: "asc" },
-    });
+    const rows = await this.repo.findManyFavorites(userId, companyId);
     return rows.map(toFavoriteResponse);
   }
 
@@ -104,31 +74,22 @@ export class CashierService {
     userId: string,
     dto: CreateCashierFavoriteDto,
   ): Promise<CashierFavoriteResponse> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: dto.productId, companyId },
-      select: { id: true },
-    });
+    const product = await this.repo.findProduct(dto.productId, companyId);
     if (!product) {
       throw new NotFoundException("Produk tidak ditemukan");
     }
 
     let sortOrder = dto.sortOrder;
     if (sortOrder === undefined) {
-      const max = await this.prisma.cashierFavorite.aggregate({
-        where: { userId },
-        _max: { sortOrder: true },
-      });
-      sortOrder = (max._max.sortOrder ?? -1) + 1;
+      const max = await this.repo.maxFavoriteSortOrder(userId);
+      sortOrder = max + 1;
     }
 
     try {
-      const created = await this.prisma.cashierFavorite.create({
-        data: {
-          userId,
-          productId: dto.productId,
-          sortOrder,
-        },
-        select: FAVORITE_SELECT,
+      const created = await this.repo.createFavorite({
+        userId,
+        productId: dto.productId,
+        sortOrder,
       });
       return toFavoriteResponse(created);
     } catch (err) {
@@ -142,16 +103,15 @@ export class CashierService {
     id: string,
     dto: UpdateCashierFavoriteDto,
   ): Promise<CashierFavoriteResponse> {
-    const existing = await this.prisma.cashierFavorite.findFirst({
-      where: { id, userId, product: { companyId } },
-      select: { id: true },
+    const existing = await this.repo.findOneFavorite({
+      id,
+      userId,
+      product: { companyId },
     });
     if (!existing) throw new NotFoundException("Favorit tidak ditemukan");
 
-    const updated = await this.prisma.cashierFavorite.update({
-      where: { id },
-      data: { sortOrder: dto.sortOrder },
-      select: FAVORITE_SELECT,
+    const updated = await this.repo.updateFavorite(id, {
+      sortOrder: dto.sortOrder,
     });
     return toFavoriteResponse(updated);
   }
@@ -162,24 +122,14 @@ export class CashierService {
     dto: ReorderCashierFavoritesDto,
   ): Promise<CashierFavoriteResponse[]> {
     const ids = dto.items.map((i) => i.id);
-    const owned = await this.prisma.cashierFavorite.findMany({
-      where: { id: { in: ids }, userId, product: { companyId } },
-      select: { id: true },
-    });
+    const owned = await this.repo.findManyFavoriteIds(ids, userId, companyId);
     if (owned.length !== ids.length) {
       throw new ForbiddenException(
         "Salah satu favorit bukan milik user atau perusahaan",
       );
     }
 
-    await this.prisma.$transaction(
-      dto.items.map((item) =>
-        this.prisma.cashierFavorite.update({
-          where: { id: item.id },
-          data: { sortOrder: item.sortOrder },
-        }),
-      ),
-    );
+    await this.prisma.$transaction(this.repo.buildReorderUpdates(dto.items));
 
     return this.listFavorites(companyId, userId);
   }
@@ -189,9 +139,9 @@ export class CashierService {
     userId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.cashierFavorite.findFirst({
-      where: { id, product: { companyId } },
-      select: { id: true, userId: true },
+    const existing = await this.repo.findOneFavorite({
+      id,
+      product: { companyId },
     });
     if (!existing) throw new NotFoundException("Favorit tidak ditemukan");
     if (existing.userId !== userId) {
@@ -199,29 +149,22 @@ export class CashierService {
         "Hanya pemilik favorit yang dapat menghapus",
       );
     }
-    await this.prisma.cashierFavorite.delete({ where: { id } });
+    await this.repo.deleteFavorite(id);
     return { success: true };
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
   // Badges
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
 
   async listBadges(
     companyId: string,
     userId: string,
   ): Promise<CashierBadgeResponse[]> {
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, companyId },
-      select: { id: true },
-    });
+    const user = await this.repo.findUser(userId, companyId);
     if (!user) throw new NotFoundException("User tidak ditemukan");
 
-    const rows = await this.prisma.cashierBadge.findMany({
-      where: { userId },
-      select: BADGE_SELECT,
-      orderBy: { earnedAt: "desc" },
-    });
+    const rows = await this.repo.findManyBadges(userId);
     return rows.map(toBadgeResponse);
   }
 
@@ -229,29 +172,20 @@ export class CashierService {
     companyId: string,
     dto: CreateCashierBadgeDto,
   ): Promise<CashierBadgeResponse> {
-    const user = await this.prisma.user.findFirst({
-      where: { id: dto.userId, companyId },
-      select: { id: true, name: true },
-    });
+    const user = await this.repo.findUserWithName(dto.userId, companyId);
     if (!user) throw new NotFoundException("User tidak ditemukan");
 
     const encoded = encodeBadge(dto.badge, dto.level);
-    const duplicate = await this.prisma.cashierBadge.findFirst({
-      where: { userId: dto.userId, badge: encoded },
-      select: { id: true },
-    });
+    const duplicate = await this.repo.findDuplicateBadge(dto.userId, encoded);
     if (duplicate) {
       throw new ConflictException("Badge sudah dimiliki user");
     }
 
     try {
-      const created = await this.prisma.cashierBadge.create({
-        data: {
-          userId: dto.userId,
-          badge: encoded,
-          title: makeBadgeTitle(dto.badge, dto.level),
-        },
-        select: BADGE_SELECT,
+      const created = await this.repo.createBadge({
+        userId: dto.userId,
+        badge: encoded,
+        title: makeBadgeTitle(dto.badge, dto.level),
       });
       return toBadgeResponse(created);
     } catch (err) {
@@ -263,12 +197,9 @@ export class CashierService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.cashierBadge.findFirst({
-      where: { id, user: { companyId } },
-      select: { id: true },
-    });
+    const existing = await this.repo.findOneBadge(id, companyId);
     if (!existing) throw new NotFoundException("Badge tidak ditemukan");
-    await this.prisma.cashierBadge.delete({ where: { id } });
+    await this.repo.deleteBadge(id);
     return { success: true };
   }
 
@@ -281,25 +212,17 @@ export class CashierService {
     const userWhere: Prisma.UserWhereInput = { companyId };
     if (userId) userWhere.id = userId;
 
-    const users = await this.prisma.user.findMany({
-      where: userWhere,
-      select: { id: true, name: true },
-    });
+    const users = await this.repo.findManyUsers(userWhere);
     if (users.length === 0) {
       return { awarded: 0, badges: [] };
     }
 
     const userIds = users.map((u) => u.id);
 
-    const completedAgg = await this.prisma.transaction.groupBy({
-      by: ["userId"],
-      where: {
-        userId: { in: userIds },
-        status: "COMPLETED",
-        createdAt: { gte: start, lte: end },
-      },
-      _sum: { grandTotal: true },
-      _count: { _all: true },
+    const completedAgg = await this.repo.groupTransactions({
+      userId: { in: userIds },
+      status: "COMPLETED",
+      createdAt: { gte: start, lte: end },
     });
 
     const salesByUser = new Map<string, number>();
@@ -309,10 +232,7 @@ export class CashierService {
       txCountByUser.set(row.userId, row._count._all);
     }
 
-    const existing = await this.prisma.cashierBadge.findMany({
-      where: { userId: { in: userIds } },
-      select: { userId: true, badge: true },
-    });
+    const existing = await this.repo.findExistingBadges(userIds);
     const ownedKeys = new Set(
       existing.map((b) => `${b.userId}|${b.badge}`),
     );
@@ -360,13 +280,10 @@ export class CashierService {
     if (ownedKeys.has(dedupKey)) return null;
 
     try {
-      const created = await this.prisma.cashierBadge.create({
-        data: {
-          userId,
-          badge: encoded,
-          title: makeBadgeTitle(badgeKey, level),
-        },
-        select: BADGE_SELECT,
+      const created = await this.repo.createBadge({
+        userId,
+        badge: encoded,
+        title: makeBadgeTitle(badgeKey, level),
       });
       ownedKeys.add(dedupKey);
       return toBadgeResponse(created);
@@ -382,9 +299,9 @@ export class CashierService {
     }
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
   // Performance
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────────
 
   async getPerformance(
     companyId: string,
@@ -445,10 +362,7 @@ export class CashierService {
     if (filters.userId) userWhere.id = filters.userId;
     if (filters.branchId) userWhere.branchId = filters.branchId;
 
-    const users = await this.prisma.user.findMany({
-      where: userWhere,
-      select: { id: true, name: true },
-    });
+    const users = await this.repo.findManyUsers(userWhere);
     if (users.length === 0) return [];
     const userIds = users.map((u) => u.id);
 
@@ -480,28 +394,10 @@ export class CashierService {
     if (filters.branchId) shiftWhere.branchId = filters.branchId;
 
     const [completedAgg, refundedAgg, voidedAgg, shifts] = await Promise.all([
-      this.prisma.transaction.groupBy({
-        by: ["userId"],
-        where: completedWhere,
-        _sum: { grandTotal: true, discountAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["userId"],
-        where: refundedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["userId"],
-        where: voidedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.cashierShift.findMany({
-        where: shiftWhere,
-        select: { userId: true, openedAt: true, closedAt: true },
-      }),
+      this.repo.groupTransactions(completedWhere),
+      this.repo.groupTransactionsCountOnly(refundedWhere),
+      this.repo.groupTransactionsCountOnly(voidedWhere),
+      this.repo.findManyShifts(shiftWhere),
     ]);
 
     const salesMap = new Map<string, number>();
@@ -569,9 +465,9 @@ export class CashierService {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 function toFavoriteResponse(f: RawFavorite): CashierFavoriteResponse {
   return {

@@ -20,8 +20,12 @@ import {
   dayRange,
   nextDocumentNumber,
 } from "@/common/utils/document-number";
-import { PrismaService } from "../prisma/prisma.service";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
+import {
+  ServiceOrdersRepository,
+  type RawServiceOrder,
+} from "./service-orders.repository";
 
 // Estimasi tanggal service berikutnya berdasar item-item yang dikerjakan.
 // Aturan ini mirror frontend di `service-order-print.ts` agar UI dan reminder
@@ -57,29 +61,10 @@ const VALID_TRANSITIONS: Record<ServiceOrderStatus, ServiceOrderStatus[]> = {
   DIBATALKAN: [],
 };
 
-const SO_INCLUDE = {
-  branch: { select: { id: true, name: true } },
-  vehicle: {
-    select: {
-      id: true,
-      plateNumber: true,
-      type: true,
-      brand: { select: { id: true, name: true } },
-      modelRef: { select: { id: true, name: true } },
-    },
-  },
-  customer: { select: { id: true, name: true, phone: true } },
-  mechanic: { select: { id: true, name: true } },
-  items: {
-    include: { mechanic: { select: { id: true, name: true } } },
-  },
-} satisfies Prisma.ServiceOrderInclude;
-
-type SoWithIncludes = Prisma.ServiceOrderGetPayload<{ include: typeof SO_INCLUDE }>;
-
 @Injectable()
 export class ServiceOrdersService {
   constructor(
+    private readonly repo: ServiceOrdersRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
@@ -93,42 +78,7 @@ export class ServiceOrdersService {
   async publicQueue(companyId: string, branchId: string) {
     const RECENTLY_DONE_MS = 30 * 60 * 1000;
     const recentCutoff = new Date(Date.now() - RECENTLY_DONE_MS);
-    const items = await this.prisma.serviceOrder.findMany({
-      where: {
-        companyId,
-        branchId,
-        OR: [
-          {
-            status: {
-              in: ["ANTRIAN", "DIAGNOSA", "MENUNGGU_APPROVAL", "DIKERJAKAN", "SELESAI"],
-            },
-          },
-          { status: "DIBAYAR", paidAt: { gte: recentCutoff } },
-        ],
-      },
-      orderBy: { createdAt: "asc" },
-      take: 100,
-      select: {
-        id: true,
-        orderNumber: true,
-        status: true,
-        complaint: true,
-        createdAt: true,
-        startedAt: true,
-        completedAt: true,
-        vehicle: {
-          select: {
-            plateNumber: true,
-            type: true,
-            // Brand & model relations — pakai name field-nya saja.
-            brand: { select: { name: true } },
-            modelRef: { select: { name: true } },
-          },
-        },
-        customer: { select: { name: true } },
-        mechanic: { select: { name: true } },
-      },
-    });
+    const items = await this.repo.findPublicQueue(companyId, branchId, recentCutoff);
     return { items };
   }
 
@@ -155,14 +105,8 @@ export class ServiceOrdersService {
     }
 
     const [total, items] = await Promise.all([
-      this.prisma.serviceOrder.count({ where }),
-      this.prisma.serviceOrder.findMany({
-        where,
-        include: SO_INCLUDE,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
+      this.repo.count(where),
+      this.repo.findMany(where, (page - 1) * limit, limit),
     ]);
     return {
       items: items.map(toResponse),
@@ -173,10 +117,7 @@ export class ServiceOrdersService {
   }
 
   async findById(companyId: string, id: string): Promise<ServiceOrderResponse> {
-    const so = await this.prisma.serviceOrder.findFirst({
-      where: { id, companyId },
-      include: SO_INCLUDE,
-    });
+    const so = await this.repo.findOne({ id, companyId });
     if (!so) throw new NotFoundException("Service order tidak ditemukan");
     return toResponse(so);
   }
@@ -187,18 +128,9 @@ export class ServiceOrdersService {
   ): Promise<ServiceOrderResponse> {
     // Validate vehicle, customer, branch belong to company
     const [vehicle, customer, branch] = await Promise.all([
-      this.prisma.vehicle.findFirst({
-        where: { id: dto.vehicleId, companyId },
-        select: { id: true, customerId: true },
-      }),
-      this.prisma.customer.findFirst({
-        where: { id: dto.customerId, companyId },
-        select: { id: true },
-      }),
-      this.prisma.branch.findFirst({
-        where: { id: dto.branchId, companyId },
-        select: { id: true },
-      }),
+      this.repo.findVehicle(companyId, dto.vehicleId),
+      this.repo.findCustomer(companyId, dto.customerId),
+      this.repo.findBranch(companyId, dto.branchId),
     ]);
     if (!vehicle) throw new NotFoundException("Kendaraan tidak ditemukan");
     if (!customer) throw new NotFoundException("Customer tidak ditemukan");
@@ -227,23 +159,20 @@ export class ServiceOrdersService {
       };
     });
 
-    const created = await this.prisma.serviceOrder.create({
-      data: {
-        orderNumber,
-        companyId,
-        branchId: dto.branchId,
-        vehicleId: dto.vehicleId,
-        customerId: dto.customerId,
-        mechanicId: dto.mechanicId ?? null,
-        complaint: dto.complaint ?? null,
-        diagnose: dto.diagnose ?? null,
-        estimateAmount: dto.estimateAmount ?? null,
-        mileageIn: dto.mileageIn ?? null,
-        notes: dto.notes ?? null,
-        status: "ANTRIAN",
-        items: items.length > 0 ? { create: items } : undefined,
-      },
-      include: SO_INCLUDE,
+    const created = await this.repo.create({
+      orderNumber,
+      companyId,
+      branchId: dto.branchId,
+      vehicleId: dto.vehicleId,
+      customerId: dto.customerId,
+      mechanicId: dto.mechanicId ?? null,
+      complaint: dto.complaint ?? null,
+      diagnose: dto.diagnose ?? null,
+      estimateAmount: dto.estimateAmount ?? null,
+      mileageIn: dto.mileageIn ?? null,
+      notes: dto.notes ?? null,
+      status: "ANTRIAN",
+      items: items.length > 0 ? { create: items } : undefined,
     });
 
     this.realtime.emit(EVENTS.TRANSACTION_CREATED, {
@@ -266,10 +195,7 @@ export class ServiceOrdersService {
     id: string,
     dto: UpdateServiceOrderDto,
   ): Promise<ServiceOrderResponse> {
-    const existing = await this.prisma.serviceOrder.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) throw new NotFoundException("Service order tidak ditemukan");
 
     if (existing.status === "DIBAYAR" || existing.status === "DIBATALKAN") {
@@ -293,9 +219,7 @@ export class ServiceOrdersService {
 
     // Replace items kalau dto.items provided
     if (dto.items) {
-      await this.prisma.serviceOrderItem.deleteMany({
-        where: { serviceOrderId: id },
-      });
+      await this.repo.deleteItems(id);
       const newItems = dto.items.map((item) => {
         const subtotal = computeSubtotal(item.quantity, item.unitPrice, item.discount);
         const commissionAmount = item.commissionPct
@@ -318,11 +242,7 @@ export class ServiceOrdersService {
       data.items = { create: newItems };
     }
 
-    const updated = await this.prisma.serviceOrder.update({
-      where: { id },
-      data,
-      include: SO_INCLUDE,
-    });
+    const updated = await this.repo.update(id, data);
     this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
       id: updated.id,
       orderNumber: updated.orderNumber,
@@ -337,10 +257,7 @@ export class ServiceOrdersService {
     id: string,
     dto: TransitionStatusDto,
   ): Promise<ServiceOrderResponse> {
-    const existing = await this.prisma.serviceOrder.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) throw new NotFoundException("Service order tidak ditemukan");
 
     const fromStatus = existing.status as ServiceOrderStatus;
@@ -376,11 +293,7 @@ export class ServiceOrdersService {
       data.cancelReason = dto.cancelReason ?? null;
     }
 
-    const updated = await this.prisma.serviceOrder.update({
-      where: { id },
-      data,
-      include: SO_INCLUDE,
-    });
+    const updated = await this.repo.update(id, data);
     this.realtime.emit(EVENTS.SERVICE_ORDER_UPDATED, {
       id: updated.id,
       orderNumber: updated.orderNumber,
@@ -396,10 +309,7 @@ export class ServiceOrdersService {
     id: string,
     dto: FinalizeServiceOrderDto,
   ): Promise<ServiceOrderResponse> {
-    const so = await this.prisma.serviceOrder.findFirst({
-      where: { id, companyId },
-      include: { items: true, customer: { select: { id: true } } },
-    });
+    const so = await this.repo.findForFinalize(companyId, id);
     if (!so) throw new NotFoundException("Service order tidak ditemukan");
     if (so.transactionId) {
       throw new ConflictException(
@@ -427,6 +337,7 @@ export class ServiceOrdersService {
     const invoiceNumber = `INV-SO-${so.orderNumber}`;
     const invoiceDisplayNumber = await this.nextInvoiceDisplayNumber(companyId);
 
+    // $transaction kept in service — repo only handles individual queries
     const result = await this.prisma.$transaction(async (tx) => {
       const trx = await tx.transaction.create({
         data: {
@@ -483,7 +394,7 @@ export class ServiceOrdersService {
           transactionId: trx.id,
           nextServiceAt,
         },
-        include: SO_INCLUDE,
+        select: SO_RAW_SELECT_FOR_FINALIZE,
       });
 
       // Update vehicle: lastServicedAt + mileage kalau ada
@@ -517,7 +428,7 @@ export class ServiceOrdersService {
       branchId: result.branchId ?? null,
     });
 
-    return toResponse(result);
+    return toResponse(result as RawServiceOrder);
   }
 
   /**
@@ -530,17 +441,10 @@ export class ServiceOrdersService {
     const mm = String(date.getMonth() + 1).padStart(2, "0");
     const yyyy = String(date.getFullYear());
     const prefix = `INV-${dd}${mm}${yyyy}-`;
-    const last = await this.prisma.transaction.findFirst({
-      where: {
-        companyId,
-        invoiceDisplayNumber: { startsWith: prefix },
-      },
-      orderBy: { invoiceDisplayNumber: "desc" },
-      select: { invoiceDisplayNumber: true },
-    });
+    const last = await this.repo.findLastInvoiceDisplayNumber(companyId, prefix);
     let nextSeq = 1;
-    if (last?.invoiceDisplayNumber) {
-      const tail = last.invoiceDisplayNumber.slice(prefix.length);
+    if (last) {
+      const tail = last.slice(prefix.length);
       const parsed = parseInt(tail, 10);
       if (!Number.isNaN(parsed)) nextSeq = parsed + 1;
     }
@@ -551,17 +455,14 @@ export class ServiceOrdersService {
     companyId: string,
     id: string,
   ): Promise<{ id: string; deleted: true }> {
-    const so = await this.prisma.serviceOrder.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, transactionId: true },
-    });
+    const so = await this.repo.findForDelete(companyId, id);
     if (!so) throw new NotFoundException("Service order tidak ditemukan");
     if (so.transactionId) {
       throw new BadRequestException(
         "Tidak bisa hapus — sudah punya transaksi (DIBAYAR)",
       );
     }
-    await this.prisma.serviceOrder.delete({ where: { id } });
+    await this.repo.delete(id);
     return { id, deleted: true };
   }
 
@@ -570,26 +471,77 @@ export class ServiceOrdersService {
     const { start, end } = dayRange();
     return nextDocumentNumber({
       prefix: "SO",
-      countToday: () =>
-        this.prisma.serviceOrder.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.serviceOrder.findFirst({
-          where: { companyId, orderNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
+      countToday: () => this.repo.countOrdersToday(companyId, start, end),
+      exists: (candidate) => this.repo.orderNumberExists(companyId, candidate),
     });
   }
 }
+
+/**
+ * Inline select used inside the $transaction for finalize — mirrors SO_SELECT
+ * from the repository so `toResponse` works on the result.
+ */
+const SO_RAW_SELECT_FOR_FINALIZE = {
+  id: true,
+  orderNumber: true,
+  companyId: true,
+  status: true,
+  branchId: true,
+  branch: { select: { id: true, name: true } },
+  vehicleId: true,
+  vehicle: {
+    select: {
+      id: true,
+      plateNumber: true,
+      type: true,
+      brand: { select: { id: true, name: true } },
+      modelRef: { select: { id: true, name: true } },
+    },
+  },
+  customerId: true,
+  customer: { select: { id: true, name: true, phone: true } },
+  mechanicId: true,
+  mechanic: { select: { id: true, name: true } },
+  complaint: true,
+  diagnose: true,
+  estimateAmount: true,
+  finalAmount: true,
+  mileageIn: true,
+  mileageOut: true,
+  approvedAt: true,
+  startedAt: true,
+  completedAt: true,
+  paidAt: true,
+  cancelledAt: true,
+  cancelReason: true,
+  notes: true,
+  transactionId: true,
+  items: {
+    select: {
+      id: true,
+      productId: true,
+      itemType: true,
+      name: true,
+      quantity: true,
+      unitPrice: true,
+      discount: true,
+      subtotal: true,
+      mechanicId: true,
+      mechanic: { select: { id: true, name: true } },
+      commissionPct: true,
+      commissionAmount: true,
+      notes: true,
+    },
+  },
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ServiceOrderSelect;
 
 function computeSubtotal(qty: number, price: number, discount: number): number {
   return Math.max(0, Math.round(qty * price - discount));
 }
 
-function toResponse(so: SoWithIncludes): ServiceOrderResponse {
+function toResponse(so: RawServiceOrder): ServiceOrderResponse {
   return {
     id: so.id,
     orderNumber: so.orderNumber,

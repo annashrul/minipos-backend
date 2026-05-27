@@ -1,12 +1,12 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   CreateStockTransferDto,
   ListStockTransfersQueryDto,
@@ -20,58 +20,21 @@ import {
   dayRange,
   nextDocumentNumber,
 } from "@/common/utils/document-number";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import { tenantWhere } from "@/common/utils/tenant";
-
-const TRANSFER_ITEM_SELECT = {
-  id: true,
-  stockTransferId: true,
-  productId: true,
-  productName: true,
-  quantity: true,
-  receivedQty: true,
-  createdAt: true,
-} satisfies Prisma.StockTransferItemSelect;
-
-const TRANSFER_SELECT = {
-  id: true,
-  transferNumber: true,
-  fromBranchId: true,
-  fromBranch: { select: { id: true, name: true, companyId: true } },
-  toBranchId: true,
-  toBranch: { select: { id: true, name: true, companyId: true } },
-  companyId: true,
-  status: true,
-  notes: true,
-  requestedBy: true,
-  approvedBy: true,
-  requestedAt: true,
-  approvedAt: true,
-  receivedAt: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { items: true } },
-} satisfies Prisma.StockTransferSelect;
-
-const TRANSFER_DETAIL_SELECT = {
-  ...TRANSFER_SELECT,
-  items: { select: TRANSFER_ITEM_SELECT, orderBy: { createdAt: "asc" } },
-} satisfies Prisma.StockTransferSelect;
-
-type RawTransfer = Prisma.StockTransferGetPayload<{
-  select: typeof TRANSFER_SELECT;
-}>;
-type RawTransferDetail = Prisma.StockTransferGetPayload<{
-  select: typeof TRANSFER_DETAIL_SELECT;
-}>;
-type RawTransferItem = Prisma.StockTransferItemGetPayload<{
-  select: typeof TRANSFER_ITEM_SELECT;
-}>;
+import {
+  StockTransfersRepository,
+  TRANSFER_DETAIL_SELECT,
+  type RawTransfer,
+  type RawTransferDetail,
+  type RawTransferItem,
+} from "./stock-transfers.repository";
 
 @Injectable()
 export class StockTransfersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: StockTransfersRepository,
     private readonly assert: AssertService,
   ) {}
 
@@ -83,14 +46,8 @@ export class StockTransfersService {
     const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
-      this.prisma.stockTransfer.findMany({
-        where,
-        select: TRANSFER_SELECT,
-        orderBy: { requestedAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.stockTransfer.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toTransferResponse), total, page, perPage);
@@ -104,11 +61,7 @@ export class StockTransfersService {
       ];
     }
 
-    const grouped = await this.prisma.stockTransfer.groupBy({
-      by: ["status"],
-      where,
-      _count: { _all: true },
-    });
+    const grouped = await this.repo.groupByStatus(where);
 
     const map = new Map(grouped.map((g) => [g.status, g._count._all]));
     return {
@@ -125,25 +78,13 @@ export class StockTransfersService {
     companyId: string,
     id: string,
   ): Promise<StockTransferDetailResponse> {
-    const row = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
-      select: TRANSFER_DETAIL_SELECT,
+    const row = await this.repo.findOne({
+      id,
+      ...tenantWhere(companyId, "direct", "fromBranch", "toBranch"),
     });
     if (!row) throw new NotFoundException("Stock transfer tidak ditemukan");
-    const productMap = await this.loadProductMap(row.items);
+    const productMap = await this.repo.findProductDetails(row.items);
     return toTransferDetailResponse(row, productMap);
-  }
-
-  private async loadProductMap(
-    items: { productId: string }[],
-  ): Promise<Map<string, { id: string; code: string; name: string }>> {
-    const ids = Array.from(new Set(items.map((it) => it.productId)));
-    if (ids.length === 0) return new Map();
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, code: true, name: true },
-    });
-    return new Map(products.map((p) => [p.id, p]));
   }
 
   async create(
@@ -162,10 +103,7 @@ export class StockTransfersService {
 
     // Validate products belong to company and gather names
     const productIds = Array.from(new Set(dto.items.map((it) => it.productId)));
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, deletedAt: null },
-      select: { id: true, name: true },
-    });
+    const products = await this.repo.findProducts(productIds, companyId);
     if (products.length !== productIds.length) {
       throw new BadRequestException(
         "Beberapa produk tidak ditemukan atau bukan milik tenant ini",
@@ -203,7 +141,7 @@ export class StockTransfersService {
         });
       });
 
-      const productMap = await this.loadProductMap(created.items);
+      const productMap = await this.repo.findProductDetails(created.items);
       return toTransferDetailResponse(created, productMap);
     } catch (err) {
       if (isTransferNumberConflict(err) && retryCount < 3) {
@@ -218,17 +156,9 @@ export class StockTransfersService {
     userId: string,
     id: string,
   ): Promise<StockTransferDetailResponse> {
-    const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
-      select: {
-        id: true,
-        transferNumber: true,
-        status: true,
-        fromBranchId: true,
-        items: {
-          select: { productId: true, productName: true, quantity: true },
-        },
-      },
+    const transfer = await this.repo.findForSend({
+      id,
+      ...tenantWhere(companyId, "direct", "fromBranch", "toBranch"),
     });
     if (!transfer) throw new NotFoundException("Stock transfer tidak ditemukan");
     if (transfer.status !== "PENDING") {
@@ -239,13 +169,7 @@ export class StockTransfersService {
 
     // Validate stock availability at source branch
     const productIds = transfer.items.map((it) => it.productId);
-    const stocks = await this.prisma.branchStock.findMany({
-      where: {
-        branchId: transfer.fromBranchId,
-        productId: { in: productIds },
-      },
-      select: { productId: true, quantity: true },
-    });
+    const stocks = await this.repo.findBranchStocks(transfer.fromBranchId, productIds);
     const stockMap = new Map(stocks.map((s) => [s.productId, s.quantity]));
     for (const item of transfer.items) {
       const available = stockMap.get(item.productId) ?? 0;
@@ -303,7 +227,7 @@ export class StockTransfersService {
       });
     });
 
-    const productMap = await this.loadProductMap(updated.items);
+    const productMap = await this.repo.findProductDetails(updated.items);
     return toTransferDetailResponse(updated, productMap);
   }
 
@@ -313,23 +237,9 @@ export class StockTransfersService {
     id: string,
     dto: ReceiveStockTransferDto,
   ): Promise<StockTransferDetailResponse> {
-    const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
-      select: {
-        id: true,
-        transferNumber: true,
-        status: true,
-        toBranchId: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            productName: true,
-            quantity: true,
-            receivedQty: true,
-          },
-        },
-      },
+    const transfer = await this.repo.findForReceive({
+      id,
+      ...tenantWhere(companyId, "direct", "fromBranch", "toBranch"),
     });
     if (!transfer) throw new NotFoundException("Stock transfer tidak ditemukan");
     if (transfer.status !== "IN_TRANSIT") {
@@ -414,7 +324,7 @@ export class StockTransfersService {
       });
     });
 
-    const productMap = await this.loadProductMap(updated.items);
+    const productMap = await this.repo.findProductDetails(updated.items);
     return toTransferDetailResponse(updated, productMap);
   }
 
@@ -423,17 +333,9 @@ export class StockTransfersService {
     userId: string,
     id: string,
   ): Promise<StockTransferDetailResponse> {
-    const transfer = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
-      select: {
-        id: true,
-        transferNumber: true,
-        status: true,
-        fromBranchId: true,
-        items: {
-          select: { productId: true, productName: true, quantity: true },
-        },
-      },
+    const transfer = await this.repo.findForCancel({
+      id,
+      ...tenantWhere(companyId, "direct", "fromBranch", "toBranch"),
     });
     if (!transfer) throw new NotFoundException("Stock transfer tidak ditemukan");
     if (transfer.status !== "PENDING" && transfer.status !== "IN_TRANSIT") {
@@ -494,14 +396,14 @@ export class StockTransfersService {
       });
     });
 
-    const productMap = await this.loadProductMap(updated.items);
+    const productMap = await this.repo.findProductDetails(updated.items);
     return toTransferDetailResponse(updated, productMap);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.stockTransfer.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "fromBranch", "toBranch") },
-      select: { id: true, status: true },
+    const existing = await this.repo.findStatus({
+      id,
+      ...tenantWhere(companyId, "direct", "fromBranch", "toBranch"),
     });
     if (!existing) throw new NotFoundException("Stock transfer tidak ditemukan");
     if (existing.status !== "PENDING") {
@@ -509,7 +411,7 @@ export class StockTransfersService {
         "Hanya transfer dengan status PENDING yang bisa dihapus",
       );
     }
-    await this.prisma.stockTransfer.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -538,22 +440,13 @@ export class StockTransfersService {
     return where;
   }
 
-  // TR-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
+  // TR-YYYYMMDD-NNNN -- sequence per company per hari (shared utility).
   private async nextTransferNumber(companyId: string): Promise<string> {
     const { start, end } = dayRange();
     return nextDocumentNumber({
       prefix: "TR",
-      countToday: () =>
-        this.prisma.stockTransfer.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.stockTransfer.findFirst({
-          where: { companyId, transferNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
+      countToday: () => this.repo.countForNumber(companyId, start, end),
+      exists: (candidate) => this.repo.existsByNumber(companyId, candidate),
     });
   }
 }

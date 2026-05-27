@@ -1,8 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
-import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
-import { PLATFORM_WA_SENDER_ID } from "../auth/current-company.decorator";
+import { Cron } from "@nestjs/schedule";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
+import { PLATFORM_WA_SENDER_ID } from "@/modules/auth/current-company.decorator";
+import { ServiceOrdersRepository } from "./service-orders.repository";
 
 /**
  * Window reminder service: H-7 dan H-3 sebelum tanggal `nextServiceAt`.
@@ -17,7 +17,7 @@ export class ServiceOrderReminderService {
   private readonly logger = new Logger(ServiceOrderReminderService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: ServiceOrdersRepository,
     private readonly waReceipt: WhatsappReceiptService,
   ) {}
 
@@ -51,36 +51,7 @@ export class ServiceOrderReminderService {
 
     // Cari SO DIBAYAR dengan nextServiceAt jatuh di window ini, dan belum
     // di-reminder hari ini (lastReminderSentAt < hari ini).
-    const sos = await this.prisma.serviceOrder.findMany({
-      where: {
-        status: "DIBAYAR",
-        nextServiceAt: { gte: targetStart, lt: targetEnd },
-        OR: [
-          { lastReminderSentAt: null },
-          { lastReminderSentAt: { lt: today } },
-        ],
-      },
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        vehicle: {
-          select: {
-            plateNumber: true,
-            brand: { select: { name: true } },
-            modelRef: { select: { name: true } },
-          },
-        },
-        // ServiceOrder hanya punya companyId (string), tidak ada relasi langsung.
-        // Ambil nama company via Branch.company yang sudah ter-relasi.
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            company: { select: { id: true, name: true } },
-          },
-        },
-      },
-      take: 200, // batch limit per window per run
-    });
+    const sos = await this.repo.findDueForReminder(targetStart, targetEnd, today, 200);
 
     if (sos.length === 0) {
       this.logger.log(`[so-reminder] window H-${daysAhead}: no candidates`);
@@ -88,10 +59,7 @@ export class ServiceOrderReminderService {
     }
 
     // Pengirim: WA platform-owner (companyId = PLATFORM_WA_SENDER_ID).
-    const senderSession = await this.prisma.whatsappSession.findFirst({
-      where: { companyId: PLATFORM_WA_SENDER_ID },
-      select: { companyId: true, status: true },
-    });
+    const senderSession = await this.repo.findWaSenderSession(PLATFORM_WA_SENDER_ID);
     if (!senderSession || senderSession.status !== "CONNECTED") {
       this.logger.warn(
         `[so-reminder] platform WA sender not connected (status=${senderSession?.status ?? "missing"}), skipping ${sos.length} reminders`,
@@ -105,10 +73,7 @@ export class ServiceOrderReminderService {
       const phone = so.customer?.phone;
       if (!phone || !so.nextServiceAt) {
         // Tandai supaya tidak dipindai berulang kali.
-        await this.prisma.serviceOrder.update({
-          where: { id: so.id },
-          data: { lastReminderSentAt: new Date() },
-        });
+        await this.repo.markReminderSent(so.id);
         continue;
       }
 
@@ -124,10 +89,7 @@ export class ServiceOrderReminderService {
 
       try {
         await this.waReceipt.sendText(senderSession.companyId, phone, msg);
-        await this.prisma.serviceOrder.update({
-          where: { id: so.id },
-          data: { lastReminderSentAt: new Date() },
-        });
+        await this.repo.markReminderSent(so.id);
         sent++;
       } catch (err) {
         failed++;

@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -13,53 +13,20 @@ import type {
   RecloseShiftDto,
   UpdateClosingReportDto,
 } from "./dto/closing-reports.dto";
-import { PrismaService } from "../prisma/prisma.service";
-import { paginate } from "../../common/utils/pagination";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
-
-const CLOSING_REPORT_SELECT = {
-  id: true,
-  shiftId: true,
-  cashierUserId: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  companyId: true,
-  cashierName: true,
-  date: true,
-  openingCash: true,
-  closingCash: true,
-  expectedCash: true,
-  cashDifference: true,
-  totalTransactions: true,
-  totalSales: true,
-  totalDiscount: true,
-  totalTax: true,
-  totalCashSales: true,
-  totalNonCashSales: true,
-  cashMovementIn: true,
-  cashMovementOut: true,
-  voidCount: true,
-  refundCount: true,
-  paymentSummary: true,
-  notes: true,
-  allowReopen: true,
-  createdAt: true,
-  shift: {
-    select: {
-      id: true,
-      openedAt: true,
-      closedAt: true,
-    },
-  },
-} satisfies Prisma.ClosingReportSelect;
-
-type RawClosingReport = Prisma.ClosingReportGetPayload<{
-  select: typeof CLOSING_REPORT_SELECT;
-}>;
+import {
+  ClosingReportsRepository,
+  type RawClosingReport,
+} from "./closing-reports.repository";
 
 @Injectable()
 export class ClosingReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repo: ClosingReportsRepository,
+  ) {}
 
   async list(
     companyId: string,
@@ -80,14 +47,8 @@ export class ClosingReportsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.closingReport.findMany({
-        where,
-        select: CLOSING_REPORT_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.closingReport.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toClosingReportResponse), total, page, perPage);
@@ -97,9 +58,9 @@ export class ClosingReportsService {
     companyId: string,
     id: string,
   ): Promise<ClosingReportResponse> {
-    const report = await this.prisma.closingReport.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: CLOSING_REPORT_SELECT,
+    const report = await this.repo.findOne({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!report) throw new NotFoundException("Closing report not found");
     return toClosingReportResponse(report);
@@ -109,9 +70,9 @@ export class ClosingReportsService {
     companyId: string,
     shiftId: string,
   ): Promise<ClosingReportResponse | null> {
-    const report = await this.prisma.closingReport.findFirst({
-      where: { shiftId, ...tenantWhere(companyId, "direct", "branch") },
-      select: CLOSING_REPORT_SELECT,
+    const report = await this.repo.findOne({
+      shiftId,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     return report ? toClosingReportResponse(report) : null;
   }
@@ -120,21 +81,9 @@ export class ClosingReportsService {
     companyId: string,
     shiftId: string,
   ): Promise<ClosingReportResponse> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { id: shiftId, user: { companyId } },
-      select: {
-        id: true,
-        userId: true,
-        branchId: true,
-        openedAt: true,
-        closedAt: true,
-        openingCash: true,
-        closingCash: true,
-        expectedCash: true,
-        cashDifference: true,
-        isOpen: true,
-        user: { select: { id: true, name: true, companyId: true } },
-      },
+    const shift = await this.repo.findShift({
+      id: shiftId,
+      user: { companyId },
     });
     if (!shift) throw new NotFoundException("Shift not found");
     if (shift.isOpen) {
@@ -146,10 +95,7 @@ export class ClosingReportsService {
       throw new BadRequestException("Shift belum memiliki waktu penutupan");
     }
 
-    const existing = await this.prisma.closingReport.findUnique({
-      where: { shiftId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findByShiftId(shiftId);
     if (existing) {
       throw new ConflictException(
         "Closing report sudah ada untuk shift ini",
@@ -286,7 +232,41 @@ export class ClosingReportsService {
               ? (paymentSummary as unknown as Prisma.InputJsonValue)
               : Prisma.JsonNull,
         },
-        select: CLOSING_REPORT_SELECT,
+        select: {
+          id: true,
+          shiftId: true,
+          cashierUserId: true,
+          branchId: true,
+          branch: { select: { id: true, name: true } },
+          companyId: true,
+          cashierName: true,
+          date: true,
+          openingCash: true,
+          closingCash: true,
+          expectedCash: true,
+          cashDifference: true,
+          totalTransactions: true,
+          totalSales: true,
+          totalDiscount: true,
+          totalTax: true,
+          totalCashSales: true,
+          totalNonCashSales: true,
+          cashMovementIn: true,
+          cashMovementOut: true,
+          voidCount: true,
+          refundCount: true,
+          paymentSummary: true,
+          notes: true,
+          allowReopen: true,
+          createdAt: true,
+          shift: {
+            select: {
+              id: true,
+              openedAt: true,
+              closedAt: true,
+            },
+          },
+        },
       });
     });
 
@@ -298,20 +278,16 @@ export class ClosingReportsService {
     id: string,
     dto: UpdateClosingReportDto,
   ): Promise<ClosingReportResponse> {
-    const existing = await this.prisma.closingReport.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true },
+    const existing = await this.repo.findById({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Closing report not found");
 
     const data: Prisma.ClosingReportUpdateInput = {};
     if (dto.notes !== undefined) data.notes = dto.notes;
 
-    const updated = await this.prisma.closingReport.update({
-      where: { id },
-      data,
-      select: CLOSING_REPORT_SELECT,
-    });
+    const updated = await this.repo.update(id, data);
     return toClosingReportResponse(updated);
   }
 
@@ -320,18 +296,9 @@ export class ClosingReportsService {
     shiftId: string,
     dto: RecloseShiftDto,
   ): Promise<ClosingReportResponse> {
-    const shift = await this.prisma.cashierShift.findFirst({
-      where: { id: shiftId, user: { companyId } },
-      select: {
-        id: true,
-        userId: true,
-        branchId: true,
-        openedAt: true,
-        closedAt: true,
-        openingCash: true,
-        isOpen: true,
-        user: { select: { id: true, name: true } },
-      },
+    const shift = await this.repo.findShiftForReclose({
+      id: shiftId,
+      user: { companyId },
     });
     if (!shift) throw new NotFoundException("Shift tidak ditemukan");
     if (shift.isOpen) {
@@ -379,34 +346,12 @@ export class ClosingReportsService {
       cashMovementsGrouped,
       paymentGrouped,
     ] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: completedWhere,
-        _sum: { grandTotal: true, discountAmount: true, taxAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: cashCompletedWhere,
-        _sum: { grandTotal: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: refundedWhere,
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: voidedWhere,
-        _count: { _all: true },
-      }),
-      this.prisma.cashMovement.groupBy({
-        by: ["type"],
-        where: { shiftId },
-        _sum: { amount: true },
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["paymentMethod"],
-        where: completedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
+      this.repo.aggregateTransactions(completedWhere),
+      this.repo.aggregateTransactionsSum(cashCompletedWhere),
+      this.repo.aggregateTransactionsCount(refundedWhere),
+      this.repo.aggregateTransactionsCount(voidedWhere),
+      this.repo.groupCashMovements(shiftId),
+      this.repo.groupPaymentMethods(completedWhere),
     ]);
 
     const totalSales = completedAgg._sum.grandTotal ?? 0;
@@ -489,7 +434,41 @@ export class ClosingReportsService {
             notes: composedNotes,
             allowReopen: true,
           },
-          select: CLOSING_REPORT_SELECT,
+          select: {
+            id: true,
+            shiftId: true,
+            cashierUserId: true,
+            branchId: true,
+            branch: { select: { id: true, name: true } },
+            companyId: true,
+            cashierName: true,
+            date: true,
+            openingCash: true,
+            closingCash: true,
+            expectedCash: true,
+            cashDifference: true,
+            totalTransactions: true,
+            totalSales: true,
+            totalDiscount: true,
+            totalTax: true,
+            totalCashSales: true,
+            totalNonCashSales: true,
+            cashMovementIn: true,
+            cashMovementOut: true,
+            voidCount: true,
+            refundCount: true,
+            paymentSummary: true,
+            notes: true,
+            allowReopen: true,
+            createdAt: true,
+            shift: {
+              select: {
+                id: true,
+                openedAt: true,
+                closedAt: true,
+              },
+            },
+          },
         });
       }
 
@@ -522,7 +501,41 @@ export class ClosingReportsService {
           notes: composedNotes,
           allowReopen: true,
         },
-        select: CLOSING_REPORT_SELECT,
+        select: {
+          id: true,
+          shiftId: true,
+          cashierUserId: true,
+          branchId: true,
+          branch: { select: { id: true, name: true } },
+          companyId: true,
+          cashierName: true,
+          date: true,
+          openingCash: true,
+          closingCash: true,
+          expectedCash: true,
+          cashDifference: true,
+          totalTransactions: true,
+          totalSales: true,
+          totalDiscount: true,
+          totalTax: true,
+          totalCashSales: true,
+          totalNonCashSales: true,
+          cashMovementIn: true,
+          cashMovementOut: true,
+          voidCount: true,
+          refundCount: true,
+          paymentSummary: true,
+          notes: true,
+          allowReopen: true,
+          createdAt: true,
+          shift: {
+            select: {
+              id: true,
+              openedAt: true,
+              closedAt: true,
+            },
+          },
+        },
       });
     });
 
@@ -530,12 +543,12 @@ export class ClosingReportsService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.closingReport.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true },
+    const existing = await this.repo.findById({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Closing report not found");
-    await this.prisma.closingReport.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
