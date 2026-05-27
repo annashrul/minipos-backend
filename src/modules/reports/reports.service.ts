@@ -1,4 +1,4 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   AgingBucketKey,
@@ -18,11 +18,15 @@ import type {
   SalesReportResponse,
   SalesReportSeriesEntry,
 } from "./dto/reports.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { ReportsRepository } from "./reports.repository";
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repo: ReportsRepository,
+  ) {}
 
   async sales(
     companyId: string,
@@ -477,27 +481,8 @@ export class ReportsService {
     const end = dateTo ? new Date(dateTo) : new Date();
     end.setHours(23, 59, 59, 999);
 
-    const params: unknown[] = [start, end];
-    const branchCond = branchId
-      ? `AND "branchId" = $${params.push(branchId)}`
-      : "";
-    const companyCond = `AND "branchId" IN (SELECT id FROM branches WHERE "companyId" = $${params.push(companyId)})`;
+    const rows = await this.repo.findHourlySales(start, end, branchId, companyId);
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      Array<{ h: number; total: bigint; count: bigint }>
-    >(
-      `SELECT EXTRACT(HOUR FROM "createdAt")::int AS h,
-              COALESCE(SUM("grandTotal"), 0) AS total,
-              COUNT(*)::bigint AS count
-         FROM transactions
-         WHERE status = 'COMPLETED'
-           AND "createdAt" >= $1 AND "createdAt" <= $2
-           ${branchCond}
-           ${companyCond}
-         GROUP BY EXTRACT(HOUR FROM "createdAt")
-         ORDER BY h`,
-      ...params,
-    );
     const map = new Map(
       rows.map((r) => [
         r.h,
@@ -523,49 +508,11 @@ export class ReportsService {
       "v",
       companyId,
     );
-    const rows = await this.prisma.$queryRawUnsafe<
-      Array<{
-        categoryId: string;
-        categoryName: string;
-        totalQuantity: number;
-        totalRevenue: number;
-        totalCost: number;
-        transactionCount: number;
-      }>
-    >(
-      `SELECT COALESCE(v."categoryId", 'no-cat') AS "categoryId",
-              COALESCE(v."categoryName", 'Tanpa Kategori') AS "categoryName",
-              SUM(v.quantity)::int AS "totalQuantity",
-              COALESCE(SUM(v.subtotal), 0)::float AS "totalRevenue",
-              COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
-              COUNT(DISTINCT v."transactionId")::int AS "transactionCount"
-         FROM public.vw_sales_item_facts v
-         WHERE ${where}
-         GROUP BY v."categoryId", v."categoryName"
-         ORDER BY "totalRevenue" DESC`,
-      ...params,
-    );
-    const topRows = await this.prisma.$queryRawUnsafe<
-      Array<{
-        categoryId: string;
-        productName: string;
-        quantity: number;
-        revenue: number;
-        rn: number;
-      }>
-    >(
-      `SELECT * FROM (
-         SELECT COALESCE(v."categoryId", 'no-cat') AS "categoryId",
-                v."productName" AS "productName",
-                SUM(v.quantity)::int AS quantity,
-                COALESCE(SUM(v.subtotal), 0)::float AS revenue,
-                ROW_NUMBER() OVER (PARTITION BY COALESCE(v."categoryId", 'no-cat') ORDER BY SUM(v.subtotal) DESC) AS rn
-           FROM public.vw_sales_item_facts v
-           WHERE ${where}
-           GROUP BY v."categoryId", v."productId", v."productName"
-       ) ranked WHERE rn <= 5`,
-      ...params,
-    );
+    const [rows, topRows] = await Promise.all([
+      this.repo.findCategorySales(where, params),
+      this.repo.findCategoryTopProducts(where, params),
+    ]);
+
     const topMap = new Map<
       string,
       Array<{ name: string; quantity: number; revenue: number }>
@@ -600,49 +547,10 @@ export class ReportsService {
       companyId,
     );
     const [rows, topRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          supplierId: string | null;
-          supplierName: string;
-          totalQuantity: number;
-          totalRevenue: number;
-          totalCost: number;
-          productCount: number;
-        }>
-      >(
-        `SELECT v."supplierId" AS "supplierId",
-                COALESCE(v."supplierName", 'Tanpa Supplier') AS "supplierName",
-                SUM(v.quantity)::int AS "totalQuantity",
-                COALESCE(SUM(v.subtotal), 0)::float AS "totalRevenue",
-                COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
-                COUNT(DISTINCT v."productId")::int AS "productCount"
-           FROM public.vw_sales_item_facts v
-           WHERE ${where}
-           GROUP BY v."supplierId", v."supplierName"
-           ORDER BY "totalRevenue" DESC`,
-        ...params,
-      ),
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          supplierId: string | null;
-          productName: string;
-          quantity: number;
-          revenue: number;
-        }>
-      >(
-        `SELECT * FROM (
-           SELECT v."supplierId" AS "supplierId",
-                  v."productName" AS "productName",
-                  SUM(v.quantity)::int AS quantity,
-                  COALESCE(SUM(v.subtotal), 0)::float AS revenue,
-                  ROW_NUMBER() OVER (PARTITION BY v."supplierId" ORDER BY SUM(v.subtotal) DESC) AS rn
-             FROM public.vw_sales_item_facts v
-             WHERE ${where}
-             GROUP BY v."supplierId", v."productId", v."productName"
-         ) ranked WHERE rn <= 5`,
-        ...params,
-      ),
+      this.repo.findSupplierSales(where, params),
+      this.repo.findSupplierTopProducts(where, params),
     ]);
+
     const topMap = new Map<
       string,
       Array<{ name: string; quantity: number; revenue: number }>
@@ -678,60 +586,10 @@ export class ReportsService {
       companyId,
     );
     const [totals, topCashiers, categoryRows, itemCount] = await Promise.all([
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          revenue: number;
-          discount: number;
-          tax: number;
-          txCount: number;
-        }>
-      >(
-        `SELECT COALESCE(SUM(v."grandTotal"), 0)::float AS revenue,
-                COALESCE(SUM(v."discountAmount"), 0)::float AS discount,
-                COALESCE(SUM(v."taxAmount"), 0)::float AS tax,
-                COUNT(v."transactionId")::int AS "txCount"
-           FROM public.vw_sales_transactions_fact v
-           WHERE ${where}`,
-        ...params,
-      ),
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          userId: string;
-          name: string;
-          transactions: number;
-          revenue: number;
-        }>
-      >(
-        `SELECT v."userId" AS "userId",
-                COALESCE(v."cashierName", 'Unknown') AS name,
-                COUNT(v."transactionId")::int AS transactions,
-                COALESCE(SUM(v."grandTotal"), 0)::float AS revenue
-           FROM public.vw_sales_transactions_fact v
-           WHERE ${where}
-           GROUP BY v."userId", v."cashierName"
-           ORDER BY revenue DESC
-           LIMIT 5`,
-        ...params,
-      ),
-      this.prisma.$queryRawUnsafe<
-        Array<{ category: string; total: number; quantity: number }>
-      >(
-        `SELECT COALESCE(v."categoryName", 'Tanpa Kategori') AS category,
-                COALESCE(SUM(v.subtotal), 0)::float AS total,
-                SUM(v.quantity)::int AS quantity
-           FROM public.vw_sales_item_facts v
-           WHERE ${where}
-           GROUP BY v."categoryName"
-           ORDER BY total DESC
-           LIMIT 8`,
-        ...params,
-      ),
-      this.prisma.$queryRawUnsafe<Array<{ total: number }>>(
-        `SELECT COALESCE(SUM(v.quantity), 0)::int AS total
-           FROM public.vw_sales_item_facts v
-           WHERE ${where}`,
-        ...params,
-      ),
+      this.repo.findOverviewTotals(where, params),
+      this.repo.findOverviewTopCashiers(where, params),
+      this.repo.findOverviewCategorySales(where, params),
+      this.repo.findOverviewItemCount(where, params),
     ]);
     const agg = totals[0] ?? { revenue: 0, discount: 0, tax: 0, txCount: 0 };
     return {
@@ -760,40 +618,8 @@ export class ReportsService {
       companyId,
     );
     const [txRows, itemRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          userId: string;
-          name: string;
-          email: string;
-          role: string;
-          totalRevenue: number;
-          totalDiscount: number;
-          transactionCount: number;
-        }>
-      >(
-        `SELECT v."userId" AS "userId",
-                COALESCE(v."cashierName", 'Unknown') AS name,
-                COALESCE(v."cashierEmail", '-') AS email,
-                COALESCE(v."cashierRole", '-') AS role,
-                COALESCE(SUM(v."grandTotal"), 0)::float AS "totalRevenue",
-                COALESCE(SUM(v."discountAmount"), 0)::float AS "totalDiscount",
-                COUNT(v."transactionId")::int AS "transactionCount"
-           FROM public.vw_sales_transactions_fact v
-           WHERE ${where}
-           GROUP BY v."userId", v."cashierName", v."cashierEmail", v."cashierRole"`,
-        ...params,
-      ),
-      this.prisma.$queryRawUnsafe<
-        Array<{ userId: string; totalCost: number; itemsSold: number }>
-      >(
-        `SELECT v."userId" AS "userId",
-                COALESCE(SUM(v.quantity * v."purchasePrice"), 0)::float AS "totalCost",
-                SUM(v.quantity)::int AS "itemsSold"
-           FROM public.vw_sales_item_facts v
-           WHERE ${where}
-           GROUP BY v."userId"`,
-        ...params,
-      ),
+      this.repo.findCashierTransactions(where, params),
+      this.repo.findCashierItems(where, params),
     ]);
     const itemMap = new Map(itemRows.map((r) => [r.userId, r]));
     return txRows

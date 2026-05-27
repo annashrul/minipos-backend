@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -22,7 +22,11 @@ import type {
   SalesTargetTypeDto,
   UpdateSalesTargetDto,
 } from "./dto/sales-targets.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import {
+  SalesTargetsRepository,
+  type RawSalesTarget,
+} from "./sales-targets.repository";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 // Definisi badge (port dari apps/web/src/server/actions/sales-targets-types.ts).
 // Hanya butuh title + description untuk auto-award; icon/color cukup di FE.
@@ -70,30 +74,12 @@ const BADGE_DEFINITIONS: { key: string; title: string; description: string }[] =
     },
   ];
 
-const SALES_TARGET_SELECT = {
-  id: true,
-  userId: true,
-  user: { select: { id: true, name: true, email: true, role: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  type: true,
-  targetRevenue: true,
-  targetTx: true,
-  targetItems: true,
-  period: true,
-  isActive: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.SalesTargetSelect;
-
-type RawSalesTarget = Prisma.SalesTargetGetPayload<{
-  select: typeof SALES_TARGET_SELECT;
-}>;
-
 @Injectable()
 export class SalesTargetsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: SalesTargetsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   // Filter scoped to company through user/branch relations (no companyId column).
   private tenantWhere(companyId: string): Prisma.SalesTargetWhereInput {
@@ -144,14 +130,8 @@ export class SalesTargetsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.salesTarget.findMany({
-        where,
-        select: SALES_TARGET_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.salesTarget.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     let mapped = await Promise.all(
@@ -175,9 +155,9 @@ export class SalesTargetsService {
     companyId: string,
     id: string,
   ): Promise<SalesTargetResponse> {
-    const target = await this.prisma.salesTarget.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: SALES_TARGET_SELECT,
+    const target = await this.repo.findOne({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!target) throw new NotFoundException("Sales target not found");
     return this.toSalesTargetResponse(target);
@@ -185,11 +165,7 @@ export class SalesTargetsService {
 
   async current(companyId: string): Promise<SalesTargetResponse[]> {
     const now = new Date();
-    const rows = await this.prisma.salesTarget.findMany({
-      where: { isActive: true, ...this.tenantWhere(companyId) },
-      select: SALES_TARGET_SELECT,
-      orderBy: { createdAt: "desc" },
-    });
+    const rows = await this.repo.findManyActive(this.tenantWhere(companyId));
 
     const mapped = await Promise.all(
       rows.map((r) => this.toSalesTargetResponse(r)),
@@ -213,19 +189,16 @@ export class SalesTargetsService {
       dto.targetRevenue ?? dto.targetAmount ?? null;
 
     try {
-      const created = await this.prisma.salesTarget.create({
-        data: {
-          userId: dto.userId ?? null,
-          branchId: dto.branchId ?? null,
-          type: dto.type,
-          targetRevenue,
-          targetTx: dto.targetTx ?? null,
-          targetItems: dto.targetItems ?? null,
-          period,
-          isActive: dto.isActive ?? true,
-          createdBy: userId,
-        },
-        select: SALES_TARGET_SELECT,
+      const created = await this.repo.create({
+        userId: dto.userId ?? null,
+        branchId: dto.branchId ?? null,
+        type: dto.type,
+        targetRevenue,
+        targetTx: dto.targetTx ?? null,
+        targetItems: dto.targetItems ?? null,
+        period,
+        isActive: dto.isActive ?? true,
+        createdBy: userId,
       });
       return this.toSalesTargetResponse(created);
     } catch (err) {
@@ -239,9 +212,9 @@ export class SalesTargetsService {
     id: string,
     dto: UpdateSalesTargetDto,
   ): Promise<SalesTargetResponse> {
-    const existing = await this.prisma.salesTarget.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findExistence({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Sales target not found");
 
@@ -269,11 +242,7 @@ export class SalesTargetsService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     try {
-      const updated = await this.prisma.salesTarget.update({
-        where: { id },
-        data,
-        select: SALES_TARGET_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return this.toSalesTargetResponse(updated);
     } catch (err) {
       throwOnDup(err);
@@ -286,9 +255,9 @@ export class SalesTargetsService {
     companyId: string,
     id: string,
   ): Promise<SalesTargetResponse> {
-    const existing = await this.prisma.salesTarget.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: SALES_TARGET_SELECT,
+    const existing = await this.repo.findOne({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Sales target not found");
 
@@ -312,11 +281,7 @@ export class SalesTargetsService {
       isActive = true;
     }
 
-    const updated = await this.prisma.salesTarget.update({
-      where: { id },
-      data: { isActive },
-      select: SALES_TARGET_SELECT,
-    });
+    const updated = await this.repo.update(id, { isActive });
 
     return this.toSalesTargetResponse(updated, achieved);
   }
@@ -325,16 +290,16 @@ export class SalesTargetsService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.salesTarget.findFirst({
-      where: { id, ...this.tenantWhere(companyId) },
-      select: { id: true },
+    const existing = await this.repo.findExistence({
+      id,
+      ...this.tenantWhere(companyId),
     });
     if (!existing) throw new NotFoundException("Sales target not found");
-    await this.prisma.salesTarget.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
-  // â”€â”€ Leaderboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Leaderboard ────────────────────────────────────────────────────────────
   // Port dari apps/web/src/server/actions/sales-targets.ts:getLeaderboard.
   // Tenant scope via branch.companyId pada transaksi.
   async leaderboard(
@@ -353,39 +318,17 @@ export class SalesTargetsService {
     if (query.branchId) txWhere.branchId = query.branchId;
 
     const [salesAgg, itemsRaw, targets, badges] = await Promise.all([
-      this.prisma.transaction.groupBy({
-        by: ["userId"],
-        where: txWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
+      this.repo.groupTransactionsByUser(txWhere),
+      this.repo.groupTransactionItemsByTransaction({
+        transaction: { is: txWhere },
       }),
-      this.prisma.transactionItem.groupBy({
-        by: ["transactionId"],
-        where: { transaction: { is: txWhere } },
-        _sum: { quantity: true },
-      }),
-      this.prisma.salesTarget.findMany({
-        where: { type, period, isActive: true },
-        select: {
-          userId: true,
-          targetRevenue: true,
-        },
-      }),
-      this.prisma.cashierBadge.findMany({
-        where: { period },
-        select: { userId: true, badge: true, title: true },
-      }),
+      this.repo.findTargetsByPeriod(type, period),
+      this.repo.findBadgesByPeriod(period),
     ]);
 
-    // Map transactionId â†’ quantity sum, then resolve userId via lookup.
+    // Map transactionId -> quantity sum, then resolve userId via lookup.
     const txIds = itemsRaw.map((i) => i.transactionId);
-    const txUsers =
-      txIds.length > 0
-        ? await this.prisma.transaction.findMany({
-            where: { id: { in: txIds } },
-            select: { id: true, userId: true },
-          })
-        : [];
+    const txUsers = await this.repo.findTransactionUsers(txIds);
     const txUserMap = new Map(txUsers.map((t) => [t.id, t.userId]));
     const itemsMap = new Map<string, number>();
     for (const row of itemsRaw) {
@@ -409,10 +352,7 @@ export class SalesTargetsService {
     }
 
     const userIds = salesAgg.map((s) => s.userId).filter(Boolean) as string[];
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, name: true },
-    });
+    const users = await this.repo.findUsersByIds(userIds);
     const userMap = new Map(users.map((u) => [u.id, u]));
 
     let leaderboard: LeaderboardEntryDto[] = salesAgg
@@ -449,7 +389,7 @@ export class SalesTargetsService {
     return { leaderboard, period, type };
   }
 
-  // â”€â”€ Badges (CashierBadge model â€” sales/manager facing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Badges (CashierBadge model -- sales/manager facing) ─────────────────
   async listBadges(
     companyId: string,
     query: GetSalesBadgesQueryDto,
@@ -460,11 +400,7 @@ export class SalesTargetsService {
     };
     if (query.userId) where.userId = query.userId;
 
-    const rows = await this.prisma.cashierBadge.findMany({
-      where,
-      include: { user: { select: { id: true, name: true } } },
-      orderBy: { earnedAt: "desc" },
-    });
+    const rows = await this.repo.findManyBadges(where);
 
     return rows.map((b) => ({
       id: b.id,
@@ -500,60 +436,16 @@ export class SalesTargetsService {
 
     const [salesAgg, voidAgg, targets, earlyBirdAgg, nightOwlAgg, branchAgg] =
       await Promise.all([
-        this.prisma.transaction.groupBy({
-          by: ["userId"],
-          where: txWhere,
-          _sum: { grandTotal: true },
-          _count: { _all: true },
+        this.repo.groupTransactionsByUser(txWhere),
+        this.repo.groupTransactionsByUser({
+          ...tenantTx,
+          status: "VOIDED",
+          createdAt: { gte: start, lte: end },
         }),
-        this.prisma.transaction.groupBy({
-          by: ["userId"],
-          where: {
-            ...tenantTx,
-            status: "VOIDED",
-            createdAt: { gte: start, lte: end },
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.salesTarget.findMany({
-          where: { type, period: currentPeriod, isActive: true },
-        }),
-        this.prisma.$queryRaw<{ userId: string; cnt: bigint }[]>`
-          SELECT t."userId", COUNT(*)::bigint as cnt
-          FROM transactions t
-          JOIN branches br ON br.id = t."branchId"
-          WHERE t.status = 'COMPLETED'
-            AND t."createdAt" >= ${start} AND t."createdAt" <= ${end}
-            AND br."companyId" = ${companyId}
-            AND EXTRACT(HOUR FROM t."createdAt") < 10
-          GROUP BY t."userId"
-          ORDER BY cnt DESC
-          LIMIT 1
-        `.catch(() => [] as { userId: string; cnt: bigint }[]),
-        this.prisma.$queryRaw<{ userId: string; cnt: bigint }[]>`
-          SELECT t."userId", COUNT(*)::bigint as cnt
-          FROM transactions t
-          JOIN branches br ON br.id = t."branchId"
-          WHERE t.status = 'COMPLETED'
-            AND t."createdAt" >= ${start} AND t."createdAt" <= ${end}
-            AND br."companyId" = ${companyId}
-            AND EXTRACT(HOUR FROM t."createdAt") >= 20
-          GROUP BY t."userId"
-          ORDER BY cnt DESC
-          LIMIT 1
-        `.catch(() => [] as { userId: string; cnt: bigint }[]),
-        this.prisma.$queryRaw<{ userId: string; branchCount: bigint }[]>`
-          SELECT t."userId", COUNT(DISTINCT t."branchId")::bigint as "branchCount"
-          FROM transactions t
-          JOIN branches br ON br.id = t."branchId"
-          WHERE t.status = 'COMPLETED'
-            AND t."createdAt" >= ${start} AND t."createdAt" <= ${end}
-            AND br."companyId" = ${companyId}
-            AND t."branchId" IS NOT NULL
-          GROUP BY t."userId"
-          ORDER BY "branchCount" DESC
-          LIMIT 1
-        `.catch(() => [] as { userId: string; branchCount: bigint }[]),
+        this.repo.findTargetsByPeriod(type, currentPeriod),
+        this.repo.findEarlyBirdTop(companyId, start, end),
+        this.repo.findNightOwlTop(companyId, start, end),
+        this.repo.findTeamPlayerTop(companyId, start, end),
       ]);
 
     const awarded: { userId: string; badge: string; title: string }[] = [];
@@ -562,19 +454,19 @@ export class SalesTargetsService {
       const def = BADGE_DEFINITIONS.find((b) => b.key === badgeKey);
       if (!def) return;
 
-      const exists = await this.prisma.cashierBadge.findFirst({
-        where: { userId, badge: badgeKey, period: currentPeriod },
-      });
+      const exists = await this.repo.findBadgeExistence(
+        userId,
+        badgeKey,
+        currentPeriod,
+      );
       if (exists) return;
 
-      await this.prisma.cashierBadge.create({
-        data: {
-          userId,
-          badge: badgeKey,
-          title: def.title,
-          description: def.description,
-          period: currentPeriod,
-        },
+      await this.repo.createBadge({
+        userId,
+        badge: badgeKey,
+        title: def.title,
+        description: def.description,
+        period: currentPeriod,
       });
       awarded.push({ userId, badge: badgeKey, title: def.title });
     };
@@ -582,7 +474,9 @@ export class SalesTargetsService {
     const voidMap = new Map(
       voidAgg.map((v) => [v.userId, v._count._all] as const),
     );
-    const targetMap = new Map(targets.map((t) => [t.userId, t] as const));
+    const targetMap = new Map(
+      targets.map((t) => [t.userId, t] as const),
+    );
 
     const sortedByRevenue = [...salesAgg].sort(
       (a, b) => (b._sum.grandTotal ?? 0) - (a._sum.grandTotal ?? 0),
@@ -630,19 +524,11 @@ export class SalesTargetsService {
     const sevenDaysAgo = new Date(today);
     sevenDaysAgo.setDate(today.getDate() - 7);
 
-    const dailyTargets = await this.prisma.salesTarget.findMany({
-      where: {
-        type: "DAILY",
-        isActive: true,
-        period: {
-          gte: toDateOnly(sevenDaysAgo),
-          lte: toDateOnly(today),
-        },
-        userId: { not: null },
-        // Tenant scope via user.companyId.
-        user: { is: { companyId } },
-      },
-    });
+    const dailyTargets = await this.repo.findDailyTargets(
+      companyId,
+      toDateOnly(sevenDaysAgo),
+      toDateOnly(today),
+    );
 
     const userDailyTargets = new Map<string, typeof dailyTargets>();
     for (const dt of dailyTargets) {
@@ -656,13 +542,10 @@ export class SalesTargetsService {
       let streakCount = 0;
       for (const dt of dts) {
         const dayRange = this.getPeriodRange("DAILY", dt.period);
-        const daySales = await this.prisma.transaction.aggregate({
-          where: {
-            userId,
-            status: "COMPLETED",
-            createdAt: { gte: dayRange.start, lte: dayRange.end },
-          },
-          _sum: { grandTotal: true },
+        const daySales = await this.repo.aggregateTransactionRevenue({
+          userId,
+          status: "COMPLETED",
+          createdAt: { gte: dayRange.start, lte: dayRange.end },
         });
         if (
           dt.targetRevenue &&
@@ -694,24 +577,18 @@ export class SalesTargetsService {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   }
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   private async assertReferences(
     companyId: string,
     dto: CreateSalesTargetDto | UpdateSalesTargetDto,
   ) {
     if (dto.userId) {
-      const user = await this.prisma.user.findFirst({
-        where: { id: dto.userId, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const user = await this.repo.findUserInCompany(dto.userId, companyId);
       if (!user) throw new NotFoundException("User not found");
     }
     if (dto.branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: dto.branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.findBranchInCompany(dto.branchId, companyId);
       if (!branch) throw new NotFoundException("Branch not found");
     }
   }
@@ -814,16 +691,9 @@ export class SalesTargetsService {
     if (branchId) txWhere.branchId = branchId;
 
     const [agg, itemsAgg] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: txWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transactionItem.aggregate({
-        where: {
-          transaction: { is: txWhere },
-        },
-        _sum: { quantity: true },
+      this.repo.aggregateTransactions(txWhere),
+      this.repo.aggregateTransactionItems({
+        transaction: { is: txWhere },
       }),
     ]);
 
@@ -851,11 +721,7 @@ export class SalesTargetsService {
       if (t.userId) txWhere.userId = t.userId;
       if (t.branchId) txWhere.branchId = t.branchId;
 
-      const agg = await this.prisma.transaction.aggregate({
-        where: txWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      });
+      const agg = await this.repo.aggregateTransactions(txWhere);
       achieved = {
         revenue: agg._sum.grandTotal ?? 0,
         tx: agg._count._all ?? 0,

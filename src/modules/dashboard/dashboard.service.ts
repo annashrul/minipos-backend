@@ -1,4 +1,4 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
 import {
@@ -28,7 +28,8 @@ import type {
   LowStockListResponse,
   LowStockProductResponse,
 } from "./dto/dashboard.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { DashboardRepository } from "./dashboard.repository";
 
 type RangeBounds = { from: Date; to: Date };
 
@@ -36,7 +37,10 @@ type RangeBounds = { from: Date; to: Date };
 export class DashboardService {
   private readonly timeZone = APP_TIME_ZONE;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repo: DashboardRepository,
+  ) {}
 
   async stats(
     companyId: string,
@@ -174,9 +178,6 @@ export class DashboardService {
       deletedAt: null,
     };
 
-    // Use raw expression: stock <= minStock â€” Prisma doesn't allow column-to-column comparison, so we fetch and filter.
-    // Strategy: fetch active products with stock <= 50 worst (and also where minStock asc by minStock then filter).
-    // We'll fetch a wider set and filter in memory but cap at limit.
     const candidates = await this.prisma.product.findMany({
       where,
       select: {
@@ -304,9 +305,6 @@ export class DashboardService {
     const now = new Date();
     const expiryCutoff = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Note: ApprovalRequest model belum ada di schema Prisma — pendingApproval
-    // selalu 0 sampai modul approval di-implement. Hapus dari Promise.all
-    // supaya build tidak gagal.
     const [expiringCount, overdueDebtCount, candidates] = await Promise.all([
       this.prisma.product.count({
         where: {
@@ -503,13 +501,8 @@ export class DashboardService {
       }),
       this.getDailySalesData(30, branchId, companyBranchIds),
       this.getYearlyComparison(branchId, companyBranchIds),
-      this.getTopCashiers(periodStart, periodEnd, branchId, companyBranchIds),
-      this.getCategoryBreakdown(
-        periodStart,
-        periodEnd,
-        branchId,
-        companyBranchIds,
-      ),
+      this.repo.findTopCashiers(periodStart, periodEnd, branchId, companyBranchIds),
+      this.repo.findCategoryBreakdown(periodStart, periodEnd, branchId, companyBranchIds),
       this.getHourlySalesData(
         periodStart,
         periodEnd,
@@ -552,30 +545,11 @@ export class DashboardService {
         }),
       ]);
 
-    const profitParams: unknown[] = [periodStart, periodEnd];
-    let profitBranchCond = "";
-    if (branchId) {
-      profitParams.push(branchId);
-      profitBranchCond = `AND t."branchId" = $${profitParams.length}`;
-    } else if (companyBranchIds.length > 0) {
-      profitBranchCond = `AND t."branchId" IN (${companyBranchIds
-        .map((_, i) => `$${profitParams.length + i + 1}`)
-        .join(",")})`;
-      profitParams.push(...companyBranchIds);
-    } else {
-      profitBranchCond = "AND 1=0"; // no branches â†’ no profit
-    }
-
-    const profitRows = await this.prisma.$queryRawUnsafe<{ profit: number }[]>(
-      `
-      SELECT COALESCE(SUM((ti."unitPrice" - p."purchasePrice") * ti.quantity), 0)::float AS profit
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti."transactionId"
-      JOIN products p ON p.id = ti."productId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1 AND t."createdAt" < $2
-        ${profitBranchCond}
-      `,
-      ...profitParams,
+    const profitRows = await this.repo.findProfit(
+      periodStart,
+      periodEnd,
+      branchId,
+      companyBranchIds,
     );
 
     // Low stock products (legacy shape)
@@ -798,27 +772,6 @@ export class DashboardService {
     };
   }
 
-  private buildBranchCondition(
-    params: unknown[],
-    branchId?: string,
-    companyBranchIds?: string[],
-    tableAlias?: string,
-  ): string {
-    const col = tableAlias ? `${tableAlias}."branchId"` : `"branchId"`;
-    if (branchId) {
-      params.push(branchId);
-      return `AND ${col} = $${params.length}`;
-    }
-    if (companyBranchIds && companyBranchIds.length > 0) {
-      const placeholders = companyBranchIds
-        .map((_, i) => `$${params.length + i + 1}`)
-        .join(",");
-      params.push(...companyBranchIds);
-      return `AND ${col} IN (${placeholders})`;
-    }
-    return "AND 1=0";
-  }
-
   private async getDailySalesData(
     days: number,
     branchId: string | undefined,
@@ -828,29 +781,7 @@ export class DashboardService {
     startDate.setDate(startDate.getDate() - (days - 1));
     startDate.setHours(0, 0, 0, 0);
 
-    const params: unknown[] = [startDate];
-    const branchCondition = this.buildBranchCondition(
-      params,
-      branchId,
-      companyBranchIds,
-    );
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { d: Date; total: bigint; count: bigint }[]
-    >(
-      `
-      SELECT DATE_TRUNC('day', "createdAt") as d,
-             COALESCE(SUM("grandTotal"), 0) as total,
-             COUNT(*)::bigint as count
-      FROM transactions
-      WHERE "createdAt" >= $1
-        AND status = 'COMPLETED'
-        ${branchCondition}
-      GROUP BY DATE_TRUNC('day', "createdAt")
-      ORDER BY d ASC
-      `,
-      ...params,
-    );
+    const rows = await this.repo.findDailySales(startDate, branchId, companyBranchIds);
 
     const salesMap = new Map<string, { total: number; count: number }>();
     for (const row of rows) {
@@ -902,30 +833,8 @@ export class DashboardService {
       "Des",
     ];
 
-    const params: unknown[] = [new Date(lastYear, 0, 1)];
-    const branchCondition = this.buildBranchCondition(
-      params,
-      branchId,
-      companyBranchIds,
-    );
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { y: number; m: number; total: bigint; count: bigint }[]
-    >(
-      `
-      SELECT EXTRACT(YEAR FROM "createdAt")::int as y,
-             EXTRACT(MONTH FROM "createdAt")::int as m,
-             COALESCE(SUM("grandTotal"), 0) as total,
-             COUNT(*)::bigint as count
-      FROM transactions
-      WHERE "createdAt" >= $1
-        AND "status" = 'COMPLETED'
-        ${branchCondition}
-      GROUP BY EXTRACT(YEAR FROM "createdAt"), EXTRACT(MONTH FROM "createdAt")
-      ORDER BY y, m
-      `,
-      ...params,
-    );
+    const startDate = new Date(lastYear, 0, 1);
+    const rows = await this.repo.findYearlyComparison(startDate, branchId, companyBranchIds);
 
     const dataMap = new Map<string, { total: number; count: number }>();
     for (const row of rows) {
@@ -954,111 +863,18 @@ export class DashboardService {
     });
   }
 
-  private async getTopCashiers(
-    start: Date,
-    end: Date,
-    branchId: string | undefined,
-    companyBranchIds: string[],
-  ) {
-    const params: unknown[] = [start, end];
-    const branchCondition = this.buildBranchCondition(
-      params,
-      branchId,
-      companyBranchIds,
-      "t",
-    );
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { name: string; total: number; count: number }[]
-    >(
-      `
-      SELECT
-        u.name as name,
-        COALESCE(SUM(t."grandTotal"), 0)::float as total,
-        COUNT(*)::int as count
-      FROM transactions t
-      JOIN users u ON u.id = t."userId"
-      WHERE t."createdAt" >= $1
-        AND t."createdAt" < $2
-        AND t.status = 'COMPLETED'
-        ${branchCondition}
-      GROUP BY u.id, u.name
-      ORDER BY total DESC
-      LIMIT 5
-      `,
-      ...params,
-    );
-    return rows;
-  }
-
-  private async getCategoryBreakdown(
-    start: Date,
-    end: Date,
-    branchId: string | undefined,
-    companyBranchIds: string[],
-  ) {
-    const params: unknown[] = [start, end];
-    const branchCondition = this.buildBranchCondition(
-      params,
-      branchId,
-      companyBranchIds,
-      "t",
-    );
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { name: string; total: number; qty: number }[]
-    >(
-      `
-      SELECT
-        COALESCE(c.name, 'Lainnya') as name,
-        COALESCE(SUM(ti.subtotal), 0)::float as total,
-        COALESCE(SUM(ti.quantity), 0)::int as qty
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti."transactionId"
-      JOIN products p ON p.id = ti."productId"
-      LEFT JOIN categories c ON c.id = p."categoryId"
-      WHERE t."createdAt" >= $1
-        AND t."createdAt" < $2
-        AND t.status = 'COMPLETED'
-        ${branchCondition}
-      GROUP BY c.name
-      ORDER BY total DESC
-      `,
-      ...params,
-    );
-    return rows;
-  }
-
   private async getHourlySalesData(
     start: Date,
     end: Date,
     branchId: string | undefined,
     companyBranchIds: string[],
   ) {
-    const params: unknown[] = [start, end];
-    const branchCondition = this.buildBranchCondition(
-      params,
+    const rows = await this.repo.findHourlySales(
+      start,
+      end,
       branchId,
       companyBranchIds,
-    );
-    const safeTz = this.timeZone.replace(/'/g, "''");
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { h: number; total: bigint; count: bigint }[]
-    >(
-      `
-      SELECT EXTRACT(HOUR FROM (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))::int as h,
-             COALESCE(SUM("grandTotal"), 0) as total,
-             COUNT(*)::bigint as count
-      FROM transactions
-      WHERE "createdAt" >= $1
-        AND "createdAt" < $2
-        AND "status" = 'COMPLETED'
-        ${branchCondition}
-      GROUP BY EXTRACT(HOUR FROM (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))
-      ORDER BY h
-      `,
-      ...params,
+      this.timeZone,
     );
 
     const hoursMap = new Map<number, { total: number; count: number }>();

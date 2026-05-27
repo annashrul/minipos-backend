@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -7,8 +7,8 @@
 import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
 import type {
   CreateReturnDto,
@@ -23,64 +23,14 @@ import type {
   SearchReturnTransactionQueryDto,
   SearchReturnTransactionResponse,
 } from "./dto/returns.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const RETURN_SELECT = {
-  id: true,
-  returnNumber: true,
-  transactionId: true,
-  transaction: { select: { id: true, invoiceNumber: true, invoiceDisplayNumber: true } },
-  customerId: true,
-  customer: { select: { id: true, name: true } },
-  type: true,
-  status: true,
-  reason: true,
-  notes: true,
-  totalRefund: true,
-  refundMethod: true,
-  approvedBy: true,
-  approvedAt: true,
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  processedBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.ReturnExchangeSelect;
-
-const RETURN_ITEM_SELECT = {
-  id: true,
-  productId: true,
-  productName: true,
-  product: { select: { id: true, code: true, name: true } },
-  quantity: true,
-  unitPrice: true,
-  subtotal: true,
-  reason: true,
-  exchangeProductId: true,
-  exchangeProduct: {
-    select: { id: true, code: true, name: true, sellingPrice: true },
-  },
-  exchangeQuantity: true,
-  restocked: true,
-} satisfies Prisma.ReturnExchangeItemSelect;
-
-const RETURN_DETAIL_SELECT = {
-  ...RETURN_SELECT,
-  items: {
-    select: RETURN_ITEM_SELECT,
-    orderBy: { id: "asc" as const },
-  },
-} satisfies Prisma.ReturnExchangeSelect;
-
-type RawReturn = Prisma.ReturnExchangeGetPayload<{
-  select: typeof RETURN_SELECT;
-}>;
-type RawReturnDetail = Prisma.ReturnExchangeGetPayload<{
-  select: typeof RETURN_DETAIL_SELECT;
-}>;
-type RawReturnItem = Prisma.ReturnExchangeItemGetPayload<{
-  select: typeof RETURN_ITEM_SELECT;
-}>;
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  ReturnsRepository,
+  RETURN_DETAIL_SELECT,
+  type RawReturn,
+  type RawReturnDetail,
+  type RawReturnItem,
+} from "./returns.repository";
 
 type ExchangeMeta = {
   unitPrice: number | null;
@@ -91,6 +41,7 @@ type ExchangeMeta = {
 export class ReturnsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: ReturnsRepository,
     private readonly assert: AssertService,
   ) {}
 
@@ -118,14 +69,8 @@ export class ReturnsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.returnExchange.findMany({
-        where,
-        select: RETURN_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.returnExchange.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map((r) => toReturnResponse(r, 0)), total, page, perPage);
@@ -141,12 +86,7 @@ export class ReturnsService {
       perPage: 1,
     });
 
-    const groups = await this.prisma.returnExchange.groupBy({
-      by: ["status"],
-      where,
-      _count: { _all: true },
-      _sum: { totalRefund: true },
-    });
+    const groups = await this.repo.groupByStatus(where);
 
     const stats = {
       pending: { count: 0, totalRefund: 0 },
@@ -165,14 +105,9 @@ export class ReturnsService {
     }
 
     const [returnsCount, exchangesCount, totalAgg] = await Promise.all([
-      this.prisma.returnExchange.count({ where: { ...where, type: "RETURN" } }),
-      this.prisma.returnExchange.count({
-        where: { ...where, type: "EXCHANGE" },
-      }),
-      this.prisma.returnExchange.aggregate({
-        where,
-        _sum: { totalRefund: true },
-      }),
+      this.repo.countByType(where, "RETURN"),
+      this.repo.countByType(where, "EXCHANGE"),
+      this.repo.aggregateTotalRefund(where),
     ]);
 
     return {
@@ -190,9 +125,9 @@ export class ReturnsService {
     companyId: string,
     id: string,
   ): Promise<ReturnDetailResponse> {
-    const ret = await this.prisma.returnExchange.findFirst({
-      where: { id, ...tenantWhere(companyId, "transaction.user") },
-      select: RETURN_DETAIL_SELECT,
+    const ret = await this.repo.findOneDetail({
+      id,
+      ...tenantWhere(companyId, "transaction.user"),
     });
     if (!ret) throw new NotFoundException("Return not found");
     return toReturnDetailResponse(ret);
@@ -205,26 +140,10 @@ export class ReturnsService {
   ): Promise<ReturnDetailResponse> {
     if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
-    const transaction = await this.prisma.transaction.findFirst({
-      where: {
-        id: dto.transactionId,
-        user: { companyId },
-      },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        customerId: true,
-        branchId: true,
-        items: {
-          select: {
-            productId: true,
-            quantity: true,
-            unitPrice: true,
-            productName: true,
-          },
-        },
-      },
-    });
+    const transaction = await this.repo.findTransactionForCreate(
+      dto.transactionId,
+      companyId,
+    );
     if (!transaction) {
       throw new NotFoundException("Transaksi tidak ditemukan");
     }
@@ -248,16 +167,7 @@ export class ReturnsService {
     }
 
     // Sum previously returned quantities per product (any non-rejected return)
-    const priorReturned = await this.prisma.returnExchangeItem.groupBy({
-      by: ["productId"],
-      where: {
-        returnExchange: {
-          transactionId: dto.transactionId,
-          status: { in: ["PENDING", "APPROVED", "COMPLETED"] },
-        },
-      },
-      _sum: { quantity: true },
-    });
+    const priorReturned = await this.repo.groupPriorReturned(dto.transactionId);
     const priorMap = new Map<string, number>(
       priorReturned.map((p) => [p.productId, p._sum.quantity ?? 0]),
     );
@@ -295,10 +205,10 @@ export class ReturnsService {
       ),
     );
     if (exchangeProductIds.length > 0) {
-      const found = await this.prisma.product.findMany({
-        where: { id: { in: exchangeProductIds }, companyId },
-        select: { id: true, sellingPrice: true, name: true },
-      });
+      const found = await this.repo.findExchangeProducts(
+        exchangeProductIds,
+        companyId,
+      );
       if (found.length !== exchangeProductIds.length) {
         throw new BadRequestException(
           "Salah satu produk pengganti tidak ditemukan",
@@ -394,29 +304,9 @@ export class ReturnsService {
     // produk pengganti (kalau EXCHANGE), terbitkan store credit (kalau ada).
     // Frontend hanya expose 1 tombol "Setujui", jadi tanpa langkah ini stok
     // tidak pernah balik ke gudang.
-    const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...tenantWhere(companyId, "transaction.user") },
-      select: {
-        id: true,
-        status: true,
-        type: true,
-        returnNumber: true,
-        totalRefund: true,
-        refundMethod: true,
-        customerId: true,
-        branchId: true,
-        transactionId: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            quantity: true,
-            exchangeProductId: true,
-            exchangeQuantity: true,
-            restocked: true,
-          },
-        },
-      },
+    const existing = await this.repo.findForApprove({
+      id,
+      ...tenantWhere(companyId, "transaction.user"),
     });
     if (!existing) throw new NotFoundException("Return not found");
     if (existing.status !== "PENDING") {
@@ -480,8 +370,8 @@ export class ReturnsService {
 
       // Sinkron status transaksi sumber: kalau setelah retur ini total qty
       // yg di-return (lintas semua retur COMPLETED) sudah menutupi seluruh
-      // qty yg dibeli per produk → transaksi pindah ke REFUNDED. Partial
-      // return tetap dibiarkan COMPLETED — modul retur jadi single source
+      // qty yg dibeli per produk -> transaksi pindah ke REFUNDED. Partial
+      // return tetap dibiarkan COMPLETED -- modul retur jadi single source
       // of truth nominal yg dikembalikan.
       const txStatus = await tx.transaction.findUnique({
         where: { id: existing.transactionId },
@@ -528,9 +418,9 @@ export class ReturnsService {
     id: string,
     dto: RejectReturnDto,
   ): Promise<ReturnDetailResponse> {
-    const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...tenantWhere(companyId, "transaction.user") },
-      select: { id: true, status: true, notes: true },
+    const existing = await this.repo.findForStatus({
+      id,
+      ...tenantWhere(companyId, "transaction.user"),
     });
     if (!existing) throw new NotFoundException("Return not found");
     if (existing.status === "COMPLETED" || existing.status === "REJECTED") {
@@ -546,15 +436,11 @@ export class ReturnsService {
         : `[REJECTED] ${reason}`
       : existing.notes;
 
-    const updated = await this.prisma.returnExchange.update({
-      where: { id },
-      data: {
-        status: "REJECTED",
-        notes: newNotes,
-        approvedBy: userId,
-        approvedAt: new Date(),
-      },
-      select: RETURN_DETAIL_SELECT,
+    const updated = await this.repo.updateReturn(id, {
+      status: "REJECTED",
+      notes: newNotes,
+      approvedBy: userId,
+      approvedAt: new Date(),
     });
     return toReturnDetailResponse(updated);
   }
@@ -564,28 +450,9 @@ export class ReturnsService {
     userId: string,
     id: string,
   ): Promise<ReturnDetailResponse> {
-    const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...tenantWhere(companyId, "transaction.user") },
-      select: {
-        id: true,
-        status: true,
-        type: true,
-        returnNumber: true,
-        totalRefund: true,
-        refundMethod: true,
-        customerId: true,
-        branchId: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            quantity: true,
-            exchangeProductId: true,
-            exchangeQuantity: true,
-            restocked: true,
-          },
-        },
-      },
+    const existing = await this.repo.findForComplete({
+      id,
+      ...tenantWhere(companyId, "transaction.user"),
     });
     if (!existing) throw new NotFoundException("Return not found");
     if (existing.status !== "APPROVED") {
@@ -673,48 +540,7 @@ export class ReturnsService {
     };
     if (query.branchId) where.branchId = query.branchId;
 
-    const transaction = await this.prisma.transaction.findFirst({
-      where,
-      orderBy: [
-        // Exact invoice match wins via createdAt desc tiebreak.
-        { createdAt: "desc" },
-      ],
-      select: {
-        id: true,
-        invoiceNumber: true,
-        invoiceDisplayNumber: true,
-        userId: true,
-        user: { select: { id: true, name: true } },
-        branchId: true,
-        branch: { select: { id: true, name: true } },
-        customerId: true,
-        customer: { select: { id: true, name: true } },
-        subtotal: true,
-        discountAmount: true,
-        taxAmount: true,
-        grandTotal: true,
-        paymentMethod: true,
-        paymentAmount: true,
-        changeAmount: true,
-        status: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            productName: true,
-            productCode: true,
-            quantity: true,
-            unitName: true,
-            unitPrice: true,
-            discount: true,
-            subtotal: true,
-          },
-        },
-      },
-    });
+    const transaction = await this.repo.findTransaction(where);
 
     if (!transaction) {
       throw new NotFoundException("Transaksi tidak ditemukan");
@@ -724,16 +550,7 @@ export class ReturnsService {
     }
 
     // Compute previously-returned qty per product (PENDING/APPROVED/COMPLETED).
-    const priorReturned = await this.prisma.returnExchangeItem.groupBy({
-      by: ["productId"],
-      where: {
-        returnExchange: {
-          transactionId: transaction.id,
-          status: { in: ["PENDING", "APPROVED", "COMPLETED"] },
-        },
-      },
-      _sum: { quantity: true },
-    });
+    const priorReturned = await this.repo.groupPriorReturned(transaction.id);
     const returnedMap = new Map<string, number>(
       priorReturned.map((p) => [p.productId, p._sum.quantity ?? 0]),
     );
@@ -802,33 +619,17 @@ export class ReturnsService {
       ],
     };
 
-    const products = await this.prisma.product.findMany({
-      where,
-      take: 20,
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        sellingPrice: true,
-        stock: true,
-        imageUrl: true,
-        unit: true,
-      },
-    });
+    const products = await this.repo.searchProducts(where, 20);
 
     if (products.length === 0) return { products: [] };
 
     // If branchId provided, lookup branch-scoped stock.
     let branchStockMap: Map<string, number> | null = null;
     if (query.branchId) {
-      const stocks = await this.prisma.branchStock.findMany({
-        where: {
-          branchId: query.branchId,
-          productId: { in: products.map((p) => p.id) },
-        },
-        select: { productId: true, quantity: true },
-      });
+      const stocks = await this.repo.findBranchStocks(
+        query.branchId,
+        products.map((p) => p.id),
+      );
       branchStockMap = new Map(stocks.map((s) => [s.productId, s.quantity]));
     }
 
@@ -851,9 +652,9 @@ export class ReturnsService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.returnExchange.findFirst({
-      where: { id, ...tenantWhere(companyId, "transaction.user") },
-      select: { id: true, status: true },
+    const existing = await this.repo.findForDelete({
+      id,
+      ...tenantWhere(companyId, "transaction.user"),
     });
     if (!existing) throw new NotFoundException("Return not found");
     if (existing.status !== "PENDING") {
@@ -1092,4 +893,3 @@ function toReturnDetailResponse(
     items: cleanedItems,
   };
 }
-

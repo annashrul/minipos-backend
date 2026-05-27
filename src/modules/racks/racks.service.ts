@@ -21,38 +21,22 @@ import type {
   TransferRackStockDto,
   UpdateRackDto,
 } from "./dto/racks.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const RACK_SELECT = {
-  id: true,
-  code: true,
-  name: true,
-  location: true,
-  notes: true,
-  isActive: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.RackSelect;
-
-type RawRack = Prisma.RackGetPayload<{ select: typeof RACK_SELECT }>;
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
+import { RacksRepository, type RawRack } from "./racks.repository";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class RacksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: RacksRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async summary(companyId: string, branchId?: string) {
     const where: Prisma.RackWhereInput = { companyId };
     if (branchId) where.branchId = branchId;
-    const [total, active, inactive] = await Promise.all([
-      this.prisma.rack.count({ where }),
-      this.prisma.rack.count({ where: { ...where, isActive: true } }),
-      this.prisma.rack.count({ where: { ...where, isActive: false } }),
-    ]);
-    return { total, active, inactive };
+    return this.repo.countSummary(where);
   }
 
   async list(
@@ -72,14 +56,8 @@ export class RacksService {
     if (isActive !== undefined) where.isActive = isActive;
 
     const [rows, total] = await Promise.all([
-      this.prisma.rack.findMany({
-        where,
-        select: RACK_SELECT,
-        orderBy: [{ branchId: "asc" }, { code: "asc" }],
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.rack.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     const rackIds = rows.map((r) => r.id);
@@ -87,21 +65,8 @@ export class RacksService {
     // Plus tampilkan produk yang punya defaultRackId tapi belum di
     // RackStock (qty=0 placeholder) untuk visibility.
     const [rackStocks, defaultRackProducts] = await Promise.all([
-      rackIds.length > 0
-        ? this.prisma.rackStock.groupBy({
-            by: ["rackId"],
-            where: { rackId: { in: rackIds }, qty: { gt: 0 } },
-            _count: { productId: true },
-            _sum: { qty: true },
-          })
-        : Promise.resolve([]),
-      rackIds.length > 0
-        ? this.prisma.product.groupBy({
-            by: ["defaultRackId"],
-            where: { defaultRackId: { in: rackIds }, companyId },
-            _count: { id: true },
-          })
-        : Promise.resolve([]),
+      this.repo.groupRackStocks(rackIds),
+      this.repo.groupDefaultRackProducts(rackIds, companyId),
     ]);
 
     const stockByRack = new Map(
@@ -141,43 +106,15 @@ export class RacksService {
     companyId: string,
     id: string,
   ): Promise<RackDetailResponse> {
-    const rack = await this.prisma.rack.findFirst({
-      where: { id, companyId },
-      select: RACK_SELECT,
-    });
+    const rack = await this.repo.findOne({ id, companyId });
     if (!rack) throw new NotFoundException("Rack not found");
 
     // Phase 2A: union dari RackStock (qty actual di rak ini) DAN produk
     // dengan defaultRackId=id (placeholder qty=0 untuk visibility kalau
     // admin belum input stok manual ke rak ini).
     const [rackStocks, defaultProducts] = await Promise.all([
-      this.prisma.rackStock.findMany({
-        where: { rackId: id },
-        select: {
-          qty: true,
-          product: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              unit: true,
-              imageUrl: true,
-              defaultRackId: true,
-            },
-          },
-        },
-        orderBy: { qty: "desc" },
-      }),
-      this.prisma.product.findMany({
-        where: { defaultRackId: id, companyId },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          unit: true,
-          imageUrl: true,
-        },
-      }),
+      this.repo.findRackStocks(id),
+      this.repo.findDefaultProducts(id, companyId),
     ]);
 
     const stockProductIds = new Set(rackStocks.map((s) => s.product.id));
@@ -220,25 +157,19 @@ export class RacksService {
     dto: CreateRackDto,
   ): Promise<RackResponse> {
     // Verify branch belongs to company
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: dto.branchId, companyId },
-      select: { id: true },
-    });
+    const branch = await this.repo.findBranchInCompany(dto.branchId, companyId);
     if (!branch) {
       throw new BadRequestException("Branch tidak ditemukan");
     }
     try {
-      const created = await this.prisma.rack.create({
-        data: {
-          branchId: dto.branchId,
-          companyId,
-          code: dto.code,
-          name: dto.name,
-          location: dto.location ?? null,
-          notes: dto.notes ?? null,
-          isActive: dto.isActive ?? true,
-        },
-        select: RACK_SELECT,
+      const created = await this.repo.create({
+        branchId: dto.branchId,
+        companyId,
+        code: dto.code,
+        name: dto.name,
+        location: dto.location ?? null,
+        notes: dto.notes ?? null,
+        isActive: dto.isActive ?? true,
       });
       return toRackResponse(created);
     } catch (err) {
@@ -252,10 +183,7 @@ export class RacksService {
     id: string,
     dto: UpdateRackDto,
   ): Promise<RackResponse> {
-    const existing = await this.prisma.rack.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExistence({ id, companyId });
     if (!existing) throw new NotFoundException("Rack not found");
 
     const data: Prisma.RackUpdateInput = {};
@@ -266,11 +194,7 @@ export class RacksService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     try {
-      const updated = await this.prisma.rack.update({
-        where: { id },
-        data,
-        select: RACK_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toRackResponse(updated);
     } catch (err) {
       throwOnDupRack(err);
@@ -279,13 +203,7 @@ export class RacksService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.rack.findFirst({
-      where: { id, companyId },
-      select: {
-        id: true,
-        _count: { select: { rackStocks: true } },
-      },
-    });
+    const existing = await this.repo.findWithStockCount(companyId, id);
     if (!existing) throw new NotFoundException("Rack not found");
     if (existing._count.rackStocks > 0) {
       throw new BadRequestException(
@@ -293,11 +211,8 @@ export class RacksService {
       );
     }
     // Clear defaultRackId on any product still pointing here
-    await this.prisma.product.updateMany({
-      where: { defaultRackId: id, companyId },
-      data: { defaultRackId: null },
-    });
-    await this.prisma.rack.delete({ where: { id } });
+    await this.repo.clearDefaultRackIds(companyId, [id]);
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -305,27 +220,16 @@ export class RacksService {
     companyId: string,
     ids: string[],
   ): Promise<{ count: number; skipped: string[] }> {
-    const [skippedRows, deletableRows] = await Promise.all([
-      this.prisma.rack.findMany({
-        where: { id: { in: ids }, companyId, rackStocks: { some: {} } },
-        select: { name: true },
-      }),
-      this.prisma.rack.findMany({
-        where: { id: { in: ids }, companyId, rackStocks: { none: {} } },
-        select: { id: true },
-      }),
+    const [skipped, deletableIds] = await Promise.all([
+      this.repo.findSkippedRacks(companyId, ids),
+      this.repo.findDeletableRackIds(companyId, ids),
     ]);
-    const deletableIds = deletableRows.map((r) => r.id);
     let count = 0;
     if (deletableIds.length > 0) {
-      await this.prisma.product.updateMany({
-        where: { defaultRackId: { in: deletableIds }, companyId },
-        data: { defaultRackId: null },
-      });
-      const result = await this.prisma.rack.deleteMany({ where: { id: { in: deletableIds } } });
-      count = result.count;
+      await this.repo.clearDefaultRackIds(companyId, deletableIds);
+      count = await this.repo.deleteMany(deletableIds);
     }
-    return { count, skipped: skippedRows.map((r) => r.name) };
+    return { count, skipped };
   }
 
   async productLookup(
@@ -333,39 +237,14 @@ export class RacksService {
     productId: string,
     branchId?: string,
   ): Promise<ProductRackLookupResponse> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        unit: true,
-        defaultRackId: true,
-      },
-    });
+    const product = await this.repo.findProduct(companyId, productId);
     if (!product) throw new NotFoundException("Product not found");
 
-    const where: Prisma.RackStockWhereInput = {
+    const stocks = await this.repo.findProductRackStocks(
       productId,
-      rack: { companyId },
-    };
-    if (branchId) where.branchId = branchId;
-
-    const stocks = await this.prisma.rackStock.findMany({
-      where,
-      select: {
-        qty: true,
-        rack: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            branch: { select: { id: true, name: true } },
-          },
-        },
-      },
-      orderBy: { qty: "desc" },
-    });
+      companyId,
+      branchId,
+    );
 
     const totalQty = stocks.reduce((sum, s) => sum + s.qty, 0);
     return {
@@ -388,7 +267,7 @@ export class RacksService {
 
   /**
    * Phase 2A: upsert qty produk ke rak (manual entry). Setiap perubahan
-   * dicatat di RackStockMovement sebagai ADJUST. Qty 0 → row dihapus.
+   * dicatat di RackStockMovement sebagai ADJUST. Qty 0 -> row dihapus.
    */
   async setStock(
     companyId: string,
@@ -396,17 +275,11 @@ export class RacksService {
     dto: SetRackStockDto,
     userId?: string,
   ): Promise<{ success: true; updated: number }> {
-    const rack = await this.prisma.rack.findFirst({
-      where: { id: rackId, companyId },
-      select: { id: true, branchId: true },
-    });
+    const rack = await this.repo.findWithBranchId(companyId, rackId);
     if (!rack) throw new NotFoundException("Rack not found");
 
     const productIds = dto.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId },
-      select: { id: true },
-    });
+    const products = await this.repo.findProductsInCompany(productIds, companyId);
     const validProductIds = new Set(products.map((p) => p.id));
     const invalid = productIds.filter((id) => !validProductIds.has(id));
     if (invalid.length > 0) {
@@ -472,24 +345,21 @@ export class RacksService {
   /**
    * Bulk replace produk yang punya defaultRackId = rackId. Produk lama yang
    * tidak ada di payload akan di-unset (defaultRackId = null). Tidak menyentuh
-   * RackStock — itu di-handle lewat setStock/transfer.
+   * RackStock -- itu di-handle lewat setStock/transfer.
    */
   async assignProducts(
     companyId: string,
     rackId: string,
     dto: AssignProductsToRackDto,
   ): Promise<{ success: true; assigned: number; unassigned: number }> {
-    const rack = await this.prisma.rack.findFirst({
-      where: { id: rackId, companyId },
-      select: { id: true },
-    });
+    const rack = await this.repo.findExistence({ id: rackId, companyId });
     if (!rack) throw new NotFoundException("Rack not found");
 
     if (dto.productIds.length > 0) {
-      const products = await this.prisma.product.findMany({
-        where: { id: { in: dto.productIds }, companyId },
-        select: { id: true },
-      });
+      const products = await this.repo.findProductsInCompany(
+        dto.productIds,
+        companyId,
+      );
       if (products.length !== dto.productIds.length) {
         throw new BadRequestException("Beberapa produk tidak ditemukan");
       }
@@ -540,14 +410,8 @@ export class RacksService {
       throw new BadRequestException("Rak asal dan tujuan tidak boleh sama");
     }
     const [fromRack, toRack] = await Promise.all([
-      this.prisma.rack.findFirst({
-        where: { id: dto.fromRackId, companyId },
-        select: { id: true, branchId: true, code: true },
-      }),
-      this.prisma.rack.findFirst({
-        where: { id: dto.toRackId, companyId },
-        select: { id: true, branchId: true, code: true },
-      }),
+      this.repo.findRackForTransfer(companyId, dto.fromRackId),
+      this.repo.findRackForTransfer(companyId, dto.toRackId),
     ]);
     if (!fromRack || !toRack) {
       throw new NotFoundException("Rak asal atau tujuan tidak ditemukan");
@@ -659,34 +523,8 @@ export class RacksService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.rackStockMovement.findMany({
-        where,
-        select: {
-          id: true,
-          qty: true,
-          type: true,
-          refType: true,
-          refId: true,
-          notes: true,
-          createdAt: true,
-          byUserId: true,
-          byUser: { select: { id: true, name: true } },
-          branchId: true,
-          branch: { select: { id: true, name: true } },
-          productId: true,
-          product: {
-            select: { id: true, code: true, name: true, unit: true },
-          },
-          fromRackId: true,
-          fromRack: { select: { id: true, code: true } },
-          toRackId: true,
-          toRack: { select: { id: true, code: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.rackStockMovement.count({ where }),
+      this.repo.findManyMovements(where, (page - 1) * perPage, perPage),
+      this.repo.countMovements(where),
     ]);
 
     return {
@@ -718,7 +556,7 @@ export class RacksService {
 
   /**
    * Phase 3: user lapor selisih stok di rak. Buat record RackDiscrepancy
-   * (status OPEN), TIDAK auto-apply adjustment — admin harus investigate &
+   * (status OPEN), TIDAK auto-apply adjustment -- admin harus investigate &
    * resolve manual via UI.
    */
   async reportDiscrepancy(
@@ -726,45 +564,23 @@ export class RacksService {
     userId: string,
     dto: ReportDiscrepancyDto,
   ): Promise<DiscrepancyReportResponse> {
-    const rack = await this.prisma.rack.findFirst({
-      where: { id: dto.rackId, companyId },
-      select: { id: true, code: true, branchId: true },
-    });
+    const rack = await this.repo.findWithBranch(companyId, dto.rackId);
     if (!rack) throw new NotFoundException("Rack not found");
-    const product = await this.prisma.product.findFirst({
-      where: { id: dto.productId, companyId },
-      select: { id: true, code: true, name: true },
-    });
+    const product = await this.repo.findProduct(companyId, dto.productId);
     if (!product) throw new NotFoundException("Product not found");
 
     const difference = dto.actualQty - dto.expectedQty;
-    const created = await this.prisma.rackDiscrepancy.create({
-      data: {
-        rackId: rack.id,
-        productId: product.id,
-        branchId: rack.branchId,
-        companyId,
-        expectedQty: dto.expectedQty,
-        actualQty: dto.actualQty,
-        difference,
-        status: "OPEN",
-        notes: dto.notes ?? null,
-        reportedByUserId: userId,
-      },
-      select: {
-        id: true,
-        rackId: true,
-        productId: true,
-        expectedQty: true,
-        actualQty: true,
-        difference: true,
-        status: true,
-        notes: true,
-        reportedByUserId: true,
-        reportedAt: true,
-        resolvedAt: true,
-        reportedBy: { select: { name: true } },
-      },
+    const created = await this.repo.createDiscrepancy({
+      rackId: rack.id,
+      productId: product.id,
+      branchId: rack.branchId,
+      companyId,
+      expectedQty: dto.expectedQty,
+      actualQty: dto.actualQty,
+      difference,
+      status: "OPEN",
+      notes: dto.notes ?? null,
+      reportedByUserId: userId,
     });
     return {
       id: created.id,
@@ -789,28 +605,7 @@ export class RacksService {
     companyId: string,
     status?: "OPEN" | "RESOLVED",
   ): Promise<DiscrepancyReportResponse[]> {
-    const where: Prisma.RackDiscrepancyWhereInput = { companyId };
-    if (status) where.status = status;
-    const rows = await this.prisma.rackDiscrepancy.findMany({
-      where,
-      select: {
-        id: true,
-        rackId: true,
-        rack: { select: { code: true } },
-        productId: true,
-        product: { select: { code: true, name: true } },
-        expectedQty: true,
-        actualQty: true,
-        difference: true,
-        status: true,
-        notes: true,
-        reportedByUserId: true,
-        reportedBy: { select: { name: true } },
-        reportedAt: true,
-        resolvedAt: true,
-      },
-      orderBy: { reportedAt: "desc" },
-    });
+    const rows = await this.repo.findManyDiscrepancies(companyId, status);
     return rows.map((r) => ({
       id: r.id,
       rackId: r.rackId,
@@ -836,18 +631,7 @@ export class RacksService {
     id: string,
     applyAdjustment: boolean,
   ): Promise<DiscrepancyReportResponse> {
-    const disc = await this.prisma.rackDiscrepancy.findFirst({
-      where: { id, companyId, status: "OPEN" },
-      select: {
-        id: true,
-        rackId: true,
-        productId: true,
-        branchId: true,
-        actualQty: true,
-        expectedQty: true,
-        difference: true,
-      },
-    });
+    const disc = await this.repo.findDiscrepancy(companyId, id);
     if (!disc) throw new NotFoundException("Discrepancy not found or already resolved");
 
     await this.prisma.$transaction(async (tx) => {
@@ -933,25 +717,7 @@ export class RacksService {
       });
     });
 
-    const updated = await this.prisma.rackDiscrepancy.findUniqueOrThrow({
-      where: { id },
-      select: {
-        id: true,
-        rackId: true,
-        rack: { select: { code: true } },
-        productId: true,
-        product: { select: { code: true, name: true } },
-        expectedQty: true,
-        actualQty: true,
-        difference: true,
-        status: true,
-        notes: true,
-        reportedByUserId: true,
-        reportedBy: { select: { name: true } },
-        reportedAt: true,
-        resolvedAt: true,
-      },
-    });
+    const updated = await this.repo.findDiscrepancyById(id);
     return {
       id: updated.id,
       rackId: updated.rackId,

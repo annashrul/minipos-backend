@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -32,57 +32,21 @@ import type {
   ProductBranchSkuListResponse,
   ReplaceProductBranchSkusDto,
 } from "./dto/product-branch-skus.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const UNIT_SELECT = {
-  id: true,
-  productId: true,
-  name: true,
-  conversionQty: true,
-  sellingPrice: true,
-  purchasePrice: true,
-  barcode: true,
-  isDefault: true,
-  sortOrder: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.ProductUnitSelect;
-
-const TIER_SELECT = {
-  id: true,
-  productId: true,
-  minQty: true,
-  price: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.ProductTierPriceSelect;
-
-const BRANCH_PRICE_SELECT = {
-  id: true,
-  branchId: true,
-  productId: true,
-  sellingPrice: true,
-  purchasePrice: true,
-  createdAt: true,
-  updatedAt: true,
-  branch: { select: { id: true, name: true, code: true } },
-  product: { select: { id: true, code: true, name: true } },
-} satisfies Prisma.BranchProductPriceSelect;
-
-type RawUnit = Prisma.ProductUnitGetPayload<{ select: typeof UNIT_SELECT }>;
-type RawTier = Prisma.ProductTierPriceGetPayload<{
-  select: typeof TIER_SELECT;
-}>;
-type RawBranchPrice = Prisma.BranchProductPriceGetPayload<{
-  select: typeof BRANCH_PRICE_SELECT;
-}>;
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  ProductExtensionsRepository,
+  type RawUnit,
+  type RawTier,
+  type RawBranchPrice,
+} from "./product-extensions.repository";
 
 @Injectable()
 export class ProductExtensionsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: ProductExtensionsRepository,
     private readonly assert: AssertService,
   ) {}
 
@@ -95,11 +59,7 @@ export class ProductExtensionsService {
     productId: string,
   ): Promise<ProductUnitResponse[]> {
     await this.assert.product(companyId, productId);
-    const rows = await this.prisma.productUnit.findMany({
-      where: { productId },
-      select: UNIT_SELECT,
-      orderBy: { sortOrder: "asc" },
-    });
+    const rows = await this.repo.findManyUnits(productId);
     return rows.map(toUnitResponse);
   }
 
@@ -128,7 +88,19 @@ export class ProductExtensionsService {
             isDefault: dto.isDefault ?? false,
             sortOrder: dto.sortOrder ?? 0,
           },
-          select: UNIT_SELECT,
+          select: {
+            id: true,
+            productId: true,
+            name: true,
+            conversionQty: true,
+            sellingPrice: true,
+            purchasePrice: true,
+            barcode: true,
+            isDefault: true,
+            sortOrder: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         });
       });
       return toUnitResponse(created);
@@ -145,10 +117,7 @@ export class ProductExtensionsService {
     dto: UpdateProductUnitDto,
   ): Promise<ProductUnitResponse> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.productUnit.findFirst({
-      where: { id: unitId, productId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findUnit(unitId, productId);
     if (!existing) throw new NotFoundException("Unit produk tidak ditemukan");
 
     const data: Prisma.ProductUnitUpdateInput = {};
@@ -171,7 +140,19 @@ export class ProductExtensionsService {
         return tx.productUnit.update({
           where: { id: unitId },
           data,
-          select: UNIT_SELECT,
+          select: {
+            id: true,
+            productId: true,
+            name: true,
+            conversionQty: true,
+            sellingPrice: true,
+            purchasePrice: true,
+            barcode: true,
+            isDefault: true,
+            sortOrder: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         });
       });
       return toUnitResponse(updated);
@@ -187,16 +168,11 @@ export class ProductExtensionsService {
     unitId: string,
   ): Promise<{ success: true }> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.productUnit.findFirst({
-      where: { id: unitId, productId },
-      select: { id: true, isDefault: true },
-    });
+    const existing = await this.repo.findUnitWithDefault(unitId, productId);
     if (!existing) throw new NotFoundException("Unit produk tidak ditemukan");
 
     if (existing.isDefault) {
-      const otherCount = await this.prisma.productUnit.count({
-        where: { productId, NOT: { id: unitId } },
-      });
+      const otherCount = await this.repo.countOtherUnits(productId, unitId);
       if (otherCount > 0) {
         throw new BadRequestException(
           "Tetapkan unit lain sebagai default sebelum menghapus",
@@ -204,7 +180,7 @@ export class ProductExtensionsService {
       }
     }
 
-    await this.prisma.productUnit.delete({ where: { id: unitId } });
+    await this.repo.deleteUnit(unitId);
     return { success: true };
   }
 
@@ -217,11 +193,7 @@ export class ProductExtensionsService {
     productId: string,
   ): Promise<TierPriceResponse[]> {
     await this.assert.product(companyId, productId);
-    const rows = await this.prisma.productTierPrice.findMany({
-      where: { productId },
-      select: TIER_SELECT,
-      orderBy: { minQty: "asc" },
-    });
+    const rows = await this.repo.findManyTierPrices(productId);
     return rows.map(toTierResponse);
   }
 
@@ -232,13 +204,9 @@ export class ProductExtensionsService {
   ): Promise<TierPriceResponse> {
     await this.assert.product(companyId, productId);
     try {
-      const created = await this.prisma.productTierPrice.create({
-        data: {
-          productId,
-          minQty: dto.minQty,
-          price: dto.price,
-        },
-        select: TIER_SELECT,
+      const created = await this.repo.createTierPrice(productId, {
+        minQty: dto.minQty,
+        price: dto.price,
       });
       return toTierResponse(created);
     } catch (err) {
@@ -254,10 +222,7 @@ export class ProductExtensionsService {
     dto: UpdateTierPriceDto,
   ): Promise<TierPriceResponse> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.productTierPrice.findFirst({
-      where: { id: tierId, productId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findTierPrice(tierId, productId);
     if (!existing)
       throw new NotFoundException("Tier price tidak ditemukan");
 
@@ -266,11 +231,7 @@ export class ProductExtensionsService {
     if (dto.price !== undefined) data.price = dto.price;
 
     try {
-      const updated = await this.prisma.productTierPrice.update({
-        where: { id: tierId },
-        data,
-        select: TIER_SELECT,
-      });
+      const updated = await this.repo.updateTierPrice(tierId, data);
       return toTierResponse(updated);
     } catch (err) {
       throwOnTierDup(err);
@@ -284,13 +245,10 @@ export class ProductExtensionsService {
     tierId: string,
   ): Promise<{ success: true }> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.productTierPrice.findFirst({
-      where: { id: tierId, productId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findTierPrice(tierId, productId);
     if (!existing)
       throw new NotFoundException("Tier price tidak ditemukan");
-    await this.prisma.productTierPrice.delete({ where: { id: tierId } });
+    await this.repo.deleteTierPrice(tierId);
     return { success: true };
   }
 
@@ -324,11 +282,7 @@ export class ProductExtensionsService {
       }
     });
 
-    const rows = await this.prisma.productTierPrice.findMany({
-      where: { productId },
-      select: TIER_SELECT,
-      orderBy: { minQty: "asc" },
-    });
+    const rows = await this.repo.findManyTierPrices(productId);
     return rows.map(toTierResponse);
   }
 
@@ -356,34 +310,13 @@ export class ProductExtensionsService {
     }
 
     const [products, total] = await Promise.all([
-      this.prisma.product.findMany({
+      this.repo.findProductsWithBranchPrices(
         where,
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          sellingPrice: true,
-          purchasePrice: true,
-          stock: true,
-          unit: true,
-          barcode: true,
-          imageUrl: true,
-          category: { select: { id: true, name: true } },
-          branchPrices: {
-            where: { branchId },
-            select: {
-              id: true,
-              sellingPrice: true,
-              purchasePrice: true,
-            },
-            take: 1,
-          },
-        },
-        orderBy: { name: "asc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.product.count({ where }),
+        branchId,
+        (page - 1) * perPage,
+        perPage,
+      ),
+      this.repo.countProducts(where),
     ]);
 
     const items = products.map((p) => {
@@ -431,14 +364,8 @@ export class ProductExtensionsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.branchProductPrice.findMany({
-        where,
-        select: BRANCH_PRICE_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.branchProductPrice.count({ where }),
+      this.repo.findManyBranchPrices(where, (page - 1) * perPage, perPage),
+      this.repo.countBranchPrices(where),
     ]);
 
     return {
@@ -453,11 +380,7 @@ export class ProductExtensionsService {
     productId: string,
   ): Promise<BranchPriceResponse[]> {
     await this.assert.product(companyId, productId);
-    const rows = await this.prisma.branchProductPrice.findMany({
-      where: { productId },
-      select: BRANCH_PRICE_SELECT,
-      orderBy: { createdAt: "desc" },
-    });
+    const rows = await this.repo.findManyBranchPricesForProduct(productId);
     return rows.map(toBranchPriceResponse);
   }
 
@@ -469,14 +392,11 @@ export class ProductExtensionsService {
     await this.assert.product(companyId, productId);
     await this.assert.branch(companyId, dto.branchId);
     try {
-      const created = await this.prisma.branchProductPrice.create({
-        data: {
-          productId,
-          branchId: dto.branchId,
-          sellingPrice: dto.sellingPrice,
-          purchasePrice: dto.purchasePrice ?? null,
-        },
-        select: BRANCH_PRICE_SELECT,
+      const created = await this.repo.createBranchPrice({
+        productId,
+        branchId: dto.branchId,
+        sellingPrice: dto.sellingPrice,
+        purchasePrice: dto.purchasePrice ?? null,
       });
       return toBranchPriceResponse(created);
     } catch (err) {
@@ -492,10 +412,7 @@ export class ProductExtensionsService {
     dto: UpdateBranchPriceDto,
   ): Promise<BranchPriceResponse> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.branchProductPrice.findFirst({
-      where: { id, productId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findBranchPrice(id, productId);
     if (!existing)
       throw new NotFoundException("Harga cabang tidak ditemukan");
 
@@ -503,11 +420,7 @@ export class ProductExtensionsService {
     if (dto.sellingPrice !== undefined) data.sellingPrice = dto.sellingPrice;
     if (dto.purchasePrice !== undefined) data.purchasePrice = dto.purchasePrice;
 
-    const updated = await this.prisma.branchProductPrice.update({
-      where: { id },
-      data,
-      select: BRANCH_PRICE_SELECT,
-    });
+    const updated = await this.repo.updateBranchPrice(id, data);
     return toBranchPriceResponse(updated);
   }
 
@@ -517,13 +430,10 @@ export class ProductExtensionsService {
     id: string,
   ): Promise<{ success: true }> {
     await this.assert.product(companyId, productId);
-    const existing = await this.prisma.branchProductPrice.findFirst({
-      where: { id, productId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findBranchPrice(id, productId);
     if (!existing)
       throw new NotFoundException("Harga cabang tidak ditemukan");
-    await this.prisma.branchProductPrice.delete({ where: { id } });
+    await this.repo.deleteBranchPrice(id);
     return { success: true };
   }
 
@@ -545,10 +455,7 @@ export class ProductExtensionsService {
         }
         seen.add(id);
       }
-      const branches = await this.prisma.branch.findMany({
-        where: { id: { in: branchIds }, companyId },
-        select: { id: true },
-      });
+      const branches = await this.repo.findBranchIds(branchIds, companyId);
       if (branches.length !== seen.size) {
         throw new NotFoundException("Salah satu cabang tidak ditemukan");
       }
@@ -568,11 +475,7 @@ export class ProductExtensionsService {
       }
     });
 
-    const rows = await this.prisma.branchProductPrice.findMany({
-      where: { productId },
-      select: BRANCH_PRICE_SELECT,
-      orderBy: { createdAt: "desc" },
-    });
+    const rows = await this.repo.findManyBranchPricesForProduct(productId);
     return rows.map(toBranchPriceResponse);
   }
 
@@ -585,11 +488,7 @@ export class ProductExtensionsService {
     productId: string,
   ): Promise<ProductVariantListResponse> {
     await this.assert.product(companyId, productId);
-    const rows = await this.prisma.productVariant.findMany({
-      where: { productId },
-      include: { options: { select: { optionId: true } } },
-      orderBy: { createdAt: "asc" },
-    });
+    const rows = await this.repo.findManyVariants(productId);
     return {
       variants: rows.map((v) => ({
         id: v.id,
@@ -683,10 +582,7 @@ export class ProductExtensionsService {
   ) {
     if (optionIds.length === 0) return null;
     await this.assert.product(companyId, productId);
-    const candidates = await this.prisma.productVariant.findMany({
-      where: { productId, isActive: true },
-      include: { options: { select: { optionId: true } } },
-    });
+    const candidates = await this.repo.findActiveVariants(productId);
     const incoming = new Set(optionIds);
     const match = candidates.find((v) => {
       if (v.options.length !== incoming.size) return false;
@@ -708,7 +604,7 @@ export class ProductExtensionsService {
   }
 
   // ============================================================
-  // PRODUCT BRANCH SKU (Cabang × Satuan × Varian — single source of truth)
+  // PRODUCT BRANCH SKU (Cabang x Satuan x Varian -- single source of truth)
   // ============================================================
 
   async listBranchSkus(
@@ -716,10 +612,7 @@ export class ProductExtensionsService {
     productId: string,
   ): Promise<ProductBranchSkuListResponse> {
     await this.assert.product(companyId, productId);
-    const rows = await this.prisma.productBranchSku.findMany({
-      where: { productId },
-      orderBy: [{ branchId: "asc" }, { unitId: "asc" }, { variantId: "asc" }],
-    });
+    const rows = await this.repo.findManyBranchSkus(productId);
     return {
       skus: rows.map((s) => ({
         id: s.id,
@@ -748,9 +641,9 @@ export class ProductExtensionsService {
   ): Promise<ProductBranchSkuListResponse> {
     await this.assert.product(companyId, productId);
 
-    // Resolve variantId per item — kalau optionIds di-pass tapi variantId belum,
+    // Resolve variantId per item -- kalau optionIds di-pass tapi variantId belum,
     // find-or-create ProductVariant untuk kombinasi tersebut. Ini menghilangkan
-    // kebutuhan tab Varian terpisah — variant otomatis di-upsert saat save SKU.
+    // kebutuhan tab Varian terpisah -- variant otomatis di-upsert saat save SKU.
     const resolvedItems = await this.prisma.$transaction(async (tx) => {
       const variantCandidates = await tx.productVariant.findMany({
         where: { productId },
@@ -850,7 +743,7 @@ export class ProductExtensionsService {
       // vw_product_branch & list endpoint reflect harga/stok terbaru.
       // Pakai cell base-unit (unitId = unit dengan conversionQty terkecil
       // utk produk multi-unit, atau unitId=null kalau no multi-unit) sebagai
-      // representative per branch — sumber tunggal kebenaran ada di matrix.
+      // representative per branch -- sumber tunggal kebenaran ada di matrix.
       const productUnits = await tx.productUnit.findMany({
         where: { productId },
         select: { id: true, conversionQty: true },
@@ -869,7 +762,7 @@ export class ProductExtensionsService {
           ? item.unitId === baseUnitId
           : !item.unitId;
         if (!isBase) continue;
-        // Pilih variant pertama yang ditemui per branch — single value per
+        // Pilih variant pertama yang ditemui per branch -- single value per
         // branch di tabel legacy (tidak punya breakdown per varian).
         if (perBranch.has(item.branchId)) continue;
         perBranch.set(item.branchId, {
@@ -946,15 +839,12 @@ export class ProductExtensionsService {
     variantId: string | null,
   ): Promise<ProductBranchSkuResponse | null> {
     await this.assert.product(companyId, productId);
-    const sku = await this.prisma.productBranchSku.findFirst({
-      where: {
-        productId,
-        branchId,
-        unitId: unitId ?? null,
-        variantId: variantId ?? null,
-        isActive: true,
-      },
-    });
+    const sku = await this.repo.findBranchSku(
+      productId,
+      branchId,
+      unitId,
+      variantId,
+    );
     if (!sku) return null;
     return {
       id: sku.id,
@@ -1043,4 +933,3 @@ function throwOnTierDup(err: unknown): void {
 function throwOnBranchPriceDup(err: unknown): void {
   throwIfUniqueConstraint(err, "Harga untuk cabang ini sudah ditetapkan pada produk tersebut");
 }
-
