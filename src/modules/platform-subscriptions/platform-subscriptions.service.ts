@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -15,32 +15,19 @@ import type {
   PlatformSubscriptionResponse,
   PlatformSubscriptionStatsResponse,
 } from "./dto/platform-subscriptions.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const SUBSCRIPTION_SELECT = {
-  id: true,
-  companyId: true,
-  plan: true,
-  amount: true,
-  durationMonths: true,
-  billingType: true,
-  status: true,
-  planStartDate: true,
-  planEndDate: true,
-  notes: true,
-  approvedBy: true,
-  approvedAt: true,
-  createdAt: true,
-  company: { select: { name: true, slug: true } },
-} satisfies Prisma.SubscriptionPaymentSelect;
-
-type RawSubscription = Prisma.SubscriptionPaymentGetPayload<{
-  select: typeof SUBSCRIPTION_SELECT;
-}>;
+import {
+  PlatformSubscriptionsRepository,
+  type RawPlatformCompany,
+  type RawPlatformSubscription,
+} from "./platform-subscriptions.repository";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 
 @Injectable()
 export class PlatformSubscriptionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: PlatformSubscriptionsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async list(
     query: ListPlatformSubscriptionsQueryDto,
@@ -57,14 +44,8 @@ export class PlatformSubscriptionsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.subscriptionPayment.findMany({
-        where,
-        select: SUBSCRIPTION_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.subscriptionPayment.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -75,10 +56,7 @@ export class PlatformSubscriptionsService {
   }
 
   async findById(id: string): Promise<PlatformSubscriptionResponse> {
-    const sub = await this.prisma.subscriptionPayment.findUnique({
-      where: { id },
-      select: SUBSCRIPTION_SELECT,
-    });
+    const sub = await this.repo.findById(id);
     if (!sub) throw new NotFoundException("Subscription tidak ditemukan");
     return toPlatformSubscription(sub);
   }
@@ -87,17 +65,14 @@ export class PlatformSubscriptionsService {
     user: AuthUser,
     dto: CreatePlatformSubscriptionDto,
   ): Promise<PlatformSubscriptionResponse> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: dto.companyId },
-      select: { id: true, plan: true, planExpiresAt: true },
-    });
+    const company = await this.repo.findCompany(dto.companyId);
     if (!company) throw new NotFoundException("Company tidak ditemukan");
 
     const start = dto.planStartDate
       ? new Date(dto.planStartDate)
-      : (company.planExpiresAt && company.planExpiresAt > new Date()
-          ? company.planExpiresAt
-          : new Date());
+      : company.planExpiresAt && company.planExpiresAt > new Date()
+        ? company.planExpiresAt
+        : new Date();
 
     let end: Date;
     if (dto.planEndDate) {
@@ -131,7 +106,22 @@ export class PlatformSubscriptionsService {
           approvedBy: dto.markPaid ? user.id : null,
           approvedAt: dto.markPaid ? new Date() : null,
         },
-        select: SUBSCRIPTION_SELECT,
+        select: {
+          id: true,
+          companyId: true,
+          plan: true,
+          amount: true,
+          durationMonths: true,
+          billingType: true,
+          status: true,
+          planStartDate: true,
+          planEndDate: true,
+          notes: true,
+          approvedBy: true,
+          approvedAt: true,
+          createdAt: true,
+          company: { select: { name: true, slug: true } },
+        },
       });
 
       if (dto.markPaid) {
@@ -152,16 +142,7 @@ export class PlatformSubscriptionsService {
     id: string,
     dto: MarkPlatformSubscriptionPaidDto,
   ): Promise<PlatformSubscriptionResponse> {
-    const existing = await this.prisma.subscriptionPayment.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        status: true,
-        plan: true,
-        planEndDate: true,
-        companyId: true,
-      },
-    });
+    const existing = await this.repo.findStatus(id);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
@@ -181,7 +162,22 @@ export class PlatformSubscriptionsService {
       const sub = await tx.subscriptionPayment.update({
         where: { id },
         data,
-        select: SUBSCRIPTION_SELECT,
+        select: {
+          id: true,
+          companyId: true,
+          plan: true,
+          amount: true,
+          durationMonths: true,
+          billingType: true,
+          status: true,
+          planStartDate: true,
+          planEndDate: true,
+          notes: true,
+          approvedBy: true,
+          approvedAt: true,
+          createdAt: true,
+          company: { select: { name: true, slug: true } },
+        },
       });
       await tx.company.update({
         where: { id: existing.companyId },
@@ -194,10 +190,7 @@ export class PlatformSubscriptionsService {
   }
 
   async cancel(id: string): Promise<PlatformSubscriptionResponse> {
-    const existing = await this.prisma.subscriptionPayment.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
@@ -205,19 +198,12 @@ export class PlatformSubscriptionsService {
       );
     }
 
-    const updated = await this.prisma.subscriptionPayment.update({
-      where: { id },
-      data: { status: "CANCELLED" },
-      select: SUBSCRIPTION_SELECT,
-    });
+    const updated = await this.repo.update(id, { status: "CANCELLED" });
     return toPlatformSubscription(updated);
   }
 
   async delete(id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.subscriptionPayment.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id);
     if (!existing) throw new NotFoundException("Subscription tidak ditemukan");
     if (existing.status === "PAID") {
       throw new BadRequestException(
@@ -225,7 +211,7 @@ export class PlatformSubscriptionsService {
       );
     }
 
-    await this.prisma.subscriptionPayment.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -233,10 +219,7 @@ export class PlatformSubscriptionsService {
     user: AuthUser,
     companyId: string,
   ): Promise<{ success: true }> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { id: true, plan: true },
-    });
+    const company = await this.repo.findCompany(companyId);
     if (!company) throw new NotFoundException("Company tidak ditemukan");
 
     await this.prisma.$transaction(async (tx) => {
@@ -279,30 +262,13 @@ export class PlatformSubscriptionsService {
       expiringSoon,
       paidSubs,
     ] = await Promise.all([
-      this.prisma.company.count(),
-      this.prisma.company.count({ where: { isActive: true } }),
-      this.prisma.company.groupBy({
-        by: ["plan"],
-        _count: { _all: true },
-      }),
-      this.prisma.subscriptionPayment.count({
-        where: { status: "PAID", planEndDate: { gte: now } },
-      }),
-      this.prisma.subscriptionPayment.count({ where: { status: "PENDING" } }),
-      this.prisma.company.count({
-        where: {
-          plan: { not: "FREE" },
-          planExpiresAt: { gte: now, lte: in30Days },
-        },
-      }),
-      this.prisma.subscriptionPayment.findMany({
-        where: { status: "PAID" },
-        select: {
-          amount: true,
-          durationMonths: true,
-          planEndDate: true,
-        },
-      }),
+      this.repo.countCompanies(),
+      this.repo.countActiveCompanies(),
+      this.repo.groupByPlan(),
+      this.repo.countActiveSubscriptions(now),
+      this.repo.countPendingSubscriptions(),
+      this.repo.countExpiringSoon(now, in30Days),
+      this.repo.findPaidSubscriptions(),
     ]);
 
     const byPlan = { FREE: 0, PRO: 0, ENTERPRISE: 0 };
@@ -348,42 +314,13 @@ export class PlatformSubscriptionsService {
       ];
     }
 
-    const companies = await this.prisma.company.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        email: true,
-        plan: true,
-        planExpiresAt: true,
-        isActive: true,
-        createdAt: true,
-        _count: { select: { users: true, branches: true, products: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return companies.map((c) => ({
-      id: c.id,
-      name: c.name,
-      slug: c.slug,
-      email: c.email,
-      plan: c.plan,
-      planExpiresAt: c.planExpiresAt ? c.planExpiresAt.toISOString() : null,
-      isActive: c.isActive,
-      createdAt: c.createdAt.toISOString(),
-      counts: {
-        users: c._count.users,
-        branches: c._count.branches,
-        products: c._count.products,
-      },
-    }));
+    const companies = await this.repo.findCompanies(where);
+    return companies.map(toCompanyResponse);
   }
 }
 
 function toPlatformSubscription(
-  s: RawSubscription,
+  s: RawPlatformSubscription,
 ): PlatformSubscriptionResponse {
   return {
     id: s.id,
@@ -401,5 +338,23 @@ function toPlatformSubscription(
     createdAt: s.createdAt.toISOString(),
     companyName: s.company.name,
     companySlug: s.company.slug,
+  };
+}
+
+function toCompanyResponse(c: RawPlatformCompany): PlatformCompanyResponse {
+  return {
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    email: c.email,
+    plan: c.plan,
+    planExpiresAt: c.planExpiresAt ? c.planExpiresAt.toISOString() : null,
+    isActive: c.isActive,
+    createdAt: c.createdAt.toISOString(),
+    counts: {
+      users: c._count.users,
+      branches: c._count.branches,
+      products: c._count.products,
+    },
   };
 }

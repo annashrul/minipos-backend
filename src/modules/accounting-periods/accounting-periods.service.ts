@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -13,28 +13,14 @@ import type {
   ListAccountingPeriodsQueryDto,
   UpdateAccountingPeriodDto,
 } from "./dto/accounting-periods.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const PERIOD_SELECT = {
-  id: true,
-  name: true,
-  startDate: true,
-  endDate: true,
-  status: true,
-  closedAt: true,
-  closedBy: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { journals: true } },
-} satisfies Prisma.AccountingPeriodSelect;
-
-type RawPeriod = Prisma.AccountingPeriodGetPayload<{
-  select: typeof PERIOD_SELECT;
-}>;
+import {
+  AccountingPeriodsRepository,
+  type RawPeriod,
+} from "./accounting-periods.repository";
 
 @Injectable()
 export class AccountingPeriodsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: AccountingPeriodsRepository) {}
 
   async list(
     companyId: string,
@@ -77,14 +63,8 @@ export class AccountingPeriodsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.accountingPeriod.findMany({
-        where,
-        select: PERIOD_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.accountingPeriod.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -98,11 +78,9 @@ export class AccountingPeriodsService {
     companyId: string,
     id: string,
   ): Promise<AccountingPeriodResponse> {
-    const period = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: PERIOD_SELECT,
-    });
-    if (!period) throw new NotFoundException("Periode akuntansi tidak ditemukan");
+    const period = await this.repo.findOne({ id, companyId });
+    if (!period)
+      throw new NotFoundException("Periode akuntansi tidak ditemukan");
     return toPeriodResponse(period);
   }
 
@@ -110,16 +88,15 @@ export class AccountingPeriodsService {
     companyId: string,
   ): Promise<AccountingPeriodResponse | null> {
     const now = new Date();
-    const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
+    const period = await this.repo.findOneOrdered(
+      {
         companyId,
         status: "OPEN",
         startDate: { lte: now },
         endDate: { gte: now },
       },
-      select: PERIOD_SELECT,
-      orderBy: { startDate: "desc" },
-    });
+      { startDate: "desc" },
+    );
     return period ? toPeriodResponse(period) : null;
   }
 
@@ -136,15 +113,7 @@ export class AccountingPeriodsService {
     }
 
     // Check overlap with existing OPEN/CLOSED periods (LOCKED also counts as active history)
-    const overlap = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        companyId,
-        status: { in: ["OPEN", "CLOSED", "LOCKED"] },
-        startDate: { lte: endDate },
-        endDate: { gte: startDate },
-      },
-      select: { id: true, name: true },
-    });
+    const overlap = await this.repo.findOverlap(companyId, startDate, endDate);
     if (overlap) {
       throw new ConflictException(
         `Periode tumpang tindih dengan periode existing: ${overlap.name}`,
@@ -152,15 +121,12 @@ export class AccountingPeriodsService {
     }
 
     try {
-      const created = await this.prisma.accountingPeriod.create({
-        data: {
-          name: dto.name,
-          startDate,
-          endDate,
-          status: "OPEN",
-          companyId,
-        },
-        select: PERIOD_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        startDate,
+        endDate,
+        status: "OPEN",
+        companyId,
       });
       return toPeriodResponse(created);
     } catch (err) {
@@ -174,10 +140,7 @@ export class AccountingPeriodsService {
     id: string,
     dto: UpdateAccountingPeriodDto,
   ): Promise<AccountingPeriodResponse> {
-    const existing = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, startDate: true, endDate: true },
-    });
+    const existing = await this.repo.findStatusWithDates(companyId, id);
     if (!existing) {
       throw new NotFoundException("Periode akuntansi tidak ditemukan");
     }
@@ -198,16 +161,12 @@ export class AccountingPeriodsService {
     }
 
     if (dto.startDate || dto.endDate) {
-      const overlap = await this.prisma.accountingPeriod.findFirst({
-        where: {
-          companyId,
-          id: { not: id },
-          status: { in: ["OPEN", "CLOSED", "LOCKED"] },
-          startDate: { lte: endDate },
-          endDate: { gte: startDate },
-        },
-        select: { id: true, name: true },
-      });
+      const overlap = await this.repo.findOverlap(
+        companyId,
+        startDate,
+        endDate,
+        id,
+      );
       if (overlap) {
         throw new ConflictException(
           `Periode tumpang tindih dengan periode existing: ${overlap.name}`,
@@ -221,11 +180,7 @@ export class AccountingPeriodsService {
     if (dto.endDate !== undefined) data.endDate = endDate;
 
     try {
-      const updated = await this.prisma.accountingPeriod.update({
-        where: { id },
-        data,
-        select: PERIOD_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       return toPeriodResponse(updated);
     } catch (err) {
       throwIfDuplicate(err);
@@ -238,10 +193,7 @@ export class AccountingPeriodsService {
     id: string,
     userId: string,
   ): Promise<AccountingPeriodResponse> {
-    const existing = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) {
       throw new NotFoundException("Periode akuntansi tidak ditemukan");
     }
@@ -251,14 +203,10 @@ export class AccountingPeriodsService {
       );
     }
 
-    const updated = await this.prisma.accountingPeriod.update({
-      where: { id },
-      data: {
-        status: "CLOSED",
-        closedAt: new Date(),
-        closedBy: userId,
-      },
-      select: PERIOD_SELECT,
+    const updated = await this.repo.update(id, {
+      status: "CLOSED",
+      closedAt: new Date(),
+      closedBy: userId,
     });
     return toPeriodResponse(updated);
   }
@@ -267,17 +215,12 @@ export class AccountingPeriodsService {
     companyId: string,
     id: string,
   ): Promise<AccountingPeriodResponse> {
-    const existing = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, endDate: true },
-    });
+    const existing = await this.repo.findStatusWithDates(companyId, id);
     if (!existing) {
       throw new NotFoundException("Periode akuntansi tidak ditemukan");
     }
     if (existing.status === "LOCKED") {
-      throw new BadRequestException(
-        "Periode LOCKED tidak dapat di-reopen",
-      );
+      throw new BadRequestException("Periode LOCKED tidak dapat di-reopen");
     }
     if (existing.status !== "CLOSED") {
       throw new BadRequestException(
@@ -286,29 +229,21 @@ export class AccountingPeriodsService {
     }
 
     // Reject if there is a later period that is already CLOSED
-    const laterClosed = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        companyId,
-        id: { not: id },
-        status: "CLOSED",
-        startDate: { gt: existing.endDate },
-      },
-      select: { id: true, name: true },
-    });
+    const laterClosed = await this.repo.findLaterClosed(
+      companyId,
+      id,
+      existing.endDate,
+    );
     if (laterClosed) {
       throw new BadRequestException(
         `Tidak dapat reopen karena ada periode setelahnya yang sudah CLOSED: ${laterClosed.name}`,
       );
     }
 
-    const updated = await this.prisma.accountingPeriod.update({
-      where: { id },
-      data: {
-        status: "OPEN",
-        closedAt: null,
-        closedBy: null,
-      },
-      select: PERIOD_SELECT,
+    const updated = await this.repo.update(id, {
+      status: "OPEN",
+      closedAt: null,
+      closedBy: null,
     });
     return toPeriodResponse(updated);
   }
@@ -317,10 +252,7 @@ export class AccountingPeriodsService {
     companyId: string,
     id: string,
   ): Promise<AccountingPeriodResponse> {
-    const existing = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) {
       throw new NotFoundException("Periode akuntansi tidak ditemukan");
     }
@@ -330,22 +262,12 @@ export class AccountingPeriodsService {
       );
     }
 
-    const updated = await this.prisma.accountingPeriod.update({
-      where: { id },
-      data: { status: "LOCKED" },
-      select: PERIOD_SELECT,
-    });
+    const updated = await this.repo.update(id, { status: "LOCKED" });
     return toPeriodResponse(updated);
   }
 
-  async delete(
-    companyId: string,
-    id: string,
-  ): Promise<{ success: true }> {
-    const existing = await this.prisma.accountingPeriod.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+  async delete(companyId: string, id: string): Promise<{ success: true }> {
+    const existing = await this.repo.findStatus(companyId, id);
     if (!existing) {
       throw new NotFoundException("Periode akuntansi tidak ditemukan");
     }
@@ -355,16 +277,14 @@ export class AccountingPeriodsService {
       );
     }
 
-    const journalCount = await this.prisma.journalEntry.count({
-      where: { periodId: id },
-    });
+    const journalCount = await this.repo.countJournals(id);
     if (journalCount > 0) {
       throw new BadRequestException(
         `Periode tidak dapat dihapus karena sudah memiliki ${journalCount} jurnal terkait`,
       );
     }
 
-    await this.prisma.accountingPeriod.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 }

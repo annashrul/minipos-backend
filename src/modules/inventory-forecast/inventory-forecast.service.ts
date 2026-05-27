@@ -1,9 +1,9 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import type {
   AutoReorderQueryDto,
   DailySalesPointResponse,
@@ -17,7 +17,7 @@ import type {
   SalesTrendDto,
   SupplierReorderGroupResponse,
 } from "./dto/inventory-forecast.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { InventoryForecastRepository } from "./inventory-forecast.repository";
 
 const DEFAULT_LEAD_TIME_DAYS = 7;
 
@@ -39,7 +39,7 @@ function classifyTrend(recentAvg: number, priorAvg: number): SalesTrendDto {
 
 @Injectable()
 export class InventoryForecastService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: InventoryForecastRepository) {}
 
   async getForecast(
     companyId: string,
@@ -62,70 +62,11 @@ export class InventoryForecastService {
     const fifteenDaysAgo = new Date(now);
     fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
 
-    const salesParams1: unknown[] = [thirtyDaysAgo];
-    const salesParams2: unknown[] = [fifteenDaysAgo];
-    const salesParams3: unknown[] = [thirtyDaysAgo, fifteenDaysAgo];
-    let branchCondition1 = "";
-    let branchCondition2 = "";
-    let branchCondition3 = "";
-    if (branchId) {
-      salesParams1.push(branchId);
-      branchCondition1 = `AND t."branchId" = $${salesParams1.length}`;
-      salesParams2.push(branchId);
-      branchCondition2 = `AND t."branchId" = $${salesParams2.length}`;
-      salesParams3.push(branchId);
-      branchCondition3 = `AND t."branchId" = $${salesParams3.length}`;
-    }
-
-    const salesData = await this.prisma.$queryRawUnsafe<
-      { productId: string; total_sold: bigint; active_days: bigint }[]
-    >(
-      `
-        SELECT ti."productId",
-               SUM(ti.quantity) as total_sold,
-               COUNT(DISTINCT DATE_TRUNC('day', t."createdAt")) as active_days
-        FROM transaction_items ti
-        JOIN transactions t ON t.id = ti."transactionId"
-        WHERE t.status = 'COMPLETED'
-          AND t."createdAt" >= $1
-          ${branchCondition1}
-        GROUP BY ti."productId"
-      `,
-      ...salesParams1,
-    );
-
-    const recentSalesData = await this.prisma.$queryRawUnsafe<
-      { productId: string; total_sold: bigint }[]
-    >(
-      `
-        SELECT ti."productId",
-               SUM(ti.quantity) as total_sold
-        FROM transaction_items ti
-        JOIN transactions t ON t.id = ti."transactionId"
-        WHERE t.status = 'COMPLETED'
-          AND t."createdAt" >= $1
-          ${branchCondition2}
-        GROUP BY ti."productId"
-      `,
-      ...salesParams2,
-    );
-
-    const priorSalesData = await this.prisma.$queryRawUnsafe<
-      { productId: string; total_sold: bigint }[]
-    >(
-      `
-        SELECT ti."productId",
-               SUM(ti.quantity) as total_sold
-        FROM transaction_items ti
-        JOIN transactions t ON t.id = ti."transactionId"
-        WHERE t.status = 'COMPLETED'
-          AND t."createdAt" >= $1
-          AND t."createdAt" < $2
-          ${branchCondition3}
-        GROUP BY ti."productId"
-      `,
-      ...salesParams3,
-    );
+    const [salesData, recentSalesData, priorSalesData] = await Promise.all([
+      this.repo.getSalesAggregate(thirtyDaysAgo, branchId),
+      this.repo.getSalesTotals(fifteenDaysAgo, branchId),
+      this.repo.getSalesTotalsRange(thirtyDaysAgo, fifteenDaysAgo, branchId),
+    ]);
 
     const salesMap = new Map(
       salesData.map((r) => [
@@ -157,13 +98,7 @@ export class InventoryForecastService {
       ];
     }
 
-    const products = await this.prisma.product.findMany({
-      where: productWhere,
-      include: {
-        category: { select: { name: true } },
-        supplier: { select: { id: true, name: true } },
-      },
-    });
+    const products = await this.repo.findProducts(productWhere);
 
     let results: ForecastProductResponse[] = products.map((p) => {
       const sales = salesMap.get(p.id) || { totalSold: 0, activeDays: 0 };
@@ -287,30 +222,7 @@ export class InventoryForecastService {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const trendParams: unknown[] = [productId, startDate];
-    let trendBranchCondition = "";
-    if (branchId) {
-      trendParams.push(branchId);
-      trendBranchCondition = `AND t."branchId" = $${trendParams.length}`;
-    }
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { sale_date: Date; daily_qty: bigint }[]
-    >(
-      `
-        SELECT DATE_TRUNC('day', t."createdAt") as sale_date,
-               SUM(ti.quantity) as daily_qty
-        FROM transaction_items ti
-        JOIN transactions t ON t.id = ti."transactionId"
-        WHERE t.status = 'COMPLETED'
-          AND ti."productId" = $1
-          AND t."createdAt" >= $2
-          ${trendBranchCondition}
-        GROUP BY DATE_TRUNC('day', t."createdAt")
-        ORDER BY sale_date ASC
-      `,
-      ...trendParams,
-    );
+    const rows = await this.repo.getDailySalesTrend(productId, startDate, branchId);
 
     const result: DailySalesPointResponse[] = [];
     const salesMap = new Map(
@@ -367,12 +279,7 @@ export class InventoryForecastService {
           .map((p) => p.supplierId as string),
       ),
     ];
-    const suppliers = supplierIds.length
-      ? await this.prisma.supplier.findMany({
-          where: { id: { in: supplierIds }, companyId },
-          select: { id: true, name: true, contact: true, email: true },
-        })
-      : [];
+    const suppliers = await this.repo.findSuppliers(companyId, supplierIds);
     const supplierMap = new Map(suppliers.map((s) => [s.id, s]));
 
     for (const p of needsReorder) {

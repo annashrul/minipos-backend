@@ -17,58 +17,23 @@ import type {
   ToggleItemMatchDto,
   UpdateBankReconciliationDto,
 } from "./dto/bank-reconciliation.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const RECON_SELECT = {
-  id: true,
-  accountId: true,
-  account: { select: { id: true, code: true, name: true } },
-  statementDate: true,
-  statementBalance: true,
-  bookBalance: true,
-  status: true,
-  companyId: true,
-  completedBy: true,
-  completedAt: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { items: true } },
-} satisfies Prisma.BankReconciliationSelect;
-
-const RECON_DETAIL_SELECT = {
-  ...RECON_SELECT,
-  items: {
-    select: {
-      id: true,
-      reconciliationId: true,
-      source: true,
-      referenceNumber: true,
-      description: true,
-      date: true,
-      amount: true,
-      matchedItemId: true,
-      matchStatus: true,
-      journalEntryId: true,
-      createdAt: true,
-    },
-    orderBy: { date: "asc" },
-  },
-} satisfies Prisma.BankReconciliationSelect;
-
-type RawRecon = Prisma.BankReconciliationGetPayload<{
-  select: typeof RECON_SELECT;
-}>;
-type RawReconDetail = Prisma.BankReconciliationGetPayload<{
-  select: typeof RECON_DETAIL_SELECT;
-}>;
-type RawReconItem = RawReconDetail["items"][number];
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  BankReconciliationRepository,
+  type RawRecon,
+  type RawReconDetail,
+  type RawReconItem,
+} from "./bank-reconciliation.repository";
 
 const STATUS_IN_PROGRESS = "IN_PROGRESS";
 const STATUS_COMPLETED = "COMPLETED";
 
 @Injectable()
 export class BankReconciliationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: BankReconciliationRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async list(
     companyId: string,
@@ -84,14 +49,8 @@ export class BankReconciliationService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.bankReconciliation.findMany({
-        where,
-        select: RECON_SELECT,
-        orderBy: [{ statementDate: "desc" }, { createdAt: "desc" }],
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
-      }),
-      this.prisma.bankReconciliation.count({ where }),
+      this.repo.findMany(where, (query.page - 1) * query.perPage, query.perPage),
+      this.repo.count(where),
     ]);
 
     return {
@@ -105,10 +64,7 @@ export class BankReconciliationService {
     companyId: string,
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
-    const recon = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: RECON_DETAIL_SELECT,
-    });
+    const recon = await this.repo.findOne({ id, companyId });
     if (!recon) throw new NotFoundException("Bank reconciliation not found");
     return toReconDetailResponse(recon);
   }
@@ -124,16 +80,13 @@ export class BankReconciliationService {
       statementDate,
     );
 
-    const created = await this.prisma.bankReconciliation.create({
-      data: {
-        accountId: dto.accountId,
-        statementDate,
-        statementBalance: dto.statementBalance,
-        bookBalance,
-        status: STATUS_IN_PROGRESS,
-        companyId,
-      },
-      select: RECON_DETAIL_SELECT,
+    const created = await this.repo.create({
+      accountId: dto.accountId,
+      statementDate,
+      statementBalance: dto.statementBalance,
+      bookBalance,
+      status: STATUS_IN_PROGRESS,
+      companyId,
     });
 
     return toReconDetailResponse(created);
@@ -144,10 +97,7 @@ export class BankReconciliationService {
     id: string,
     dto: UpdateBankReconciliationDto,
   ): Promise<BankReconciliationDetailResponse> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, accountId: true },
-    });
+    const existing = await this.repo.findStatus(id, companyId);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
@@ -156,12 +106,11 @@ export class BankReconciliationService {
     }
 
     const data: Prisma.BankReconciliationUpdateInput = {};
-    let bookBalance: number | undefined;
 
     if (dto.statementDate !== undefined) {
       const statementDate = new Date(dto.statementDate);
       data.statementDate = statementDate;
-      bookBalance = await this.computeBookBalance(
+      const bookBalance = await this.computeBookBalance(
         existing.accountId,
         statementDate,
       );
@@ -171,7 +120,7 @@ export class BankReconciliationService {
       data.statementBalance = dto.statementBalance;
     }
 
-    await this.prisma.bankReconciliation.update({ where: { id }, data });
+    await this.repo.update(id, data);
     return this.findById(companyId, id);
   }
 
@@ -180,10 +129,7 @@ export class BankReconciliationService {
     id: string,
     dto: SetReconciliationItemsDto,
   ): Promise<BankReconciliationDetailResponse> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true, accountId: true },
-    });
+    const existing = await this.repo.findStatus(id, companyId);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
@@ -229,10 +175,7 @@ export class BankReconciliationService {
     itemId: string,
     dto: ToggleItemMatchDto,
   ): Promise<BankReconciliationDetailResponse> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id, companyId);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
@@ -240,19 +183,13 @@ export class BankReconciliationService {
       );
     }
 
-    const item = await this.prisma.bankReconciliationItem.findFirst({
-      where: { id: itemId, reconciliationId: id },
-      select: { id: true },
-    });
+    const item = await this.repo.findItem(itemId, id);
     if (!item) throw new NotFoundException("Item not found");
 
-    await this.prisma.bankReconciliationItem.update({
-      where: { id: itemId },
-      data: {
-        matchStatus: dto.matchStatus,
-        matchedItemId:
-          dto.matchedItemId === undefined ? undefined : dto.matchedItemId,
-      },
+    await this.repo.updateItem(itemId, {
+      matchStatus: dto.matchStatus,
+      matchedItemId:
+        dto.matchedItemId === undefined ? undefined : dto.matchedItemId,
     });
 
     return this.findById(companyId, id);
@@ -264,21 +201,9 @@ export class BankReconciliationService {
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
     const [existing, totalItems, unmatchedCount] = await Promise.all([
-      this.prisma.bankReconciliation.findFirst({
-        where: { id, companyId },
-        select: {
-          id: true,
-          status: true,
-          statementBalance: true,
-          bookBalance: true,
-        },
-      }),
-      this.prisma.bankReconciliationItem.count({
-        where: { reconciliationId: id },
-      }),
-      this.prisma.bankReconciliationItem.count({
-        where: { reconciliationId: id, matchStatus: "UNMATCHED" },
-      }),
+      this.repo.findForReconcile(id, companyId),
+      this.repo.countItems(id),
+      this.repo.countUnmatchedItems(id),
     ]);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
@@ -297,13 +222,10 @@ export class BankReconciliationService {
       );
     }
 
-    await this.prisma.bankReconciliation.update({
-      where: { id },
-      data: {
-        status: STATUS_COMPLETED,
-        completedBy: userId,
-        completedAt: new Date(),
-      },
+    await this.repo.update(id, {
+      status: STATUS_COMPLETED,
+      completedBy: userId,
+      completedAt: new Date(),
     });
 
     return this.findById(companyId, id);
@@ -313,10 +235,7 @@ export class BankReconciliationService {
     companyId: string,
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id, companyId);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_COMPLETED) {
       throw new BadRequestException(
@@ -324,13 +243,10 @@ export class BankReconciliationService {
       );
     }
 
-    await this.prisma.bankReconciliation.update({
-      where: { id },
-      data: {
-        status: STATUS_IN_PROGRESS,
-        completedBy: null,
-        completedAt: null,
-      },
+    await this.repo.update(id, {
+      status: STATUS_IN_PROGRESS,
+      completedBy: null,
+      completedAt: null,
     });
 
     return this.findById(companyId, id);
@@ -340,10 +256,7 @@ export class BankReconciliationService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.bankReconciliation.findFirst({
-      where: { id, companyId },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findStatusOnly(id, companyId);
     if (!existing) throw new NotFoundException("Bank reconciliation not found");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
@@ -362,14 +275,7 @@ export class BankReconciliationService {
   // ===== helpers =====
 
   private async assertAccount(companyId: string, accountId: string) {
-    const account = await this.prisma.account.findFirst({
-      where: {
-        id: accountId,
-        isActive: true,
-        category: { companyId },
-      },
-      select: { id: true },
-    });
+    const account = await this.repo.assertAccount(companyId, accountId);
     if (!account) {
       throw new NotFoundException("Account not found");
     }
@@ -389,21 +295,7 @@ export class BankReconciliationService {
     );
     if (journalIds.length === 0) return;
 
-    const entries = await this.prisma.journalEntry.findMany({
-      where: {
-        id: { in: journalIds },
-        lines: { some: { accountId } },
-        OR: [
-          { branch: { companyId } },
-          { period: { companyId } },
-          {
-            AND: [{ branchId: null }, { periodId: null }],
-            lines: { some: { account: { category: { companyId } } } },
-          },
-        ],
-      },
-      select: { id: true },
-    });
+    const entries = await this.repo.findJournalEntries(journalIds, accountId, companyId);
     if (entries.length !== journalIds.length) {
       throw new BadRequestException(
         "Salah satu jurnal tidak valid untuk akun ini",
@@ -415,24 +307,13 @@ export class BankReconciliationService {
     accountId: string,
     asOfDate: Date,
   ): Promise<number> {
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-      select: {
-        openingBalance: true,
-        category: { select: { normalSide: true } },
-      },
-    });
+    const account = await this.repo.findAccountForBalance(accountId);
     if (!account) return 0;
 
-    const agg = await this.prisma.journalEntryLine.aggregate({
-      where: {
-        accountId,
-        journal: { status: "POSTED", date: { lte: asOfDate } },
-      },
-      _sum: { debit: true, credit: true },
-    });
-    const debitSum = agg._sum.debit ?? 0;
-    const creditSum = agg._sum.credit ?? 0;
+    const { debitSum, creditSum } = await this.repo.aggregateJournalLines(
+      accountId,
+      asOfDate,
+    );
     const normalSide = account.category?.normalSide ?? "DEBIT";
     const movement =
       normalSide === "DEBIT" ? debitSum - creditSum : creditSum - debitSum;

@@ -12,11 +12,11 @@ import type {
   VehicleListResponse,
   VehicleResponse,
 } from "./dto/vehicle.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { VehiclesRepository, type RawVehicle } from "./vehicles.repository";
 
 @Injectable()
 export class VehiclesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: VehiclesRepository) {}
 
   async list(
     companyId: string,
@@ -40,19 +40,8 @@ export class VehiclesService {
     }
 
     const [total, items] = await Promise.all([
-      this.prisma.vehicle.count({ where }),
-      this.prisma.vehicle.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { updatedAt: "desc" },
-        include: {
-          customer: { select: { id: true, name: true, phone: true } },
-          brand: { select: { id: true, name: true } },
-          modelRef: { select: { id: true, name: true } },
-          _count: { select: { serviceOrders: true } },
-        },
-      }),
+      this.repo.count(where),
+      this.repo.findMany(where, { updatedAt: "desc" }, (page - 1) * limit, limit),
     ]);
 
     return {
@@ -64,15 +53,7 @@ export class VehiclesService {
   }
 
   async findById(companyId: string, id: string): Promise<VehicleResponse> {
-    const v = await this.prisma.vehicle.findFirst({
-      where: { id, companyId },
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        brand: { select: { id: true, name: true } },
-        modelRef: { select: { id: true, name: true } },
-        _count: { select: { serviceOrders: true } },
-      },
-    });
+    const v = await this.repo.findById(companyId, id);
     if (!v) throw new NotFoundException("Kendaraan tidak ditemukan");
     return this.toResponse(v);
   }
@@ -82,49 +63,35 @@ export class VehiclesService {
     dto: CreateVehicleDto,
   ): Promise<VehicleResponse> {
     // Verifikasi customer milik company yang sama.
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: dto.customerId, companyId },
-      select: { id: true },
-    });
+    const customer = await this.repo.findCustomer(companyId, dto.customerId);
     if (!customer) {
       throw new NotFoundException("Customer tidak ditemukan");
     }
 
     const plate = dto.plateNumber.toUpperCase().replace(/\s+/g, " ").trim();
 
-    const existing = await this.prisma.vehicle.findFirst({
-      where: { companyId, plateNumber: plate },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExistingPlate(companyId, plate);
     if (existing) {
       throw new ConflictException(`Kendaraan dengan plat ${plate} sudah terdaftar`);
     }
 
-    const created = await this.prisma.vehicle.create({
-      data: {
-        companyId,
-        customerId: dto.customerId,
-        plateNumber: plate,
-        type: dto.type ?? "MOTOR",
-        brandId: dto.brandId ?? null,
-        modelId: dto.modelId ?? null,
-        year: dto.year ?? null,
-        color: dto.color ?? null,
-        vin: dto.vin ?? null,
-        engineNumber: dto.engineNumber ?? null,
-        engineCapacity: dto.engineCapacity ?? null,
-        transmission: dto.transmission ?? null,
-        fuelType: dto.fuelType ?? null,
-        mileage: dto.mileage ?? null,
-        photoUrl: dto.photoUrl ?? null,
-        notes: dto.notes ?? null,
-      },
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        brand: { select: { id: true, name: true } },
-        modelRef: { select: { id: true, name: true } },
-        _count: { select: { serviceOrders: true } },
-      },
+    const created = await this.repo.create({
+      companyId,
+      customerId: dto.customerId,
+      plateNumber: plate,
+      type: dto.type ?? "MOTOR",
+      brandId: dto.brandId ?? null,
+      modelId: dto.modelId ?? null,
+      year: dto.year ?? null,
+      color: dto.color ?? null,
+      vin: dto.vin ?? null,
+      engineNumber: dto.engineNumber ?? null,
+      engineCapacity: dto.engineCapacity ?? null,
+      transmission: dto.transmission ?? null,
+      fuelType: dto.fuelType ?? null,
+      mileage: dto.mileage ?? null,
+      photoUrl: dto.photoUrl ?? null,
+      notes: dto.notes ?? null,
     });
     return this.toResponse(created);
   }
@@ -134,17 +101,11 @@ export class VehiclesService {
     id: string,
     dto: UpdateVehicleDto,
   ): Promise<VehicleResponse> {
-    const existing = await this.prisma.vehicle.findFirst({
-      where: { id, companyId },
-      select: { id: true, plateNumber: true },
-    });
+    const existing = await this.repo.findExistingById(companyId, id);
     if (!existing) throw new NotFoundException("Kendaraan tidak ditemukan");
 
     if (dto.customerId) {
-      const customer = await this.prisma.customer.findFirst({
-        where: { id: dto.customerId, companyId },
-        select: { id: true },
-      });
+      const customer = await this.repo.findCustomer(companyId, dto.customerId);
       if (!customer) throw new NotFoundException("Customer tidak ditemukan");
     }
 
@@ -152,14 +113,7 @@ export class VehiclesService {
     if (dto.plateNumber) {
       normalizedPlate = dto.plateNumber.toUpperCase().replace(/\s+/g, " ").trim();
       if (normalizedPlate !== existing.plateNumber) {
-        const conflict = await this.prisma.vehicle.findFirst({
-          where: {
-            companyId,
-            plateNumber: normalizedPlate,
-            NOT: { id },
-          },
-          select: { id: true },
-        });
+        const conflict = await this.repo.findExistingPlate(companyId, normalizedPlate, id);
         if (conflict) {
           throw new ConflictException(
             `Kendaraan dengan plat ${normalizedPlate} sudah terdaftar`,
@@ -205,16 +159,7 @@ export class VehiclesService {
         : null;
     }
 
-    const updated = await this.prisma.vehicle.update({
-      where: { id },
-      data,
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        brand: { select: { id: true, name: true } },
-        modelRef: { select: { id: true, name: true } },
-        _count: { select: { serviceOrders: true } },
-      },
-    });
+    const updated = await this.repo.update(id, data);
     return this.toResponse(updated);
   }
 
@@ -226,25 +171,7 @@ export class VehiclesService {
   async history(companyId: string, id: string) {
     const vehicle = await this.findById(companyId, id);
 
-    const orders = await this.prisma.serviceOrder.findMany({
-      where: { companyId, vehicleId: id },
-      orderBy: { createdAt: "desc" },
-      include: {
-        items: {
-          select: {
-            id: true,
-            itemType: true,
-            name: true,
-            quantity: true,
-            unitPrice: true,
-            subtotal: true,
-            mechanic: { select: { id: true, name: true } },
-          },
-        },
-        mechanic: { select: { id: true, name: true } },
-        branch: { select: { id: true, name: true } },
-      },
-    });
+    const orders = await this.repo.findServiceOrders(companyId, id);
 
     // Stats agregat
     const paidOrders = orders.filter((o) => o.status === "DIBAYAR");
@@ -343,33 +270,18 @@ export class VehiclesService {
     companyId: string,
     id: string,
   ): Promise<{ id: string; deleted: true }> {
-    const existing = await this.prisma.vehicle.findFirst({
-      where: { id, companyId },
-      include: { _count: { select: { serviceOrders: true } } },
-    });
+    const existing = await this.repo.findWithServiceOrderCount(companyId, id);
     if (!existing) throw new NotFoundException("Kendaraan tidak ditemukan");
     if (existing._count.serviceOrders > 0) {
       // Soft delete kalau punya service history — hindari kehilangan history.
-      await this.prisma.vehicle.update({
-        where: { id },
-        data: { isActive: false },
-      });
+      await this.repo.softDelete(id);
       return { id, deleted: true };
     }
-    await this.prisma.vehicle.delete({ where: { id } });
+    await this.repo.hardDelete(id);
     return { id, deleted: true };
   }
 
-  private toResponse(
-    v: Prisma.VehicleGetPayload<{
-      include: {
-        customer: { select: { id: true; name: true; phone: true } };
-        brand: { select: { id: true; name: true } };
-        modelRef: { select: { id: true; name: true } };
-        _count: { select: { serviceOrders: true } };
-      };
-    }>,
-  ): VehicleResponse {
+  private toResponse(v: RawVehicle): VehicleResponse {
     return {
       id: v.id,
       customerId: v.customerId,

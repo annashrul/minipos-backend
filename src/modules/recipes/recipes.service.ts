@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import type {
   RecipeResponse,
   RecipeYieldSummaryResponse,
@@ -14,30 +14,13 @@ import type {
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import type { RecipeYieldRow } from "./dto/recipes.dto";
+import {
+  RecipesRepository,
+  type RawRecipeWithIngredients,
+  type RawYieldRecipe,
+} from "./recipes.repository";
 
-const RECIPE_INCLUDE = {
-  ingredients: {
-    include: {
-      ingredient: {
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          unit: true,
-          purchasePrice: true,
-          stock: true,
-          itemType: true,
-        },
-      },
-    },
-  },
-} satisfies Prisma.RecipeInclude;
-
-type RecipeWithIngredients = Prisma.RecipeGetPayload<{
-  include: typeof RECIPE_INCLUDE;
-}>;
-
-function toResponse(recipe: RecipeWithIngredients): RecipeResponse {
+function toResponse(recipe: RawRecipeWithIngredients): RecipeResponse {
   const totalCost = recipe.ingredients.reduce((sum, i) => {
     const cost = i.ingredient?.purchasePrice ?? 0;
     return sum + cost * i.quantity;
@@ -75,23 +58,19 @@ function toResponse(recipe: RecipeWithIngredients): RecipeResponse {
 
 @Injectable()
 export class RecipesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: RecipesRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async getByProduct(
     companyId: string,
     productId: string,
   ): Promise<RecipeResponse | null> {
-    // Verifikasi produk milik company supaya tidak bisa lihat resep tenant lain.
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId },
-      select: { id: true },
-    });
+    const product = await this.repo.findProductOwnership(productId, companyId);
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
-    const recipe = await this.prisma.recipe.findUnique({
-      where: { productId },
-      include: RECIPE_INCLUDE,
-    });
+    const recipe = await this.repo.findByProductId(productId);
     return recipe ? toResponse(recipe) : null;
   }
 
@@ -100,10 +79,7 @@ export class RecipesService {
     productId: string,
     dto: UpsertRecipeDto,
   ): Promise<RecipeResponse> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId },
-      select: { id: true, itemType: true },
-    });
+    const product = await this.repo.findProductForUpsert(productId, companyId);
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
     if (product.itemType === "SERVICE") {
       throw new BadRequestException(
@@ -111,8 +87,6 @@ export class RecipesService {
       );
     }
 
-    // Validasi ingredient: semua harus produk milik company yang sama, dan
-    // tidak boleh sama dengan produk parent (mencegah self-reference).
     const ingredientIds = Array.from(
       new Set(dto.ingredients.map((i) => i.ingredientId)),
     );
@@ -121,11 +95,8 @@ export class RecipesService {
         "Ingredient tidak boleh sama dengan produk resep itu sendiri",
       );
     }
-    const found = await this.prisma.product.findMany({
-      where: { id: { in: ingredientIds }, companyId },
-      select: { id: true },
-    });
-    if (found.length !== ingredientIds.length) {
+    const foundCount = await this.repo.countProductsByIds(ingredientIds, companyId);
+    if (foundCount !== ingredientIds.length) {
       throw new BadRequestException(
         "Salah satu ingredient tidak ditemukan di tenant ini",
       );
@@ -160,19 +131,32 @@ export class RecipesService {
       }
       return tx.recipe.findUniqueOrThrow({
         where: { id: recipe.id },
-        include: RECIPE_INCLUDE,
+        include: {
+          ingredients: {
+            include: {
+              ingredient: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  unit: true,
+                  purchasePrice: true,
+                  stock: true,
+                  itemType: true,
+                },
+              },
+            },
+          },
+        },
       });
     });
     return toResponse(result);
   }
 
   async remove(companyId: string, productId: string): Promise<void> {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, companyId },
-      select: { id: true },
-    });
+    const product = await this.repo.findProductOwnership(productId, companyId);
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
-    await this.prisma.recipe.deleteMany({ where: { productId } });
+    await this.repo.deleteByProductId(productId);
   }
 
   /**
@@ -201,16 +185,11 @@ export class RecipesService {
     } = query;
 
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.findBranchOwnership(branchId, companyId);
       if (!branch) throw new NotFoundException("Branch tidak ditemukan");
     }
 
-    // Ambil semua resep + ingredient + parent product, scoped ke company.
-    // Search di-apply pada Product.name / Product.code di level DB.
-    const productNameFilter = search
+    const productNameFilter: Prisma.ProductWhereInput = search
       ? {
           OR: [
             { name: { contains: search, mode: "insensitive" as const } },
@@ -218,41 +197,8 @@ export class RecipesService {
           ],
         }
       : {};
-    const recipes = await this.prisma.recipe.findMany({
-      where: {
-        product: {
-          companyId,
-          deletedAt: null,
-          isActive: true,
-          ...productNameFilter,
-        },
-      },
-      include: {
-        product: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            sellingPrice: true,
-          },
-        },
-        ingredients: {
-          include: {
-            ingredient: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                stock: true,
-                unit: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const recipes = await this.repo.findYieldRecipes(companyId, productNameFilter);
 
-    // Kalau branch-aware, fetch BranchStock untuk semua ingredient sekaligus.
     let branchStockMap: Map<string, number> | null = null;
     if (branchId) {
       const ingredientIds = Array.from(
@@ -262,72 +208,13 @@ export class RecipesService {
           ),
         ),
       );
-      if (ingredientIds.length > 0) {
-        const stocks = await this.prisma.branchStock.findMany({
-          where: { branchId, productId: { in: ingredientIds } },
-          select: { productId: true, quantity: true },
-        });
-        branchStockMap = new Map(
-          stocks.map((s) => [s.productId, s.quantity]),
-        );
-      } else {
-        branchStockMap = new Map();
-      }
+      branchStockMap =
+        ingredientIds.length > 0
+          ? await this.repo.findBranchStocks(branchId, ingredientIds)
+          : new Map();
     }
 
-    const allRows = recipes.map((recipe) => {
-      const yieldQty = recipe.yieldQty || 1;
-      const ingredientRows = recipe.ingredients.map((ri) => {
-        const branchQty = branchStockMap?.get(ri.ingredientId) ?? null;
-        const currentStock =
-          branchQty !== null ? branchQty : (ri.ingredient?.stock ?? 0);
-        const neededPerPortion = ri.quantity / yieldQty;
-        const portionsPossible =
-          neededPerPortion > 0
-            ? Math.floor(currentStock / neededPerPortion)
-            : 0;
-        return {
-          ingredientId: ri.ingredientId,
-          ingredientCode: ri.ingredient?.code ?? "",
-          ingredientName: ri.ingredient?.name ?? "(deleted)",
-          currentStock,
-          unit: ri.unit,
-          neededPerPortion,
-          portionsPossible,
-        };
-      });
-      const maxPortions =
-        ingredientRows.length === 0
-          ? 0
-          : ingredientRows.reduce(
-              (min, r) => Math.min(min, r.portionsPossible),
-              Number.POSITIVE_INFINITY,
-            );
-      const safeMax = Number.isFinite(maxPortions) ? maxPortions : 0;
-      const bottleneckRow =
-        safeMax === 0
-          ? ingredientRows.find((r) => r.portionsPossible === 0) ?? null
-          : ingredientRows.find((r) => r.portionsPossible === safeMax) ?? null;
-      return {
-        productId: recipe.productId,
-        productCode: recipe.product.code,
-        productName: recipe.product.name,
-        sellingPrice: recipe.product.sellingPrice,
-        yieldQty,
-        maxPortions: safeMax,
-        potentialRevenue: safeMax * recipe.product.sellingPrice,
-        bottleneck: bottleneckRow
-          ? {
-              ingredientId: bottleneckRow.ingredientId,
-              ingredientName: bottleneckRow.ingredientName,
-              currentStock: bottleneckRow.currentStock,
-              unit: bottleneckRow.unit,
-              neededPerPortion: bottleneckRow.neededPerPortion,
-            }
-          : null,
-        ingredients: ingredientRows,
-      };
-    });
+    const allRows = buildYieldRows(recipes, branchStockMap);
 
     let filtered = allRows;
     if (status && status !== "all") {
@@ -373,26 +260,11 @@ export class RecipesService {
     branchId?: string,
   ): Promise<RecipeYieldSummaryResponse> {
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.findBranchOwnership(branchId, companyId);
       if (!branch) throw new NotFoundException("Branch tidak ditemukan");
     }
 
-    const recipes = await this.prisma.recipe.findMany({
-      where: {
-        product: { companyId, deletedAt: null, isActive: true },
-      },
-      include: {
-        product: { select: { sellingPrice: true } },
-        ingredients: {
-          include: {
-            ingredient: { select: { id: true, stock: true } },
-          },
-        },
-      },
-    });
+    const recipes = await this.repo.findSummaryRecipes(companyId);
 
     let branchStockMap: Map<string, number> | null = null;
     if (branchId) {
@@ -403,17 +275,10 @@ export class RecipesService {
           ),
         ),
       );
-      if (ingredientIds.length > 0) {
-        const stocks = await this.prisma.branchStock.findMany({
-          where: { branchId, productId: { in: ingredientIds } },
-          select: { productId: true, quantity: true },
-        });
-        branchStockMap = new Map(
-          stocks.map((s) => [s.productId, s.quantity]),
-        );
-      } else {
-        branchStockMap = new Map();
-      }
+      branchStockMap =
+        ingredientIds.length > 0
+          ? await this.repo.findBranchStocks(branchId, ingredientIds)
+          : new Map();
     }
 
     const byHealth = { healthy: 0, limited: 0, out: 0 };
@@ -453,4 +318,63 @@ export class RecipesService {
       byHealth,
     };
   }
+}
+
+function buildYieldRows(
+  recipes: RawYieldRecipe[],
+  branchStockMap: Map<string, number> | null,
+): RecipeYieldRow[] {
+  return recipes.map((recipe) => {
+    const yieldQty = recipe.yieldQty || 1;
+    const ingredientRows = recipe.ingredients.map((ri) => {
+      const branchQty = branchStockMap?.get(ri.ingredientId) ?? null;
+      const currentStock =
+        branchQty !== null ? branchQty : (ri.ingredient?.stock ?? 0);
+      const neededPerPortion = ri.quantity / yieldQty;
+      const portionsPossible =
+        neededPerPortion > 0
+          ? Math.floor(currentStock / neededPerPortion)
+          : 0;
+      return {
+        ingredientId: ri.ingredientId,
+        ingredientCode: ri.ingredient?.code ?? "",
+        ingredientName: ri.ingredient?.name ?? "(deleted)",
+        currentStock,
+        unit: ri.unit,
+        neededPerPortion,
+        portionsPossible,
+      };
+    });
+    const maxPortions =
+      ingredientRows.length === 0
+        ? 0
+        : ingredientRows.reduce(
+            (min, r) => Math.min(min, r.portionsPossible),
+            Number.POSITIVE_INFINITY,
+          );
+    const safeMax = Number.isFinite(maxPortions) ? maxPortions : 0;
+    const bottleneckRow =
+      safeMax === 0
+        ? ingredientRows.find((r) => r.portionsPossible === 0) ?? null
+        : ingredientRows.find((r) => r.portionsPossible === safeMax) ?? null;
+    return {
+      productId: recipe.productId,
+      productCode: recipe.product.code,
+      productName: recipe.product.name,
+      sellingPrice: recipe.product.sellingPrice,
+      yieldQty,
+      maxPortions: safeMax,
+      potentialRevenue: safeMax * recipe.product.sellingPrice,
+      bottleneck: bottleneckRow
+        ? {
+            ingredientId: bottleneckRow.ingredientId,
+            ingredientName: bottleneckRow.ingredientName,
+            currentStock: bottleneckRow.currentStock,
+            unit: bottleneckRow.unit,
+            neededPerPortion: bottleneckRow.neededPerPortion,
+          }
+        : null,
+      ingredients: ingredientRows,
+    };
+  });
 }
