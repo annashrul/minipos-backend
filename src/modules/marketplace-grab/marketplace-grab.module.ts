@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { MarketplaceGrabController } from "./marketplace-grab.controller";
+import { MarketplaceGrabRepository } from "./marketplace-grab.repository";
 import { MarketplaceGrabService } from "./marketplace-grab.service";
 import { GrabScraperService } from "./grab-scraper.service";
 import { MarketplaceGrabCronService } from "./marketplace-grab-cron.service";
@@ -7,6 +8,7 @@ import { MarketplaceGrabCronService } from "./marketplace-grab-cron.service";
 @Module({
   controllers: [MarketplaceGrabController],
   providers: [
+    MarketplaceGrabRepository,
     MarketplaceGrabService,
     GrabScraperService,
     MarketplaceGrabCronService,

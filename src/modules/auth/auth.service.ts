@@ -1,8 +1,8 @@
-﻿import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import bcrypt from "bcryptjs";
 import type { AuthUser, JwtPayload } from "@/contracts";
-import { PrismaService } from "../prisma/prisma.service";
+import { AuthRepository, type RawAuthUser } from "./auth.repository";
 
 export type LoginResult = {
   token: string;
@@ -13,7 +13,7 @@ export type LoginResult = {
 export class AuthService {
   constructor(
     private readonly jwt: JwtService,
-    private readonly prisma: PrismaService,
+    private readonly repo: AuthRepository,
   ) {}
 
   signToken(user: AuthUser): string {
@@ -31,7 +31,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<LoginResult> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.repo.findUserByEmail(email);
     if (!user || !user.isActive) {
       throw new UnauthorizedException("Invalid credentials");
     }
@@ -43,20 +43,7 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    const authUser: AuthUser = {
-      id: user.id,
-      role: user.role,
-      companyId: user.companyId,
-      branchId: user.branchId,
-    };
-    const token = this.signToken(authUser);
-
-    void this.writeLoginAudit(user.id, user.email, user.branchId);
-
-    return {
-      token,
-      user: { ...authUser, name: user.name, email: user.email },
-    };
+    return this.buildLoginResult(user);
   }
 
   /**
@@ -69,27 +56,33 @@ export class AuthService {
       throw new UnauthorizedException("Invalid login token");
     }
 
-    const record = await this.prisma.emailVerificationToken.findUnique({
-      where: { token: loginToken },
-    });
+    const record = await this.repo.findVerificationToken(loginToken);
     if (!record) throw new UnauthorizedException("Invalid login token");
 
     // Consume — hapus segera supaya tidak bisa dipakai ulang.
-    await this.prisma.emailVerificationToken.delete({
-      where: { id: record.id },
-    });
+    await this.repo.deleteVerificationToken(record.id);
 
     if (record.expiresAt < new Date()) {
       throw new UnauthorizedException("Login token expired");
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: record.email },
-    });
+    const user = await this.repo.findUserByEmail(record.email);
     if (!user || !user.isActive) {
       throw new UnauthorizedException("User not found or inactive");
     }
 
+    return this.buildLoginResult(user);
+  }
+
+  async checkAccess(role: string, menuKey: string, actionKey: string): Promise<boolean> {
+    const menu = await this.repo.findAccessMenu(menuKey, role, actionKey);
+    if (!menu) return true;
+    if (!(menu.roleMenus[0]?.allowed ?? false)) return false;
+    if (actionKey === "view") return true;
+    return menu.actions[0]?.roleActions[0]?.allowed ?? false;
+  }
+
+  private buildLoginResult(user: RawAuthUser): LoginResult {
     const authUser: AuthUser = {
       id: user.id,
       role: user.role,
@@ -106,34 +99,9 @@ export class AuthService {
     };
   }
 
-  async checkAccess(role: string, menuKey: string, actionKey: string): Promise<boolean> {
-    const menu = await this.prisma.appMenu.findFirst({
-      where: { key: menuKey, isActive: true },
-      include: {
-        roleMenus: { where: { role }, select: { allowed: true } },
-        actions: {
-          where: { key: actionKey, isActive: true },
-          include: { roleActions: { where: { role }, select: { allowed: true } } },
-        },
-      },
-    });
-    if (!menu) return true;
-    if (!(menu.roleMenus[0]?.allowed ?? false)) return false;
-    if (actionKey === "view") return true;
-    return menu.actions[0]?.roleActions[0]?.allowed ?? false;
-  }
-
   private async writeLoginAudit(userId: string, email: string, branchId: string | null): Promise<void> {
     try {
-      await this.prisma.auditLog.create({
-        data: {
-          userId,
-          branchId,
-          action: "LOGIN",
-          entity: "Session",
-          details: JSON.stringify({ email }),
-        },
-      });
+      await this.repo.createAuditLog(userId, email, branchId);
     } catch {
       // audit is best-effort
     }

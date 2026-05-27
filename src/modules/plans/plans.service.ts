@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -17,14 +17,20 @@ import type {
   SetPlanMenuAccessDto,
   UpdatePlanAccessDto,
 } from "./dto/plans.dto";
-import { PrismaService } from "../prisma/prisma.service";
-import { EVENTS, RealtimeService } from "../realtime/realtime.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
+import {
+  PlansRepository,
+  type RawPlanMenuAccess,
+  type RawPlanActionAccess,
+} from "./plans.repository";
 
 const PLAN_TIERS: PlanTierDto[] = ["FREE", "PRO", "ENTERPRISE"];
 
 @Injectable()
 export class PlansService {
   constructor(
+    private readonly repo: PlansRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
@@ -32,10 +38,10 @@ export class PlansService {
   async listMenuAccess(
     query: ListPlanAccessQueryDto,
   ): Promise<PlanMenuAccessListResponse> {
-    const rows = await this.prisma.planMenuAccess.findMany({
-      where: query.plan ? { plan: query.plan } : {},
-      orderBy: [{ plan: "asc" }, { menuKey: "asc" }],
-    });
+    const rows = await this.repo.findManyMenuAccess(
+      query.plan ? { plan: query.plan } : {},
+      [{ plan: "asc" }, { menuKey: "asc" }],
+    );
     return { items: rows.map(toMenuAccessResponse) };
   }
 
@@ -44,10 +50,7 @@ export class PlansService {
   ): Promise<PlanMenuAccessListResponse> {
     if (dto.items.length > 0) {
       const keys = Array.from(new Set(dto.items.map((i) => i.menuKey)));
-      const found = await this.prisma.appMenu.findMany({
-        where: { key: { in: keys } },
-        select: { key: true },
-      });
+      const found = await this.repo.findAppMenusByKeys(keys);
       if (found.length !== keys.length) {
         throw new NotFoundException("Sebagian menuKey tidak ditemukan");
       }
@@ -67,10 +70,10 @@ export class PlansService {
       }
     });
 
-    const rows = await this.prisma.planMenuAccess.findMany({
-      where: { plan: dto.plan },
-      orderBy: { menuKey: "asc" },
-    });
+    const rows = await this.repo.findManyMenuAccess(
+      { plan: dto.plan },
+      [{ menuKey: "asc" }],
+    );
     this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: dto.plan });
     return { items: rows.map(toMenuAccessResponse) };
   }
@@ -79,16 +82,13 @@ export class PlansService {
     id: string,
     dto: UpdatePlanAccessDto,
   ): Promise<PlanMenuAccessResponse> {
-    const existing = await this.prisma.planMenuAccess.findUnique({
-      where: { id },
-    });
+    const existing = await this.repo.findUniqueMenuAccess({ id });
     if (!existing) {
       throw new NotFoundException("Plan menu access tidak ditemukan");
     }
 
-    const updated = await this.prisma.planMenuAccess.update({
-      where: { id },
-      data: { allowed: dto.allowed },
+    const updated = await this.repo.updateMenuAccess(id, {
+      allowed: dto.allowed,
     });
     this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: updated.plan });
     return toMenuAccessResponse(updated);
@@ -97,14 +97,10 @@ export class PlansService {
   async listActionAccess(
     query: ListPlanAccessQueryDto,
   ): Promise<PlanActionAccessListResponse> {
-    const rows = await this.prisma.planActionAccess.findMany({
-      where: query.plan ? { plan: query.plan } : {},
-      orderBy: [
-        { plan: "asc" },
-        { menuKey: "asc" },
-        { actionKey: "asc" },
-      ],
-    });
+    const rows = await this.repo.findManyActionAccess(
+      query.plan ? { plan: query.plan } : {},
+      [{ plan: "asc" }, { menuKey: "asc" }, { actionKey: "asc" }],
+    );
     return { items: rows.map(toActionAccessResponse) };
   }
 
@@ -113,13 +109,7 @@ export class PlansService {
   ): Promise<PlanActionAccessListResponse> {
     if (dto.items.length > 0) {
       const menuKeys = Array.from(new Set(dto.items.map((i) => i.menuKey)));
-      const menus = await this.prisma.appMenu.findMany({
-        where: { key: { in: menuKeys } },
-        select: {
-          key: true,
-          actions: { select: { key: true } },
-        },
-      });
+      const menus = await this.repo.findAppMenusWithActions(menuKeys);
       if (menus.length !== menuKeys.length) {
         throw new NotFoundException("Sebagian menuKey tidak ditemukan");
       }
@@ -153,10 +143,10 @@ export class PlansService {
       }
     });
 
-    const rows = await this.prisma.planActionAccess.findMany({
-      where: { plan: dto.plan },
-      orderBy: [{ menuKey: "asc" }, { actionKey: "asc" }],
-    });
+    const rows = await this.repo.findManyActionAccess(
+      { plan: dto.plan },
+      [{ menuKey: "asc" }, { actionKey: "asc" }],
+    );
     this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: dto.plan });
     return { items: rows.map(toActionAccessResponse) };
   }
@@ -165,16 +155,13 @@ export class PlansService {
     id: string,
     dto: UpdatePlanAccessDto,
   ): Promise<PlanActionAccessResponse> {
-    const existing = await this.prisma.planActionAccess.findUnique({
-      where: { id },
-    });
+    const existing = await this.repo.findUniqueActionAccess({ id });
     if (!existing) {
       throw new NotFoundException("Plan action access tidak ditemukan");
     }
 
-    const updated = await this.prisma.planActionAccess.update({
-      where: { id },
-      data: { allowed: dto.allowed },
+    const updated = await this.repo.updateActionAccess(id, {
+      allowed: dto.allowed,
     });
     this.realtime.emit(EVENTS.PLAN_ACCESS_UPDATED, { plan: updated.plan });
     return toActionAccessResponse(updated);
@@ -189,20 +176,16 @@ export class PlansService {
           "menuKey wajib diisi jika actionKey diberikan",
         );
       }
-      const row = await this.prisma.planActionAccess.findUnique({
-        where: {
-          plan_menuKey_actionKey: { plan, menuKey, actionKey },
-        },
-        select: { allowed: true },
-      });
+      const row = await this.repo.findActionAccessAllowed(
+        plan,
+        menuKey,
+        actionKey,
+      );
       return { allowed: row?.allowed ?? false };
     }
 
     if (menuKey) {
-      const row = await this.prisma.planMenuAccess.findUnique({
-        where: { plan_menuKey: { plan, menuKey } },
-        select: { allowed: true },
-      });
+      const row = await this.repo.findMenuAccessAllowed(plan, menuKey);
       return { allowed: row?.allowed ?? false };
     }
 
@@ -211,25 +194,9 @@ export class PlansService {
 
   async comparison(): Promise<PlanComparisonResponse> {
     const [menus, menuAccess, actionAccess] = await Promise.all([
-      this.prisma.appMenu.findMany({
-        orderBy: [{ group: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-        select: {
-          id: true,
-          key: true,
-          name: true,
-          group: true,
-          actions: {
-            orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-            select: {
-              id: true,
-              key: true,
-              name: true,
-            },
-          },
-        },
-      }),
-      this.prisma.planMenuAccess.findMany(),
-      this.prisma.planActionAccess.findMany(),
+      this.repo.findAllMenusForComparison(),
+      this.repo.findAllMenuAccessRaw(),
+      this.repo.findAllActionAccessRaw(),
     ]);
 
     const menuMap = new Map<string, Map<string, boolean>>();
@@ -293,12 +260,7 @@ function byPlanFromMap(map: Map<string, boolean> | undefined): {
   };
 }
 
-function toMenuAccessResponse(r: {
-  id: string;
-  plan: string;
-  menuKey: string;
-  allowed: boolean;
-}): PlanMenuAccessResponse {
+function toMenuAccessResponse(r: RawPlanMenuAccess): PlanMenuAccessResponse {
   return {
     id: r.id,
     plan: r.plan,
@@ -307,13 +269,9 @@ function toMenuAccessResponse(r: {
   };
 }
 
-function toActionAccessResponse(r: {
-  id: string;
-  plan: string;
-  menuKey: string;
-  actionKey: string;
-  allowed: boolean;
-}): PlanActionAccessResponse {
+function toActionAccessResponse(
+  r: RawPlanActionAccess,
+): PlanActionAccessResponse {
   return {
     id: r.id,
     plan: r.plan,

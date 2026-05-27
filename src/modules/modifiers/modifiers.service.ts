@@ -1,10 +1,10 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import type {
   CreateModifierGroupDto,
   ListModifierGroupsQueryDto,
@@ -12,24 +12,14 @@ import type {
   UpdateModifierGroupDto,
   AttachProductModifierDto,
 } from "./dto/modifiers.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
+import {
+  ModifiersRepository,
+  type RawModifierGroup,
+} from "./modifiers.repository";
 
-const GROUP_INCLUDE = {
-  options: {
-    orderBy: { sortOrder: "asc" } as const,
-    include: {
-      // Edges di mana option ini = dependent. Frontend pakai parentOptionId
-      // untuk filter visibility — option ini ditampilkan kalau ANY parent
-      // ke-pilih, atau list ini kosong (tanpa constraint).
-      enabledBy: { select: { parentOptionId: true } },
-    },
-  },
-} satisfies Prisma.ModifierGroupInclude;
-
-function toGroupResponse(
-  g: Prisma.ModifierGroupGetPayload<{ include: typeof GROUP_INCLUDE }>,
-): ModifierGroupResponse {
+function toGroupResponse(g: RawModifierGroup): ModifierGroupResponse {
   return {
     id: g.id,
     name: g.name,
@@ -53,7 +43,10 @@ function toGroupResponse(
 
 @Injectable()
 export class ModifiersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: ModifiersRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async list(
     companyId: string,
@@ -79,14 +72,8 @@ export class ModifiersService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.modifierGroup.findMany({
-        where,
-        include: GROUP_INCLUDE,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.modifierGroup.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toGroupResponse), total, page, perPage);
@@ -96,10 +83,7 @@ export class ModifiersService {
     companyId: string,
     id: string,
   ): Promise<ModifierGroupResponse> {
-    const group = await this.prisma.modifierGroup.findFirst({
-      where: { id, companyId },
-      include: GROUP_INCLUDE,
-    });
+    const group = await this.repo.findOne({ id, companyId });
     if (!group) throw new NotFoundException("Modifier group not found");
     return toGroupResponse(group);
   }
@@ -109,29 +93,26 @@ export class ModifiersService {
     dto: CreateModifierGroupDto,
   ): Promise<ModifierGroupResponse> {
     if ((dto.maxSelect ?? 1) < (dto.minSelect ?? 0)) {
-      throw new BadRequestException("maxSelect must be â‰¥ minSelect");
+      throw new BadRequestException("maxSelect must be ≥ minSelect");
     }
-    const created = await this.prisma.modifierGroup.create({
-      data: {
-        companyId,
-        name: dto.name,
-        required: dto.required ?? false,
-        minSelect: dto.minSelect ?? 0,
-        maxSelect: dto.maxSelect ?? 1,
-        sortOrder: dto.sortOrder ?? 0,
-        isActive: dto.isActive ?? true,
-        options: dto.options?.length
-          ? {
-              create: dto.options.map((o, idx) => ({
-                name: o.name,
-                priceAdjustment: o.priceAdjustment ?? 0,
-                isActive: o.isActive ?? true,
-                sortOrder: o.sortOrder ?? idx,
-              })),
-            }
-          : undefined,
-      },
-      include: GROUP_INCLUDE,
+    const created = await this.repo.create({
+      companyId,
+      name: dto.name,
+      required: dto.required ?? false,
+      minSelect: dto.minSelect ?? 0,
+      maxSelect: dto.maxSelect ?? 1,
+      sortOrder: dto.sortOrder ?? 0,
+      isActive: dto.isActive ?? true,
+      options: dto.options?.length
+        ? {
+            create: dto.options.map((o, idx) => ({
+              name: o.name,
+              priceAdjustment: o.priceAdjustment ?? 0,
+              isActive: o.isActive ?? true,
+              sortOrder: o.sortOrder ?? idx,
+            })),
+          }
+        : undefined,
     });
 
     // Persist dependencies (parent ada di group lain — biasanya sudah ada).
@@ -149,10 +130,7 @@ export class ModifiersService {
         }
       }
       if (deps.length) {
-        await this.prisma.modifierOptionDependency.createMany({
-          data: deps,
-          skipDuplicates: true,
-        });
+        await this.repo.createDependencies(deps);
       }
     }
     return this.findById(companyId, created.id);
@@ -163,9 +141,7 @@ export class ModifiersService {
     id: string,
     dto: UpdateModifierGroupDto,
   ): Promise<ModifierGroupResponse> {
-    const existing = await this.prisma.modifierGroup.findFirst({
-      where: { id, companyId },
-    });
+    const existing = await this.repo.findExists({ id, companyId });
     if (!existing) throw new NotFoundException("Modifier group not found");
 
     if (
@@ -173,7 +149,7 @@ export class ModifiersService {
       dto.minSelect !== undefined &&
       dto.maxSelect < dto.minSelect
     ) {
-      throw new BadRequestException("maxSelect must be â‰¥ minSelect");
+      throw new BadRequestException("maxSelect must be ≥ minSelect");
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -254,37 +230,31 @@ export class ModifiersService {
   }
 
   async remove(companyId: string, id: string) {
-    const group = await this.prisma.modifierGroup.findFirst({
-      where: { id, companyId },
-    });
+    const group = await this.repo.findExists({ id, companyId });
     if (!group) throw new NotFoundException("Modifier group not found");
-    await this.prisma.modifierGroup.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true as const };
   }
 
   async summary(companyId: string) {
     const where = { companyId };
     const [total, active] = await Promise.all([
-      this.prisma.modifierGroup.count({ where }),
-      this.prisma.modifierGroup.count({ where: { ...where, isActive: true } }),
+      this.repo.count(where),
+      this.repo.count({ ...where, isActive: true }),
     ]);
     return { total, active, inactive: total - active };
   }
 
-  // â”€â”€ Product attachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Product attachment ──────────────────────────────────────
   async listForProduct(
     companyId: string,
     productId: string,
   ): Promise<ModifierGroupResponse[]> {
-    const links = await this.prisma.productModifierGroup.findMany({
-      where: {
-        productId,
-        modifierGroup: { companyId },
-      },
-      orderBy: { sortOrder: "asc" },
-      include: { modifierGroup: { include: GROUP_INCLUDE } },
-    });
-    return links.map((l) => toGroupResponse(l.modifierGroup));
+    const groups = await this.repo.findProductModifierGroups(
+      productId,
+      companyId,
+    );
+    return groups.map(toGroupResponse);
   }
 
   async setProductGroups(
@@ -292,16 +262,16 @@ export class ModifiersService {
     dto: AttachProductModifierDto,
   ): Promise<{ success: true }> {
     // Verify ownership of product + groups
-    const product = await this.prisma.product.findFirst({
-      where: { id: dto.productId, companyId },
-      select: { id: true },
-    });
+    const product = await this.repo.findProductExists(
+      companyId,
+      dto.productId,
+    );
     if (!product) throw new NotFoundException("Product not found");
 
-    const groups = await this.prisma.modifierGroup.findMany({
-      where: { id: { in: dto.modifierGroupIds }, companyId },
-      select: { id: true },
-    });
+    const groups = await this.repo.findModifierGroupsByIds(
+      companyId,
+      dto.modifierGroupIds,
+    );
     if (groups.length !== dto.modifierGroupIds.length) {
       throw new BadRequestException("One or more modifier groups invalid");
     }

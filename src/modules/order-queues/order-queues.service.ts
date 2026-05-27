@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -15,43 +15,14 @@ import type {
 } from "./dto/order-queues.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const QUEUE_SELECT = {
-  id: true,
-  queueNumber: true,
-  transactionId: true,
-  transaction: { select: { id: true, invoiceNumber: true, invoiceDisplayNumber: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  tableId: true,
-  table: { select: { id: true, number: true, name: true } },
-  status: true,
-  priority: true,
-  notes: true,
-  createdAt: true,
-  updatedAt: true,
-  servedAt: true,
-  items: {
-    select: {
-      id: true,
-      productName: true,
-      quantity: true,
-      notes: true,
-      status: true,
-    },
-    orderBy: { id: "asc" },
-  },
-} satisfies Prisma.OrderQueueSelect;
-
-type RawQueue = Prisma.OrderQueueGetPayload<{ select: typeof QUEUE_SELECT }>;
+import { OrderQueuesRepository, type RawQueue } from "./order-queues.repository";
 
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 
 @Injectable()
 export class OrderQueuesService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: OrderQueuesRepository,
     private readonly realtime: RealtimeService,
     private readonly assert: AssertService,
   ) {}
@@ -78,24 +49,15 @@ export class OrderQueuesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.orderQueue.findMany({
-        where,
-        select: QUEUE_SELECT,
-        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.orderQueue.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toQueueResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<OrderQueueResponse> {
-    const queue = await this.prisma.orderQueue.findFirst({
-      where: this.tenantWhere(companyId, id),
-      select: QUEUE_SELECT,
-    });
+    const queue = await this.repo.findOne(this.tenantWhere(companyId, id));
     if (!queue) throw new NotFoundException("Order queue not found");
     return toQueueResponse(queue);
   }
@@ -112,25 +74,24 @@ export class OrderQueuesService {
 
     const queueNumber = await this.nextQueueNumber(dto.branchId ?? null);
 
-    const created = await this.prisma.orderQueue.create({
-      data: {
-        queueNumber,
-        transactionId: dto.transactionId ?? null,
-        branchId: dto.branchId ?? null,
-        tableId: dto.tableId ?? null,
-        status: "NEW",
-        priority: dto.priority ?? 0,
-        notes: dto.notes ?? null,
-        items: {
-          create: dto.items.map((i) => ({
-            productName: i.productName,
-            quantity: i.quantity,
-            notes: i.notes ?? null,
-            status: "PENDING",
-          })),
-        },
+    const created = await this.repo.create({
+      queueNumber,
+      transaction: dto.transactionId
+        ? { connect: { id: dto.transactionId } }
+        : undefined,
+      branch: dto.branchId ? { connect: { id: dto.branchId } } : undefined,
+      table: dto.tableId ? { connect: { id: dto.tableId } } : undefined,
+      status: "NEW",
+      priority: dto.priority ?? 0,
+      notes: dto.notes ?? null,
+      items: {
+        create: dto.items.map((i) => ({
+          productName: i.productName,
+          quantity: i.quantity,
+          notes: i.notes ?? null,
+          status: "PENDING",
+        })),
       },
-      select: QUEUE_SELECT,
     });
     const resp = toQueueResponse(created);
     this.realtime.emit(
@@ -145,15 +106,7 @@ export class OrderQueuesService {
     companyId: string,
     dto: CreateOrderQueueFromTransactionDto,
   ): Promise<OrderQueueResponse> {
-    const tx = await this.prisma.transaction.findFirst({
-      where: { id: dto.transactionId, user: { companyId } },
-      select: {
-        id: true,
-        branchId: true,
-        tableId: true,
-        items: { select: { productName: true, quantity: true } },
-      },
-    });
+    const tx = await this.repo.findTransactionForQueue(companyId, dto.transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
     if (tx.items.length === 0) {
       throw new BadRequestException("Transaksi tidak memiliki item");
@@ -161,24 +114,25 @@ export class OrderQueuesService {
 
     const queueNumber = await this.nextQueueNumber(tx.branchId);
 
-    const created = await this.prisma.orderQueue.create({
-      data: {
-        queueNumber,
-        transactionId: tx.id,
-        branchId: tx.branchId,
-        tableId: dto.tableId ?? tx.tableId,
-        status: "NEW",
-        priority: dto.priority ?? 0,
-        notes: dto.notes ?? null,
-        items: {
-          create: tx.items.map((i) => ({
-            productName: i.productName,
-            quantity: i.quantity,
-            status: "PENDING",
-          })),
-        },
+    const created = await this.repo.create({
+      queueNumber,
+      transaction: { connect: { id: tx.id } },
+      branch: tx.branchId ? { connect: { id: tx.branchId } } : undefined,
+      table: dto.tableId
+        ? { connect: { id: dto.tableId } }
+        : tx.tableId
+          ? { connect: { id: tx.tableId } }
+          : undefined,
+      status: "NEW",
+      priority: dto.priority ?? 0,
+      notes: dto.notes ?? null,
+      items: {
+        create: tx.items.map((i) => ({
+          productName: i.productName,
+          quantity: i.quantity,
+          status: "PENDING",
+        })),
       },
-      select: QUEUE_SELECT,
     });
     const resp = toQueueResponse(created);
     this.realtime.emit(
@@ -194,19 +148,12 @@ export class OrderQueuesService {
     id: string,
     status: OrderQueueStatusDto,
   ): Promise<OrderQueueResponse> {
-    const existing = await this.prisma.orderQueue.findFirst({
-      where: this.tenantWhere(companyId, id),
-      select: { id: true },
-    });
+    const existing = await this.repo.findOne(this.tenantWhere(companyId, id));
     if (!existing) throw new NotFoundException("Order queue not found");
 
-    const updated = await this.prisma.orderQueue.update({
-      where: { id },
-      data: {
-        status,
-        servedAt: status === "SERVED" ? new Date() : undefined,
-      },
-      select: QUEUE_SELECT,
+    const updated = await this.repo.update(id, {
+      status,
+      servedAt: status === "SERVED" ? new Date() : undefined,
     });
     const resp = toQueueResponse(updated);
     this.realtime.emit(
@@ -219,15 +166,9 @@ export class OrderQueuesService {
     // supaya tablet customer ikut refresh realtime.
     const tableOrderStatus = mapQueueStatusToTableOrder(status);
     if (tableOrderStatus) {
-      const linkedOrders = await this.prisma.tableOrder.findMany({
-        where: { orderQueueId: id },
-        select: { id: true, sessionId: true, tableId: true, branchId: true },
-      });
+      const linkedOrders = await this.repo.findLinkedTableOrders(id);
       if (linkedOrders.length > 0) {
-        await this.prisma.tableOrder.updateMany({
-          where: { orderQueueId: id },
-          data: { status: tableOrderStatus },
-        });
+        await this.repo.updateLinkedTableOrders(id, tableOrderStatus);
         for (const o of linkedOrders) {
           // Use specific event for READY (matches tablet listener) and STATUS for the rest.
           const event =
@@ -256,22 +197,13 @@ export class OrderQueuesService {
     itemId: string,
     status: OrderQueueItemStatusDto,
   ): Promise<OrderQueueResponse> {
-    const queue = await this.prisma.orderQueue.findFirst({
-      where: this.tenantWhere(companyId, queueId),
-      select: { id: true },
-    });
+    const queue = await this.repo.findOne(this.tenantWhere(companyId, queueId));
     if (!queue) throw new NotFoundException("Order queue not found");
 
-    const item = await this.prisma.orderQueueItem.findFirst({
-      where: { id: itemId, orderQueueId: queueId },
-      select: { id: true },
-    });
+    const item = await this.repo.findQueueItem(itemId, queueId);
     if (!item) throw new NotFoundException("Order queue item not found");
 
-    await this.prisma.orderQueueItem.update({
-      where: { id: itemId },
-      data: { status },
-    });
+    await this.repo.updateQueueItem(itemId, { status });
 
     return this.findById(companyId, queueId);
   }
@@ -292,27 +224,17 @@ export class OrderQueuesService {
   private async nextQueueNumber(branchId: string | null): Promise<number> {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const last = await this.prisma.orderQueue.findFirst({
-      where: { branchId, createdAt: { gte: startOfDay } },
-      orderBy: { queueNumber: "desc" },
-      select: { queueNumber: true },
-    });
-    return (last?.queueNumber ?? 0) + 1;
+    const last = await this.repo.findLastQueueNumber(branchId, startOfDay);
+    return (last ?? 0) + 1;
   }
 
   private async assertTable(companyId: string, tableId: string) {
-    const table = await this.prisma.restaurantTable.findFirst({
-      where: { id: tableId, branch: { companyId } },
-      select: { id: true },
-    });
+    const table = await this.repo.assertTable(companyId, tableId);
     if (!table) throw new NotFoundException("Table not found");
   }
 
   private async assertTransaction(companyId: string, transactionId: string) {
-    const tx = await this.prisma.transaction.findFirst({
-      where: { id: transactionId, user: { companyId } },
-      select: { id: true },
-    });
+    const tx = await this.repo.assertTransaction(companyId, transactionId);
     if (!tx) throw new NotFoundException("Transaction not found");
   }
 }

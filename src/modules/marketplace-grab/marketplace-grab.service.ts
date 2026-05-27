@@ -4,8 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
 import { GrabScraperService } from "./grab-scraper.service";
+import { MarketplaceGrabRepository } from "./marketplace-grab.repository";
 
 type SaveAccountInput = {
   companyId: string;
@@ -19,7 +19,7 @@ export class MarketplaceGrabService {
   private readonly logger = new Logger(MarketplaceGrabService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: MarketplaceGrabRepository,
     private readonly scraper: GrabScraperService,
   ) {}
 
@@ -37,14 +37,10 @@ export class MarketplaceGrabService {
       input.userAgent ?? null,
     );
 
-    const account = await this.prisma.grabAccount.upsert({
-      where: {
-        companyId_merchantId: {
-          companyId: input.companyId,
-          merchantId: profile.merchantId,
-        },
-      },
-      create: {
+    const account = await this.repo.upsertAccount(
+      input.companyId,
+      profile.merchantId,
+      {
         companyId: input.companyId,
         branchId: input.branchId ?? null,
         merchantId: profile.merchantId,
@@ -53,7 +49,7 @@ export class MarketplaceGrabService {
         cookieUserAgent: input.userAgent ?? null,
         isActive: true,
       },
-      update: {
+      {
         branchId: input.branchId ?? null,
         merchantName: profile.merchantName ?? undefined,
         cookie: input.cookie,
@@ -61,25 +57,19 @@ export class MarketplaceGrabService {
         isActive: true,
         lastError: null,
       },
-    });
+    );
 
     return account;
   }
 
   async listAccounts(companyId: string) {
-    return this.prisma.grabAccount.findMany({
-      where: { companyId },
-      include: { branch: { select: { id: true, name: true, code: true } } },
-      orderBy: { createdAt: "asc" },
-    });
+    return this.repo.findManyAccounts(companyId);
   }
 
   async deleteAccount(companyId: string, accountId: string) {
-    const account = await this.prisma.grabAccount.findFirst({
-      where: { id: accountId, companyId },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId);
     if (!account) throw new NotFoundException("Account tidak ditemukan");
-    await this.prisma.grabAccount.delete({ where: { id: accountId } });
+    await this.repo.deleteAccount(accountId);
   }
 
   /**
@@ -90,9 +80,7 @@ export class MarketplaceGrabService {
     accountId: string,
     opts?: { dateFrom?: string; dateTo?: string },
   ) {
-    const account = await this.prisma.grabAccount.findUnique({
-      where: { id: accountId },
-    });
+    const account = await this.repo.findAccountById(accountId);
     if (!account) throw new NotFoundException("Account tidak ditemukan");
     if (!account.isActive) throw new BadRequestException("Account inactive");
 
@@ -112,14 +100,10 @@ export class MarketplaceGrabService {
 
       for (const row of dailyRows) {
         if (!row.reportDate) continue;
-        await this.prisma.grabDailyReport.upsert({
-          where: {
-            accountId_reportDate: {
-              accountId: account.id,
-              reportDate: new Date(row.reportDate),
-            },
-          },
-          create: {
+        await this.repo.upsertDailyReport(
+          account.id,
+          new Date(row.reportDate),
+          {
             accountId: account.id,
             reportDate: new Date(row.reportDate),
             orderCount: row.orderCount,
@@ -131,7 +115,7 @@ export class MarketplaceGrabService {
             refundAmount: row.refundAmount,
             rawPayload: row.raw as object,
           },
-          update: {
+          {
             orderCount: row.orderCount,
             completedCount: row.completedCount,
             cancelledCount: row.cancelledCount,
@@ -142,7 +126,7 @@ export class MarketplaceGrabService {
             rawPayload: row.raw as object,
             fetchedAt: new Date(),
           },
-        });
+        );
       }
 
       // 2. Detail orders
@@ -156,14 +140,10 @@ export class MarketplaceGrabService {
 
       for (const o of orderRows) {
         if (!o.grabOrderId) continue;
-        await this.prisma.grabOrder.upsert({
-          where: {
-            accountId_grabOrderId: {
-              accountId: account.id,
-              grabOrderId: o.grabOrderId,
-            },
-          },
-          create: {
+        await this.repo.upsertOrder(
+          account.id,
+          o.grabOrderId,
+          {
             accountId: account.id,
             grabOrderId: o.grabOrderId,
             shortOrderId: o.shortOrderId,
@@ -188,7 +168,7 @@ export class MarketplaceGrabService {
             cancelledAt: o.cancelledAt,
             rawPayload: o.raw as object,
           },
-          update: {
+          {
             status: o.status,
             cancelReason: o.cancelReason,
             commission: o.commission,
@@ -198,12 +178,12 @@ export class MarketplaceGrabService {
             rawPayload: o.raw as object,
             fetchedAt: new Date(),
           },
-        });
+        );
       }
 
-      await this.prisma.grabAccount.update({
-        where: { id: account.id },
-        data: { lastSyncedAt: new Date(), lastError: null },
+      await this.repo.updateAccountSync(account.id, {
+        lastSyncedAt: new Date(),
+        lastError: null,
       });
 
       return {
@@ -214,9 +194,8 @@ export class MarketplaceGrabService {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`[grab sync] account=${account.id} failed: ${msg}`);
-      await this.prisma.grabAccount.update({
-        where: { id: account.id },
-        data: { lastError: msg.slice(0, 500) },
+      await this.repo.updateAccountSync(account.id, {
+        lastError: msg.slice(0, 500),
       });
       throw err;
     }
@@ -227,9 +206,7 @@ export class MarketplaceGrabService {
    * per account & return summary.
    */
   async syncAllActive() {
-    const accounts = await this.prisma.grabAccount.findMany({
-      where: { isActive: true },
-    });
+    const accounts = await this.repo.findAllActiveAccounts();
     const results: Array<{
       accountId: string;
       ok: boolean;
@@ -270,8 +247,8 @@ export class MarketplaceGrabService {
       limit?: number;
     },
   ) {
-    return this.prisma.grabDailyReport.findMany({
-      where: {
+    return this.repo.findManyDailyReports(
+      {
         account: { companyId },
         ...(opts?.accountId ? { accountId: opts.accountId } : {}),
         ...(opts?.dateFrom || opts?.dateTo
@@ -283,12 +260,8 @@ export class MarketplaceGrabService {
             }
           : {}),
       },
-      include: {
-        account: { select: { id: true, merchantName: true, merchantId: true } },
-      },
-      orderBy: [{ reportDate: "desc" }],
-      take: opts?.limit ?? 90,
-    });
+      opts?.limit ?? 90,
+    );
   }
 
   async listOrders(
@@ -302,8 +275,8 @@ export class MarketplaceGrabService {
       cursor?: string;
     },
   ) {
-    return this.prisma.grabOrder.findMany({
-      where: {
+    return this.repo.findManyOrders(
+      {
         account: { companyId },
         ...(opts?.accountId ? { accountId: opts.accountId } : {}),
         ...(opts?.status ? { status: opts.status } : {}),
@@ -316,13 +289,9 @@ export class MarketplaceGrabService {
             }
           : {}),
       },
-      include: {
-        account: { select: { id: true, merchantName: true } },
-      },
-      orderBy: [{ orderedAt: "desc" }],
-      take: opts?.limit ?? 100,
-      ...(opts?.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    });
+      opts?.limit ?? 100,
+      opts?.cursor,
+    );
   }
 }
 
