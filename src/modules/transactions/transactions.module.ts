@@ -1,4 +1,4 @@
-﻿import { Module } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { AutoJournalModule } from "@/modules/auto-journal/auto-journal.module";
 import { DebtsModule } from "@/modules/debts/debts.module";
 import { PointsModule } from "@/modules/points/points.module";
@@ -7,6 +7,8 @@ import { WhatsappReceiptModule } from "@/modules/whatsapp-receipt/whatsapp-recei
 import { TransactionsController } from "./transactions.controller";
 import { TransactionsRepository } from "./transactions.repository";
 import { TransactionsService } from "./transactions.service";
+import { TransactionCheckoutService } from "./transaction-checkout.service";
+import { TransactionVoidRefundService } from "./transaction-void-refund.service";
 
 @Module({
   imports: [
@@ -17,7 +19,12 @@ import { TransactionsService } from "./transactions.service";
     RacksModule,
   ],
   controllers: [TransactionsController],
-  providers: [TransactionsRepository, TransactionsService],
+  providers: [
+    TransactionsRepository,
+    TransactionCheckoutService,
+    TransactionVoidRefundService,
+    TransactionsService,
+  ],
   exports: [TransactionsService],
 })
 export class TransactionsModule {}
