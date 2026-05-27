@@ -103,7 +103,7 @@ export class ProductsRepository {
 
   async bulkSoftDelete(companyId: string, ids: string[]): Promise<number> {
     const { count } = await this.prisma.product.updateMany({
-      where: { id: { in: ids }, companyId, deletedAt: null },
+      where: { id: { in: ids }, companyId },
       data: { deletedAt: new Date(), isActive: false },
     });
     return count;
@@ -254,7 +254,6 @@ export class ProductsRepository {
     return this.prisma.product.findFirst({
       where: {
         companyId,
-        deletedAt: null,
         OR: [
           { code: barcode },
           { units: { some: { barcode } } },
@@ -280,7 +279,7 @@ export class ProductsRepository {
     return this.prisma.recipe.findMany({
       where: {
         productId: { in: productIds },
-        product: { companyId, deletedAt: null, isActive: true },
+        product: { companyId, isActive: true },
       },
       select: {
         productId: true,
@@ -348,7 +347,6 @@ export class ProductsRepository {
         companyId,
         categoryId,
         isActive: true,
-        deletedAt: null,
       },
       select: {
         id: true,

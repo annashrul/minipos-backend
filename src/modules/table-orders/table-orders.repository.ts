@@ -213,7 +213,6 @@ export class TableOrdersRepository {
         products: {
           some: {
             isActive: true,
-            deletedAt: null,
             itemType: { not: "INGREDIENT" },
           },
         },
@@ -254,7 +253,6 @@ export class TableOrdersRepository {
         id: productId,
         companyId,
         isActive: true,
-        deletedAt: null,
         itemType: { not: "INGREDIENT" },
       },
       select: {
@@ -300,7 +298,6 @@ export class TableOrdersRepository {
         id: { in: productIds },
         companyId,
         isActive: true,
-        deletedAt: null,
         itemType: { not: "INGREDIENT" },
       },
       select: {

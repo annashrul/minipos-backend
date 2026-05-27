@@ -175,7 +175,6 @@ export class DashboardService {
     const where: Prisma.ProductWhereInput = {
       companyId,
       isActive: true,
-      deletedAt: null,
     };
 
     const candidates = await this.prisma.product.findMany({
@@ -254,7 +253,6 @@ export class DashboardService {
       where: {
         companyId,
         isActive: true,
-        deletedAt: null,
         expiryDate: { gt: now, lte: cutoff },
       },
       select: {
@@ -275,7 +273,6 @@ export class DashboardService {
       where: {
         companyId,
         isActive: true,
-        deletedAt: null,
         expiryDate: { gt: now, lte: cutoff },
       },
     });
@@ -310,7 +307,6 @@ export class DashboardService {
         where: {
           companyId,
           isActive: true,
-          deletedAt: null,
           expiryDate: { gt: now, lte: expiryCutoff },
         },
       }),
@@ -323,7 +319,7 @@ export class DashboardService {
         },
       }),
       this.prisma.product.findMany({
-        where: { companyId, isActive: true, deletedAt: null },
+        where: { companyId, isActive: true },
         select: { stock: true, minStock: true },
       }),
     ]);
@@ -450,7 +446,7 @@ export class DashboardService {
         },
       }),
       this.prisma.product.count({
-        where: { isActive: true, companyId, deletedAt: null },
+        where: { isActive: true, companyId },
       }),
       this.prisma.customer.count({ where: { companyId } }),
     ]);
@@ -554,7 +550,7 @@ export class DashboardService {
 
     // Low stock products (legacy shape)
     const lowStockCandidates = await this.prisma.product.findMany({
-      where: { companyId, isActive: true, deletedAt: null },
+      where: { companyId, isActive: true },
       select: {
         id: true,
         name: true,

@@ -132,7 +132,7 @@ export class BundlesRepository {
     productIds: string[],
   ): Promise<{ id: string }[]> {
     return this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, deletedAt: null },
+      where: { id: { in: productIds }, companyId },
       select: { id: true },
     });
   }

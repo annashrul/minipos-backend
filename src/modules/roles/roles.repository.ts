@@ -59,7 +59,7 @@ export class RolesRepository {
     if (keys.length === 0) return new Map();
     const grouped = await this.prisma.user.groupBy({
       by: ["role"],
-      where: { role: { in: keys }, companyId, deletedAt: null },
+      where: { role: { in: keys }, companyId },
       _count: { _all: true },
     });
     const map = new Map<string, number>();
@@ -71,7 +71,7 @@ export class RolesRepository {
 
   async countUsersByRole(companyId: string, roleKey: string): Promise<number> {
     return this.prisma.user.count({
-      where: { role: roleKey, companyId, deletedAt: null },
+      where: { role: roleKey, companyId },
     });
   }
 

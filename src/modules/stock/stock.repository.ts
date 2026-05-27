@@ -209,7 +209,7 @@ export class StockRepository {
     companyId: string,
   ): Promise<{ id: string; stock: number } | null> {
     return this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
+      where: { id: productId, companyId },
       select: { id: true, stock: true },
     });
   }
@@ -219,7 +219,7 @@ export class StockRepository {
     companyId: string,
   ) {
     return this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
+      where: { id: productId, companyId },
       select: { id: true, name: true, code: true, unit: true },
     });
   }

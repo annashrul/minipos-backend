@@ -151,7 +151,7 @@ export class StockTransfersRepository {
     companyId: string,
   ): Promise<{ id: string; name: string }[]> {
     return this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, deletedAt: null },
+      where: { id: { in: productIds }, companyId },
       select: { id: true, name: true },
     });
   }

@@ -8,7 +8,7 @@ export const BRAND_SELECT = {
   kind: true,
   createdAt: true,
   updatedAt: true,
-  _count: { select: { products: { where: { deletedAt: null } } } },
+  _count: { select: { products: {} } },
 } satisfies Prisma.BrandSelect;
 
 export type RawBrand = Prisma.BrandGetPayload<{ select: typeof BRAND_SELECT }>;
@@ -49,7 +49,7 @@ export class BrandsRepository {
   ): Promise<{ id: string; _count: { products: number } } | null> {
     return this.prisma.brand.findFirst({
       where: { id, companyId },
-      select: { id: true, _count: { select: { products: { where: { deletedAt: null } } } } },
+      select: { id: true, _count: { select: { products: {} } } },
     });
   }
 
@@ -74,14 +74,14 @@ export class BrandsRepository {
 
   async deleteManyWithoutProducts(companyId: string, ids: string[]): Promise<number> {
     const { count } = await this.prisma.brand.deleteMany({
-      where: { id: { in: ids }, companyId, products: { none: { deletedAt: null } } },
+      where: { id: { in: ids }, companyId, products: { none: {} } },
     });
     return count;
   }
 
   async findSkipped(companyId: string, ids: string[]): Promise<string[]> {
     const rows = await this.prisma.brand.findMany({
-      where: { id: { in: ids }, companyId, products: { some: { deletedAt: null } } },
+      where: { id: { in: ids }, companyId, products: { some: {} } },
       select: { name: true },
     });
     return rows.map((r) => r.name);

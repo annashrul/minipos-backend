@@ -31,7 +31,7 @@ export class CategoriesService {
     const where = { companyId };
     const [total, withProducts] = await Promise.all([
       this.prisma.category.count({ where }),
-      this.prisma.category.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
+      this.prisma.category.count({ where: { ...where, products: { some: {} } } }),
     ]);
     return { total, withProducts, empty: total - withProducts };
   }
@@ -62,7 +62,6 @@ export class CategoriesService {
         some: {
           companyId,
           isActive: true,
-          deletedAt: null,
           itemType: { not: "INGREDIENT" },
           ...(branchId
             ? {
@@ -189,14 +188,13 @@ export class CategoriesService {
     companyId: string,
     ids: string[],
   ): Promise<{ count: number; skipped: string[] }> {
-    const activeProductFilter = { deletedAt: null };
     const [skippedRows, deletableRows] = await Promise.all([
       this.prisma.category.findMany({
         where: {
           id: { in: ids },
           companyId,
           OR: [
-            { products: { some: activeProductFilter } },
+            { products: { some: {} } },
             { children: { some: {} } },
           ],
         },
@@ -206,7 +204,7 @@ export class CategoriesService {
         where: {
           id: { in: ids },
           companyId,
-          products: { none: activeProductFilter },
+          products: { none: {} },
           children: { none: {} },
         },
         select: { id: true },

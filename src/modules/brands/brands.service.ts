@@ -27,7 +27,7 @@ export class BrandsService {
     const where = { companyId };
     const [total, withProducts] = await Promise.all([
       this.prisma.brand.count({ where }),
-      this.prisma.brand.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
+      this.prisma.brand.count({ where: { ...where, products: { some: {} } } }),
     ]);
     return { total, withProducts, withoutProducts: total - withProducts };
   }

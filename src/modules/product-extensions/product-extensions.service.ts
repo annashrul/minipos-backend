@@ -299,7 +299,6 @@ export class ProductExtensionsService {
     const where: Prisma.ProductWhereInput = {
       companyId,
       isActive: true,
-      deletedAt: null,
     };
     if (search) {
       where.OR = [

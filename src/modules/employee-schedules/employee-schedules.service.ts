@@ -142,7 +142,6 @@ export class EmployeeSchedulesService {
       const validUsers = await this.repo.countUsers({
         id: { in: userIds },
         companyId,
-        deletedAt: null,
       });
       if (validUsers !== userIds.length) {
         throw new NotFoundException("Satu atau lebih pengguna tidak ditemukan");
@@ -245,7 +244,6 @@ export class EmployeeSchedulesService {
       const user = await this.repo.findUser({
         id: userId,
         companyId,
-        deletedAt: null,
       });
       if (!user) throw new NotFoundException("Pengguna tidak ditemukan");
     }

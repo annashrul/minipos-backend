@@ -11,7 +11,7 @@ export const SUPPLIER_SELECT = {
   isActive: true,
   createdAt: true,
   updatedAt: true,
-  _count: { select: { products: { where: { deletedAt: null } } } },
+  _count: { select: { products: {} } },
 } satisfies Prisma.SupplierSelect;
 
 export type RawSupplier = Prisma.SupplierGetPayload<{
@@ -56,7 +56,7 @@ export class SuppliersRepository {
   ): Promise<{ id: string; _count: { products: number } } | null> {
     return this.prisma.supplier.findFirst({
       where: { id, companyId },
-      select: { id: true, _count: { select: { products: { where: { deletedAt: null } } } } },
+      select: { id: true, _count: { select: { products: {} } } },
     });
   }
 

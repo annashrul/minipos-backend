@@ -86,7 +86,6 @@ export class InventoryForecastService {
 
     const productWhere: Prisma.ProductWhereInput = {
       isActive: true,
-      deletedAt: null,
       companyId,
     };
     if (categoryId) productWhere.categoryId = categoryId;

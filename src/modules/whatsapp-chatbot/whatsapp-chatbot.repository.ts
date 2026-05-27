@@ -350,7 +350,6 @@ export class WhatsappChatbotRepository {
         companyId,
         isActive: true,
         itemType: "PRODUCT",
-        deletedAt: null,
       },
       select: {
         name: true,
@@ -371,7 +370,6 @@ export class WhatsappChatbotRepository {
       where: {
         companyId,
         isActive: true,
-        deletedAt: null,
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { code: { contains: query, mode: "insensitive" } },
@@ -691,7 +689,6 @@ export class WhatsappChatbotRepository {
         companyId,
         isActive: true,
         itemType: "PRODUCT",
-        deletedAt: null,
       },
       select: { stock: true, minStock: true },
     });
@@ -817,7 +814,6 @@ export class WhatsappChatbotRepository {
         companyId,
         isActive: true,
         itemType: "SERVICE",
-        deletedAt: null,
         ...(query
           ? { name: { contains: query, mode: "insensitive" as const } }
           : {}),
@@ -842,7 +838,6 @@ export class WhatsappChatbotRepository {
         companyId,
         isActive: true,
         itemType: "PRODUCT",
-        deletedAt: null,
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { description: { contains: query, mode: "insensitive" } },

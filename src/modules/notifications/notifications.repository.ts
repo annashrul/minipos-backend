@@ -38,7 +38,6 @@ export class NotificationsRepository {
       where: {
         companyId,
         isActive: true,
-        deletedAt: null,
       },
       select: LOW_STOCK_PRODUCT_SELECT,
       orderBy: { stock: "asc" },
@@ -55,7 +54,6 @@ export class NotificationsRepository {
       where: {
         companyId,
         isActive: true,
-        deletedAt: null,
         expiryDate: { not: null, lte: expiryBefore },
       },
       select: EXPIRING_PRODUCT_SELECT,

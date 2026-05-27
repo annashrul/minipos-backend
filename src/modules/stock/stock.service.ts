@@ -109,7 +109,7 @@ export class StockService {
 
     const where: Prisma.BranchStockWhereInput = {
       branchId,
-      product: { companyId, deletedAt: null },
+      product: { companyId },
     };
     if (search) {
       where.product = {

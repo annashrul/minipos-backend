@@ -183,7 +183,6 @@ export class TableOrdersService {
     const where: Prisma.ProductWhereInput = {
       companyId,
       isActive: true,
-      deletedAt: null,
       itemType: { not: "INGREDIENT" },
     };
     if (query.categoryId) where.categoryId = query.categoryId;

@@ -27,7 +27,7 @@ export class SuppliersService {
     const [total, active, withProducts] = await Promise.all([
       this.prisma.supplier.count({ where }),
       this.prisma.supplier.count({ where: { ...where, isActive: true } }),
-      this.prisma.supplier.count({ where: { ...where, products: { some: { deletedAt: null } } } }),
+      this.prisma.supplier.count({ where: { ...where, products: { some: {} } } }),
     ]);
     return { total, active, inactive: total - active, withProducts };
   }
@@ -130,11 +130,11 @@ export class SuppliersService {
   ): Promise<{ count: number; skipped: string[] }> {
     const [skippedRows, deleted] = await Promise.all([
       this.prisma.supplier.findMany({
-        where: { id: { in: ids }, companyId, products: { some: { deletedAt: null } } },
+        where: { id: { in: ids }, companyId, products: { some: {} } },
         select: { name: true },
       }),
       this.prisma.supplier.deleteMany({
-        where: { id: { in: ids }, companyId, products: { none: { deletedAt: null } } },
+        where: { id: { in: ids }, companyId, products: { none: {} } },
       }),
     ]);
     return { count: deleted.count, skipped: skippedRows.map((r) => r.name) };

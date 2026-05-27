@@ -152,7 +152,7 @@ export class PromotionsRepository {
     productId: string,
   ): Promise<{ id: string } | null> {
     return this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
+      where: { id: productId, companyId },
       select: { id: true },
     });
   }
@@ -162,7 +162,7 @@ export class PromotionsRepository {
     productIds: string[],
   ): Promise<{ id: string }[]> {
     return this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, deletedAt: null },
+      where: { id: { in: productIds }, companyId },
       select: { id: true },
     });
   }

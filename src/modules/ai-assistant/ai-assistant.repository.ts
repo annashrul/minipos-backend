@@ -135,7 +135,6 @@ const RACK_CONTENTS_SELECT = {
     orderBy: { qty: "desc" as const },
   },
   defaultForProducts: {
-    where: { deletedAt: null },
     select: {
       code: true,
       name: true,
@@ -324,7 +323,6 @@ export class AiAssistantRepository {
       where: {
         ...(companyId ? { companyId } : {}),
         isActive: true,
-        deletedAt: null,
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { code: { contains: query, mode: "insensitive" } },
@@ -344,7 +342,6 @@ export class AiAssistantRepository {
     return this.prisma.product.findMany({
       where: {
         ...(companyId ? { companyId } : {}),
-        deletedAt: null,
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { code: { contains: query, mode: "insensitive" } },
@@ -384,7 +381,6 @@ export class AiAssistantRepository {
       where: {
         ...(companyId ? { companyId } : {}),
         isActive: true,
-        deletedAt: null,
       },
       select: LOW_STOCK_LOCATION_SELECT,
       orderBy: { stock: "asc" },

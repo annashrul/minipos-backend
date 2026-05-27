@@ -119,7 +119,6 @@ export class RecipesRepository {
       where: {
         product: {
           companyId,
-          deletedAt: null,
           isActive: true,
           ...productNameFilter,
         },
@@ -154,7 +153,7 @@ export class RecipesRepository {
   ): Promise<RawSummaryRecipe[]> {
     return this.prisma.recipe.findMany({
       where: {
-        product: { companyId, deletedAt: null, isActive: true },
+        product: { companyId, isActive: true },
       },
       include: SUMMARY_RECIPE_INCLUDE,
     });

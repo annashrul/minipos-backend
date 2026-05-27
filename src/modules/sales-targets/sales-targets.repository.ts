@@ -309,7 +309,7 @@ export class SalesTargetsRepository {
     companyId: string,
   ): Promise<{ id: string } | null> {
     return this.prisma.user.findFirst({
-      where: { id: userId, companyId, deletedAt: null },
+      where: { id: userId, companyId },
       select: { id: true },
     });
   }

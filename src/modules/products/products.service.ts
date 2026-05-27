@@ -103,7 +103,7 @@ export class ProductsService {
       sortBy,
       sortDir,
     } = query;
-    const where: Prisma.ProductWhereInput = { companyId, deletedAt: null };
+    const where: Prisma.ProductWhereInput = { companyId };
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
@@ -149,13 +149,13 @@ export class ProductsService {
   }
 
   async findById(companyId: string, id: string): Promise<ProductResponse> {
-    const product = await this.repo.findOne({ id, companyId, deletedAt: null });
+    const product = await this.repo.findOne({ id, companyId });
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
     return toProductResponse(product);
   }
 
   async findDetail(companyId: string, id: string, branchId?: string) {
-    const product = await this.repo.findOne({ id, companyId, deletedAt: null });
+    const product = await this.repo.findOne({ id, companyId });
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
     const [units, branchSkus, tierPrices, variants, modifierGroups, branches] =
       await Promise.all([
@@ -323,7 +323,7 @@ export class ProductsService {
     id: string,
     dto: UpdateProductDto,
   ): Promise<ProductResponse> {
-    const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
+    const existing = await this.repo.findExists({ id, companyId });
     if (!existing) throw new NotFoundException("Produk tidak ditemukan");
 
     const data: Prisma.ProductUpdateInput = {};
@@ -627,7 +627,7 @@ export class ProductsService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
+    const existing = await this.repo.findExists({ id, companyId });
     if (!existing) throw new NotFoundException("Produk tidak ditemukan");
 
     await this.repo.softDelete(id);
