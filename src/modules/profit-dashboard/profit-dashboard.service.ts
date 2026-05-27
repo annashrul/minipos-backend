@@ -1,4 +1,4 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
 import type {
@@ -10,7 +10,7 @@ import type {
   ProfitPeriodDto,
   ProfitTrendEntry,
 } from "./dto/profit-dashboard.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { ProfitDashboardRepository } from "./profit-dashboard.repository";
 
 type Period = ProfitPeriodDto;
 
@@ -23,11 +23,11 @@ type PeriodDates = {
 
 @Injectable()
 export class ProfitDashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: ProfitDashboardRepository) {}
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────
   // Internal helpers
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────
 
   private getPeriodDates(period: Period): PeriodDates {
     const now = new Date();
@@ -72,22 +72,9 @@ export class ProfitDashboardService {
     return { periodStart, prevPeriodStart, prevPeriodEnd, periodEnd: tomorrow };
   }
 
-  private branchClause(
-    branchId: string | undefined,
-    alias: string | undefined,
-    paramIndex: number,
-  ): { condition: string; params: unknown[] } {
-    if (!branchId) return { condition: "", params: [] };
-    const col = alias ? `${alias}."branchId"` : `"branchId"`;
-    return {
-      condition: `AND ${col} = $${paramIndex}`,
-      params: [branchId],
-    };
-  }
-
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────
   // Public API
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────────────
 
   async getOverview(
     companyId: string | null,
@@ -97,28 +84,14 @@ export class ProfitDashboardService {
     const { periodStart, prevPeriodStart, prevPeriodEnd, periodEnd } =
       this.getPeriodDates(period);
 
-    type ProfitRow = {
-      revenue: number;
-      cogs: number;
-      grossProfit: number;
-      discount: number;
-      tax: number;
-      expense: number;
-      netProfit: number;
-      transactionCount: number;
-      itemsSold: number;
-    };
-
-    const [[current], [prev]] = await Promise.all([
-      this.prisma.$queryRawUnsafe<ProfitRow[]>(
-        `SELECT * FROM fn_get_profit_metrics($1, $2, $3, $4)`,
+    const [current, prev] = await Promise.all([
+      this.repo.getProfitMetrics(
         periodStart,
         periodEnd,
         branchId || null,
         companyId,
       ),
-      this.prisma.$queryRawUnsafe<ProfitRow[]>(
-        `SELECT * FROM fn_get_profit_metrics($1, $2, $3, $4)`,
+      this.repo.getProfitMetrics(
         prevPeriodStart,
         prevPeriodEnd,
         branchId || null,
@@ -180,36 +153,12 @@ export class ProfitDashboardService {
     branchId?: string,
   ): Promise<ProfitByCategoryEntry[]> {
     const { periodStart, periodEnd } = this.getPeriodDates(period);
-    const bc = this.branchClause(branchId, "t", 3);
-    const params: unknown[] = [periodStart, periodEnd, ...bc.params];
-    let companyCondition = "";
-    if (companyId) {
-      params.push(companyId);
-      companyCondition = `AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $${params.length})`;
-    }
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      { category: string; revenue: number; cost: number; units: number }[]
-    >(
-      `
-      SELECT
-        COALESCE(c."name", 'Lainnya') AS category,
-        COALESCE(SUM(ti."subtotal"), 0)::float AS revenue,
-        COALESCE(SUM(ti."quantity" * p."purchasePrice"), 0)::float AS cost,
-        COALESCE(SUM(ti."quantity"), 0)::int AS units
-      FROM transactions t
-      JOIN transaction_items ti ON ti."transactionId" = t."id"
-      JOIN products p ON p."id" = ti."productId"
-      LEFT JOIN categories c ON c."id" = p."categoryId"
-      WHERE t."status" = 'COMPLETED'
-        AND t."createdAt" >= $1
-        AND t."createdAt" < $2
-        ${bc.condition}
-        ${companyCondition}
-      GROUP BY c."name"
-      ORDER BY SUM(ti."subtotal") DESC
-      `,
-      ...params,
+    const rows = await this.repo.findByCategory(
+      periodStart,
+      periodEnd,
+      branchId,
+      companyId,
     );
 
     const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
@@ -240,49 +189,14 @@ export class ProfitDashboardService {
   ): Promise<ProfitByProductEntry[]> {
     const { periodStart, periodEnd } = this.getPeriodDates(period);
     const sortDir = order === "top" ? "DESC" : "ASC";
-    const prodParams: unknown[] = [periodStart, periodEnd];
-    let prodBranchCondition = "";
-    if (branchId) {
-      prodParams.push(branchId);
-      prodBranchCondition = `AND t."branchId" = $${prodParams.length}`;
-    }
-    let companyProdCondition = "";
-    if (companyId) {
-      prodParams.push(companyId);
-      companyProdCondition = `AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $${prodParams.length})`;
-    }
-    prodParams.push(limit);
-    const limitIdx = prodParams.length;
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      {
-        productName: string;
-        productCode: string;
-        unitsSold: number;
-        revenue: number;
-        cost: number;
-      }[]
-    >(
-      `
-      SELECT
-        ti."productName" AS "productName",
-        ti."productCode" AS "productCode",
-        SUM(ti."quantity")::int AS "unitsSold",
-        SUM(ti."subtotal")::float AS revenue,
-        SUM(ti."quantity" * p."purchasePrice")::float AS cost
-      FROM transactions t
-      JOIN transaction_items ti ON ti."transactionId" = t."id"
-      JOIN products p ON p."id" = ti."productId"
-      WHERE t."status" = 'COMPLETED'
-        AND t."createdAt" >= $1
-        AND t."createdAt" < $2
-        ${prodBranchCondition}
-        ${companyProdCondition}
-      GROUP BY ti."productName", ti."productCode"
-      ORDER BY (SUM(ti."subtotal") - SUM(ti."quantity" * p."purchasePrice")) ${sortDir}
-      LIMIT $${limitIdx}
-      `,
-      ...prodParams,
+    const rows = await this.repo.findByProduct(
+      periodStart,
+      periodEnd,
+      branchId,
+      companyId,
+      limit,
+      sortDir,
     );
 
     return rows.map((r) => ({
@@ -304,51 +218,11 @@ export class ProfitDashboardService {
     period: Period,
   ): Promise<ProfitByBranchEntry[]> {
     const { periodStart, periodEnd } = this.getPeriodDates(period);
-    const branchParams: unknown[] = [periodStart, periodEnd];
-    const branchCompanyCond = companyId
-      ? `AND b."companyId" = $${branchParams.push(companyId)}`
-      : "";
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      { branchId: string; branchName: string; revenue: number; cost: number }[]
-    >(
-      `
-      SELECT
-        b."id" AS "branchId",
-        b."name" AS "branchName",
-        COALESCE(SUM(ti."subtotal"), 0)::float AS revenue,
-        COALESCE(SUM(ti."quantity" * p."purchasePrice"), 0)::float AS cost
-      FROM branches b
-      LEFT JOIN transactions t ON t."branchId" = b."id"
-        AND t."status" = 'COMPLETED'
-        AND t."createdAt" >= $1
-        AND t."createdAt" < $2
-      LEFT JOIN transaction_items ti ON ti."transactionId" = t."id"
-      LEFT JOIN products p ON p."id" = ti."productId"
-      WHERE b."isActive" = true
-        ${branchCompanyCond}
-      GROUP BY b."id", b."name"
-      ORDER BY SUM(ti."subtotal") DESC NULLS LAST
-      `,
-      ...branchParams,
-    );
-
-    const expenseParams: unknown[] = [periodStart, periodEnd];
-    const expenseCompanyCond = companyId
-      ? `AND "branchId" IN (SELECT id FROM branches WHERE "companyId" = $${expenseParams.push(companyId)})`
-      : "";
-    const expenseRows = await this.prisma.$queryRawUnsafe<
-      { branchId: string; total: number }[]
-    >(
-      `
-      SELECT "branchId" AS "branchId", COALESCE(SUM("amount"), 0)::float AS total
-      FROM expenses
-      WHERE "date" >= $1 AND "date" < $2 AND "branchId" IS NOT NULL
-        ${expenseCompanyCond}
-      GROUP BY "branchId"
-      `,
-      ...expenseParams,
-    );
+    const [rows, expenseRows] = await Promise.all([
+      this.repo.findBranchRevenue(periodStart, periodEnd, companyId),
+      this.repo.findBranchExpenses(periodStart, periodEnd, companyId),
+    ]);
 
     const expenseMap = new Map(expenseRows.map((e) => [e.branchId, e.total]));
     const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
@@ -390,34 +264,7 @@ export class ProfitDashboardService {
     startDate.setDate(startDate.getDate() - (days - 1));
     startDate.setHours(0, 0, 0, 0);
 
-    const bc = this.branchClause(branchId, "t", 2);
-    const trendParams: unknown[] = [startDate, ...bc.params];
-    let trendCompanyCond = "";
-    if (companyId) {
-      trendParams.push(companyId);
-      trendCompanyCond = `AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $${trendParams.length})`;
-    }
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { d: Date; revenue: number; cost: number }[]
-    >(
-      `
-      SELECT
-        DATE_TRUNC('day', t."createdAt") AS d,
-        COALESCE(SUM(ti."subtotal"), 0)::float AS revenue,
-        COALESCE(SUM(ti."quantity" * p."purchasePrice"), 0)::float AS cost
-      FROM transactions t
-      JOIN transaction_items ti ON ti."transactionId" = t."id"
-      JOIN products p ON p."id" = ti."productId"
-      WHERE t."status" = 'COMPLETED'
-        AND t."createdAt" >= $1
-        ${bc.condition}
-        ${trendCompanyCond}
-      GROUP BY DATE_TRUNC('day', t."createdAt")
-      ORDER BY d ASC
-      `,
-      ...trendParams,
-    );
+    const rows = await this.repo.findTrend(startDate, branchId, companyId);
 
     const dataMap = new Map<string, { revenue: number; cost: number }>();
     for (const row of rows) {
@@ -450,33 +297,7 @@ export class ProfitDashboardService {
     companyId: string | null,
     branchId?: string,
   ): Promise<MarginDistributionEntry[]> {
-    const bc = this.branchClause(branchId, "t", 1);
-    const marginParams: unknown[] = [...bc.params];
-    let marginCompanyCond = "";
-    if (companyId) {
-      marginParams.push(companyId);
-      marginCompanyCond = `AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $${marginParams.length})`;
-    }
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { productName: string; revenue: number; cost: number }[]
-    >(
-      `
-      SELECT
-        ti."productName" AS "productName",
-        SUM(ti."subtotal")::float AS revenue,
-        SUM(ti."quantity" * p."purchasePrice")::float AS cost
-      FROM transactions t
-      JOIN transaction_items ti ON ti."transactionId" = t."id"
-      JOIN products p ON p."id" = ti."productId"
-      WHERE t."status" = 'COMPLETED'
-        ${bc.condition}
-        ${marginCompanyCond}
-      GROUP BY ti."productName"
-      HAVING SUM(ti."subtotal") > 0
-      `,
-      ...marginParams,
-    );
+    const rows = await this.repo.findMarginDistribution(branchId, companyId);
 
     const brackets = [
       { label: "0-10%", min: 0, max: 10, count: 0, revenue: 0 },

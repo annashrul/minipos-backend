@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -21,49 +21,12 @@ import type {
   ToggleRecurringJournalDto,
   UpdateRecurringJournalDto,
 } from "./dto/recurring-journals.dto";
-import { PrismaService } from "../prisma/prisma.service";
-
-const TEMPLATE_SELECT = {
-  id: true,
-  name: true,
-  description: true,
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  frequency: true,
-  dayOfMonth: true,
-  nextRunDate: true,
-  lastRunDate: true,
-  isActive: true,
-  companyId: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { lines: true } },
-} satisfies Prisma.RecurringJournalTemplateSelect;
-
-const TEMPLATE_DETAIL_SELECT = {
-  ...TEMPLATE_SELECT,
-  lines: {
-    select: {
-      id: true,
-      templateId: true,
-      accountId: true,
-      account: { select: { id: true, code: true, name: true } },
-      description: true,
-      debit: true,
-      credit: true,
-      sortOrder: true,
-    },
-    orderBy: { sortOrder: "asc" },
-  },
-} satisfies Prisma.RecurringJournalTemplateSelect;
-
-type RawTemplate = Prisma.RecurringJournalTemplateGetPayload<{
-  select: typeof TEMPLATE_SELECT;
-}>;
-type RawTemplateDetail = Prisma.RecurringJournalTemplateGetPayload<{
-  select: typeof TEMPLATE_DETAIL_SELECT;
-}>;
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  RecurringJournalsRepository,
+  type RawTemplate,
+  type RawTemplateDetail,
+} from "./recurring-journals.repository";
 
 const BALANCE_TOLERANCE = 0.01;
 
@@ -71,6 +34,7 @@ const BALANCE_TOLERANCE = 0.01;
 export class RecurringJournalsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: RecurringJournalsRepository,
     private readonly assert: AssertService,
   ) {}
 
@@ -87,14 +51,13 @@ export class RecurringJournalsService {
     if (query.isActive !== undefined) where.isActive = query.isActive;
 
     const [rows, total] = await Promise.all([
-      this.prisma.recurringJournalTemplate.findMany({
+      this.repo.findMany(
         where,
-        select: TEMPLATE_SELECT,
-        orderBy: [{ nextRunDate: "asc" }, { createdAt: "desc" }],
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
-      }),
-      this.prisma.recurringJournalTemplate.count({ where }),
+        [{ nextRunDate: "asc" }, { createdAt: "desc" }],
+        (query.page - 1) * query.perPage,
+        query.perPage,
+      ),
+      this.repo.count(where),
     ]);
 
     return {
@@ -108,10 +71,7 @@ export class RecurringJournalsService {
     companyId: string,
     id: string,
   ): Promise<RecurringJournalDetailResponse> {
-    const template = await this.prisma.recurringJournalTemplate.findFirst({
-      where: { id, companyId },
-      select: TEMPLATE_DETAIL_SELECT,
-    });
+    const template = await this.repo.findOne({ id, companyId });
     if (!template) throw new NotFoundException("Recurring journal not found");
     return toTemplateDetailResponse(template);
   }
@@ -123,11 +83,7 @@ export class RecurringJournalsService {
       isActive: true,
       nextRunDate: { lte: now },
     };
-    const rows = await this.prisma.recurringJournalTemplate.findMany({
-      where,
-      select: TEMPLATE_SELECT,
-      orderBy: { nextRunDate: "asc" },
-    });
+    const rows = await this.repo.findDue(where);
     return {
       templates: rows.map(toTemplateResponse),
       total: rows.length,
@@ -144,30 +100,27 @@ export class RecurringJournalsService {
     await this.assertAccountsValid(companyId, dto.lines);
     this.assertBalanced(dto.lines);
 
-    const created = await this.prisma.recurringJournalTemplate.create({
-      data: {
-        name: dto.name,
-        description: dto.description ?? null,
-        branchId: dto.branchId ?? null,
-        frequency: dto.frequency,
-        dayOfMonth: dto.dayOfMonth ?? null,
-        nextRunDate: new Date(dto.nextRunDate),
-        isActive: dto.isActive ?? true,
-        companyId,
-        createdBy: userId,
-        lines: {
-          createMany: {
-            data: dto.lines.map((line, idx) => ({
-              accountId: line.accountId,
-              debit: line.debit ?? 0,
-              credit: line.credit ?? 0,
-              description: line.description ?? null,
-              sortOrder: line.sortOrder ?? idx,
-            })),
-          },
+    const created = await this.repo.create({
+      name: dto.name,
+      description: dto.description ?? null,
+      branchId: dto.branchId ?? null,
+      frequency: dto.frequency,
+      dayOfMonth: dto.dayOfMonth ?? null,
+      nextRunDate: new Date(dto.nextRunDate),
+      isActive: dto.isActive ?? true,
+      companyId,
+      createdBy: userId,
+      lines: {
+        createMany: {
+          data: dto.lines.map((line, idx) => ({
+            accountId: line.accountId,
+            debit: line.debit ?? 0,
+            credit: line.credit ?? 0,
+            description: line.description ?? null,
+            sortOrder: line.sortOrder ?? idx,
+          })),
         },
       },
-      select: TEMPLATE_DETAIL_SELECT,
     });
 
     return toTemplateDetailResponse(created);
@@ -178,10 +131,7 @@ export class RecurringJournalsService {
     id: string,
     dto: UpdateRecurringJournalDto,
   ): Promise<RecurringJournalDetailResponse> {
-    const existing = await this.prisma.recurringJournalTemplate.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExistence({ id, companyId });
     if (!existing) throw new NotFoundException("Recurring journal not found");
 
     if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
@@ -233,28 +183,7 @@ export class RecurringJournalsService {
     id: string,
     dto: RunRecurringJournalDto,
   ): Promise<RunRecurringJournalResponse> {
-    const template = await this.prisma.recurringJournalTemplate.findFirst({
-      where: { id, companyId },
-      select: {
-        id: true,
-        isActive: true,
-        frequency: true,
-        dayOfMonth: true,
-        nextRunDate: true,
-        branchId: true,
-        name: true,
-        lines: {
-          select: {
-            accountId: true,
-            debit: true,
-            credit: true,
-            description: true,
-            sortOrder: true,
-          },
-          orderBy: { sortOrder: "asc" },
-        },
-      },
-    });
+    const template = await this.repo.findForRun({ id, companyId });
     if (!template) throw new NotFoundException("Recurring journal not found");
     if (!template.isActive) {
       throw new BadRequestException("Template tidak aktif");
@@ -343,15 +272,9 @@ export class RecurringJournalsService {
     id: string,
     dto: ToggleRecurringJournalDto,
   ): Promise<RecurringJournalDetailResponse> {
-    const existing = await this.prisma.recurringJournalTemplate.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExistence({ id, companyId });
     if (!existing) throw new NotFoundException("Recurring journal not found");
-    await this.prisma.recurringJournalTemplate.update({
-      where: { id },
-      data: { isActive: dto.isActive },
-    });
+    await this.repo.update(id, { isActive: dto.isActive });
     return this.findById(companyId, id);
   }
 
@@ -359,12 +282,9 @@ export class RecurringJournalsService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.recurringJournalTemplate.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExistence({ id, companyId });
     if (!existing) throw new NotFoundException("Recurring journal not found");
-    await this.prisma.recurringJournalTemplate.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -378,14 +298,7 @@ export class RecurringJournalsService {
     if (ids.length === 0) {
       throw new BadRequestException("Daftar akun tidak boleh kosong");
     }
-    const accounts = await this.prisma.account.findMany({
-      where: {
-        id: { in: ids },
-        isActive: true,
-        category: { companyId },
-      },
-      select: { id: true },
-    });
+    const accounts = await this.repo.findActiveAccounts(companyId, ids);
     if (accounts.length !== ids.length) {
       throw new BadRequestException(
         "Salah satu akun tidak valid atau tidak aktif",
@@ -413,14 +326,7 @@ export class RecurringJournalsService {
     companyId: string,
     date: Date,
   ): Promise<string | null> {
-    const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        companyId,
-        startDate: { lte: date },
-        endDate: { gte: date },
-      },
-      select: { id: true, status: true },
-    });
+    const period = await this.repo.findOpenPeriod(companyId, date);
     if (!period) return null;
     if (period.status !== "OPEN") {
       throw new BadRequestException(

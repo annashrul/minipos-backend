@@ -1,4 +1,4 @@
-﻿import {
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -13,49 +13,19 @@ import type {
 } from "./dto/promotions.dto";
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
-import { PrismaService } from "../prisma/prisma.service";
-
-const PROMOTION_SELECT = {
-  id: true,
-  name: true,
-  type: true,
-  value: true,
-  minPurchase: true,
-  maxDiscount: true,
-  scope: true,
-  categoryId: true,
-  category: { select: { id: true, name: true } },
-  productId: true,
-  product: { select: { id: true, name: true, code: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  buyQty: true,
-  getQty: true,
-  getProductId: true,
-  voucherCode: true,
-  usageLimit: true,
-  usageCount: true,
-  description: true,
-  isActive: true,
-  startDate: true,
-  endDate: true,
-  createdAt: true,
-  updatedAt: true,
-  triggerProducts: {
-    include: { product: { select: { id: true, name: true, code: true } } },
-  },
-  getProducts: {
-    include: { product: { select: { id: true, name: true, code: true } } },
-  },
-} satisfies Prisma.PromotionSelect;
-
-type RawPromotion = Prisma.PromotionGetPayload<{
-  select: typeof PROMOTION_SELECT;
-}>;
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  PROMOTION_SELECT,
+  PromotionsRepository,
+  type RawPromotion,
+} from "./promotions.repository";
 
 @Injectable()
 export class PromotionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: PromotionsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async list(
     companyId: string,
@@ -100,14 +70,8 @@ export class PromotionsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.promotion.findMany({
-        where,
-        select: PROMOTION_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.promotion.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     const getProductMap = await this.fetchGetProducts(rows);
@@ -122,10 +86,7 @@ export class PromotionsService {
   }
 
   async findById(companyId: string, id: string): Promise<PromotionResponse> {
-    const promotion = await this.prisma.promotion.findFirst({
-      where: { id, companyId },
-      select: PROMOTION_SELECT,
-    });
+    const promotion = await this.repo.findOne({ id, companyId });
     if (!promotion) throw new NotFoundException("Promotion not found");
     const getProductMap = await this.fetchGetProducts([promotion]);
     return toPromotionResponse(
@@ -144,12 +105,7 @@ export class PromotionsService {
           .filter((v): v is string => Boolean(v)),
       ),
     );
-    if (!ids.length) return new Map();
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, name: true, code: true },
-    });
-    return new Map(products.map((p) => [p.id, p]));
+    return this.repo.fetchGetProducts(ids);
   }
 
   async create(
@@ -162,41 +118,36 @@ export class PromotionsService {
     const getIds = dedupeTriggerIds(dto.getProductIds);
 
     try {
-      const created = await this.prisma.promotion.create({
-        data: {
-          name: dto.name,
-          type: dto.type,
-          value: dto.value,
-          minPurchase: dto.minPurchase ?? null,
-          maxDiscount: dto.maxDiscount ?? null,
-          scope: dto.scope ?? "all",
-          categoryId: dto.categoryId ?? null,
-          productId: dto.productId ?? null,
-          branchId: dto.branchId ?? null,
-          buyQty: dto.buyQty ?? null,
-          getQty: dto.getQty ?? null,
-          // Kalau pakai multi-reward (getProductIds), kosongkan getProductId
-          // agar engine pakai tabel relasi sebagai source of truth.
-          getProductId: getIds.length ? null : (dto.getProductId ?? null),
-          voucherCode: dto.voucherCode ?? null,
-          usageLimit: dto.usageLimit ?? null,
-          description: dto.description ?? null,
-          isActive: dto.isActive ?? true,
-          startDate: new Date(dto.startDate),
-          endDate: new Date(dto.endDate),
-          companyId,
-          triggerProducts: triggerIds.length
-            ? {
-                create: triggerIds.map((productId) => ({ productId })),
-              }
-            : undefined,
-          getProducts: getIds.length
-            ? {
-                create: getIds.map((productId) => ({ productId })),
-              }
-            : undefined,
-        },
-        select: PROMOTION_SELECT,
+      const created = await this.repo.create({
+        name: dto.name,
+        type: dto.type,
+        value: dto.value,
+        minPurchase: dto.minPurchase ?? null,
+        maxDiscount: dto.maxDiscount ?? null,
+        scope: dto.scope ?? "all",
+        categoryId: dto.categoryId ?? null,
+        productId: dto.productId ?? null,
+        branchId: dto.branchId ?? null,
+        buyQty: dto.buyQty ?? null,
+        getQty: dto.getQty ?? null,
+        getProductId: getIds.length ? null : (dto.getProductId ?? null),
+        voucherCode: dto.voucherCode ?? null,
+        usageLimit: dto.usageLimit ?? null,
+        description: dto.description ?? null,
+        isActive: dto.isActive ?? true,
+        startDate: new Date(dto.startDate),
+        endDate: new Date(dto.endDate),
+        companyId,
+        triggerProducts: triggerIds.length
+          ? {
+              create: triggerIds.map((productId) => ({ productId })),
+            }
+          : undefined,
+        getProducts: getIds.length
+          ? {
+              create: getIds.map((productId) => ({ productId })),
+            }
+          : undefined,
       });
       const map = await this.fetchGetProducts([created]);
       return toPromotionResponse(
@@ -214,10 +165,7 @@ export class PromotionsService {
     id: string,
     dto: UpdatePromotionDto,
   ): Promise<PromotionResponse> {
-    const existing = await this.prisma.promotion.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById({ id, companyId });
     if (!existing) throw new NotFoundException("Promotion not found");
 
     await this.assertReferences(companyId, dto);
@@ -247,8 +195,6 @@ export class PromotionsService {
     if (dto.buyQty !== undefined) data.buyQty = dto.buyQty;
     if (dto.getQty !== undefined) data.getQty = dto.getQty;
     if (dto.getProductId !== undefined) data.getProductId = dto.getProductId;
-    // Kalau caller kirim multi-reward, paksa kosongkan getProductId agar engine
-    // konsisten ambil dari tabel relasi.
     if (dto.getProductIds && dto.getProductIds.length > 0) {
       data.getProductId = null;
     }
@@ -260,9 +206,6 @@ export class PromotionsService {
     if (dto.endDate !== undefined) data.endDate = new Date(dto.endDate);
 
     try {
-      // Replace strategy: kalau caller kirim triggerProductIds, hapus semua
-      // entry lama lalu tulis ulang. Kalau field tidak dikirim (undefined),
-      // biarkan apa adanya (tidak diubah).
       const updated = await this.prisma.$transaction(async (tx) => {
         if (dto.triggerProductIds !== undefined) {
           const triggerIds = dedupeTriggerIds(dto.triggerProductIds);
@@ -314,18 +257,14 @@ export class PromotionsService {
     const where: Prisma.PromotionWhereInput = { companyId };
 
     const [total, active, expired, byTypeRaw] = await Promise.all([
-      this.prisma.promotion.count({ where }),
-      this.prisma.promotion.count({
-        where: { ...where, isActive: true, endDate: { gte: now } },
+      this.repo.count(where),
+      this.repo.count({
+        ...where,
+        isActive: true,
+        endDate: { gte: now },
       }),
-      this.prisma.promotion.count({
-        where: { ...where, endDate: { lt: now } },
-      }),
-      this.prisma.promotion.groupBy({
-        by: ["type"],
-        where,
-        _count: { _all: true },
-      }),
+      this.repo.count({ ...where, endDate: { lt: now } }),
+      this.repo.groupByType(where),
     ]);
 
     const typeMap = new Map(byTypeRaw.map((g) => [g.type, g._count._all]));
@@ -348,17 +287,10 @@ export class PromotionsService {
     id: string,
     isActive: boolean,
   ): Promise<PromotionResponse> {
-    const existing = await this.prisma.promotion.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById({ id, companyId });
     if (!existing) throw new NotFoundException("Promotion not found");
 
-    const updated = await this.prisma.promotion.update({
-      where: { id },
-      data: { isActive },
-      select: PROMOTION_SELECT,
-    });
+    const updated = await this.repo.update(id, { isActive });
     const map = await this.fetchGetProducts([updated]);
     return toPromotionResponse(
       updated,
@@ -367,12 +299,9 @@ export class PromotionsService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.promotion.findFirst({
-      where: { id, companyId },
-      select: { id: true },
-    });
+    const existing = await this.repo.findById({ id, companyId });
     if (!existing) throw new NotFoundException("Promotion not found");
-    await this.prisma.promotion.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -381,39 +310,24 @@ export class PromotionsService {
     dto: CreatePromotionDto | UpdatePromotionDto,
   ) {
     if (dto.branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: dto.branchId, companyId },
-        select: { id: true },
-      });
+      const branch = await this.repo.assertBranch(companyId, dto.branchId);
       if (!branch) throw new NotFoundException("Branch not found");
     }
     if (dto.categoryId) {
-      const category = await this.prisma.category.findFirst({
-        where: { id: dto.categoryId, companyId },
-        select: { id: true },
-      });
+      const category = await this.repo.assertCategory(companyId, dto.categoryId);
       if (!category) throw new NotFoundException("Category not found");
     }
     if (dto.productId) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: dto.productId, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const product = await this.repo.assertProduct(companyId, dto.productId);
       if (!product) throw new NotFoundException("Product not found");
     }
     if (dto.getProductId) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: dto.getProductId, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const product = await this.repo.assertProduct(companyId, dto.getProductId);
       if (!product) throw new NotFoundException("Get-product not found");
     }
     if (dto.triggerProductIds && dto.triggerProductIds.length) {
       const ids = dedupeTriggerIds(dto.triggerProductIds);
-      const found = await this.prisma.product.findMany({
-        where: { id: { in: ids }, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const found = await this.repo.assertProducts(companyId, ids);
       if (found.length !== ids.length) {
         throw new NotFoundException(
           "Salah satu trigger product tidak ditemukan",
@@ -422,10 +336,7 @@ export class PromotionsService {
     }
     if (dto.getProductIds && dto.getProductIds.length) {
       const ids = dedupeTriggerIds(dto.getProductIds);
-      const found = await this.prisma.product.findMany({
-        where: { id: { in: ids }, companyId, deletedAt: null },
-        select: { id: true },
-      });
+      const found = await this.repo.assertProducts(companyId, ids);
       if (found.length !== ids.length) {
         throw new NotFoundException(
           "Salah satu produk tebus tidak ditemukan",

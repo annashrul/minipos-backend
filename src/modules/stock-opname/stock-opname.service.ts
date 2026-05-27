@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -20,56 +20,21 @@ import {
   dayRange,
   nextDocumentNumber,
 } from "@/common/utils/document-number";
-import { PrismaService } from "../prisma/prisma.service";
-import { RackStockHelperService } from "../racks/rack-stock-helper.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
 import { tenantWhere } from "@/common/utils/tenant";
-
-const OPNAME_ITEM_SELECT = {
-  id: true,
-  stockOpnameId: true,
-  productId: true,
-  product: { select: { id: true, code: true, name: true } },
-  systemStock: true,
-  actualStock: true,
-  difference: true,
-  notes: true,
-  createdAt: true,
-} satisfies Prisma.StockOpnameItemSelect;
-
-const OPNAME_SELECT = {
-  id: true,
-  opnameNumber: true,
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  companyId: true,
-  status: true,
-  notes: true,
-  startedAt: true,
-  completedAt: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { items: true } },
-} satisfies Prisma.StockOpnameSelect;
-
-const OPNAME_DETAIL_SELECT = {
-  ...OPNAME_SELECT,
-  items: { select: OPNAME_ITEM_SELECT, orderBy: { createdAt: "asc" } },
-} satisfies Prisma.StockOpnameSelect;
-
-type RawOpname = Prisma.StockOpnameGetPayload<{
-  select: typeof OPNAME_SELECT;
-}>;
-type RawOpnameDetail = Prisma.StockOpnameGetPayload<{
-  select: typeof OPNAME_DETAIL_SELECT;
-}>;
-type RawOpnameItem = Prisma.StockOpnameItemGetPayload<{
-  select: typeof OPNAME_ITEM_SELECT;
-}>;
+import {
+  OPNAME_DETAIL_SELECT,
+  StockOpnameRepository,
+  type RawOpname,
+  type RawOpnameDetail,
+  type RawOpnameItem,
+} from "./stock-opname.repository";
 
 @Injectable()
 export class StockOpnameService {
   constructor(
+    private readonly repo: StockOpnameRepository,
     private readonly prisma: PrismaService,
     private readonly rackStockHelper: RackStockHelperService,
     private readonly assert: AssertService,
@@ -83,14 +48,8 @@ export class StockOpnameService {
     const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
-      this.prisma.stockOpname.findMany({
-        where,
-        select: OPNAME_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.stockOpname.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toOpnameResponse), total, page, perPage);
@@ -100,9 +59,9 @@ export class StockOpnameService {
     companyId: string,
     id: string,
   ): Promise<StockOpnameDetailResponse> {
-    const row = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: OPNAME_DETAIL_SELECT,
+    const row = await this.repo.findOne({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!row) throw new NotFoundException("Stock opname tidak ditemukan");
     return toOpnameDetailResponse(row);
@@ -119,16 +78,13 @@ export class StockOpnameService {
     const opnameNumber = await this.nextOpnameNumber(companyId);
 
     try {
-      const created = await this.prisma.stockOpname.create({
-        data: {
-          opnameNumber,
-          branchId: dto.branchId ?? null,
-          companyId,
-          status: "DRAFT",
-          notes: dto.notes ?? null,
-          createdBy: userId,
-        },
-        select: OPNAME_DETAIL_SELECT,
+      const created = await this.repo.create({
+        opnameNumber,
+        branchId: dto.branchId ?? null,
+        companyId,
+        status: "DRAFT",
+        notes: dto.notes ?? null,
+        createdBy: userId,
       });
       return toOpnameDetailResponse(created);
     } catch (err) {
@@ -144,9 +100,9 @@ export class StockOpnameService {
     id: string,
     dto: SetOpnameItemsDto,
   ): Promise<StockOpnameDetailResponse> {
-    const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true, status: true, branchId: true },
+    const opname = await this.repo.findStatusWithBranch({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
     if (opname.status !== "DRAFT" && opname.status !== "IN_PROGRESS") {
@@ -156,10 +112,7 @@ export class StockOpnameService {
     }
 
     const productIds = Array.from(new Set(dto.items.map((it) => it.productId)));
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId, deletedAt: null },
-      select: { id: true, stock: true },
-    });
+    const products = await this.repo.findProducts(productIds, companyId);
     if (products.length !== productIds.length) {
       throw new BadRequestException(
         "Beberapa produk tidak ditemukan atau bukan milik tenant ini",
@@ -169,13 +122,10 @@ export class StockOpnameService {
 
     let branchStockMap = new Map<string, number>();
     if (opname.branchId) {
-      const branchStocks = await this.prisma.branchStock.findMany({
-        where: {
-          branchId: opname.branchId,
-          productId: { in: productIds },
-        },
-        select: { productId: true, quantity: true },
-      });
+      const branchStocks = await this.repo.findBranchStocks(
+        opname.branchId,
+        productIds,
+      );
       branchStockMap = new Map(
         branchStocks.map((s) => [s.productId, s.quantity]),
       );
@@ -213,9 +163,9 @@ export class StockOpnameService {
     companyId: string,
     id: string,
   ): Promise<StockOpnameDetailResponse> {
-    const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true, status: true },
+    const opname = await this.repo.findStatus({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
     if (opname.status !== "DRAFT") {
@@ -224,15 +174,12 @@ export class StockOpnameService {
       );
     }
 
-    await this.prisma.stockOpname.update({
-      where: { id },
-      data: { status: "IN_PROGRESS", startedAt: new Date() },
+    await this.repo.update(id, {
+      status: "IN_PROGRESS",
+      startedAt: new Date(),
     });
 
-    const refreshed = await this.prisma.stockOpname.findUniqueOrThrow({
-      where: { id },
-      select: OPNAME_DETAIL_SELECT,
-    });
+    const refreshed = await this.repo.findDetail(id);
     return toOpnameDetailResponse(refreshed);
   }
 
@@ -241,23 +188,9 @@ export class StockOpnameService {
     userId: string,
     id: string,
   ): Promise<StockOpnameDetailResponse> {
-    const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: {
-        id: true,
-        opnameNumber: true,
-        status: true,
-        branchId: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            systemStock: true,
-            actualStock: true,
-            difference: true,
-          },
-        },
-      },
+    const opname = await this.repo.findForComplete({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
     if (opname.status !== "IN_PROGRESS") {
@@ -294,11 +227,6 @@ export class StockOpnameService {
           });
           balanceAfter = upserted.quantity;
 
-          // Phase 2B: sync RackStock juga. Opname menetapkan stok fisik ke
-          // angka final — kalau produk punya RackStock di rak default, set
-          // qty rak ke selisih (atau sum across racks dipertahankan).
-          // Strategi sederhana: terapkan difference ke rak default kalau ada,
-          // fallback ke FIFO deduct / add default.
           if (item.difference > 0) {
             await this.rackStockHelper.addToRack(tx, {
               branchId: opname.branchId,
@@ -331,8 +259,6 @@ export class StockOpnameService {
           balanceAfter = updatedP.stock;
         }
 
-        // difference = actual - system. Positif = stok bertambah (IN),
-        // negatif = stok berkurang (OUT).
         const direction: "IN" | "OUT" = item.difference > 0 ? "IN" : "OUT";
 
         await tx.stockMovement.create({
@@ -372,9 +298,9 @@ export class StockOpnameService {
     companyId: string,
     id: string,
   ): Promise<StockOpnameDetailResponse> {
-    const opname = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true, status: true },
+    const opname = await this.repo.findStatus({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!opname) throw new NotFoundException("Stock opname tidak ditemukan");
     if (opname.status !== "DRAFT" && opname.status !== "IN_PROGRESS") {
@@ -383,22 +309,16 @@ export class StockOpnameService {
       );
     }
 
-    await this.prisma.stockOpname.update({
-      where: { id },
-      data: { status: "CANCELLED" },
-    });
+    await this.repo.update(id, { status: "CANCELLED" });
 
-    const refreshed = await this.prisma.stockOpname.findUniqueOrThrow({
-      where: { id },
-      select: OPNAME_DETAIL_SELECT,
-    });
+    const refreshed = await this.repo.findDetail(id);
     return toOpnameDetailResponse(refreshed);
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.stockOpname.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true, status: true },
+    const existing = await this.repo.findStatus({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Stock opname tidak ditemukan");
     if (existing.status !== "DRAFT") {
@@ -406,7 +326,7 @@ export class StockOpnameService {
         "Hanya opname dengan status DRAFT yang bisa dihapus",
       );
     }
-    await this.prisma.stockOpname.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -429,22 +349,12 @@ export class StockOpnameService {
     return where;
   }
 
-  // OP-YYYYMMDD-NNNN — sequence per company per hari (shared utility).
   private async nextOpnameNumber(companyId: string): Promise<string> {
     const { start, end } = dayRange();
     return nextDocumentNumber({
       prefix: "OP",
-      countToday: () =>
-        this.prisma.stockOpname.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.stockOpname.findFirst({
-          where: { companyId, opnameNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
+      countToday: () => this.repo.countForNumber(companyId, start, end),
+      exists: (candidate) => this.repo.existsByNumber(companyId, candidate),
     });
   }
 }

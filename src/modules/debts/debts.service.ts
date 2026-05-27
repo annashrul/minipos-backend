@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -16,74 +16,22 @@ import type {
   ListDebtsQueryDto,
   PayDebtDto,
 } from "./dto/debts.dto";
-import type { PaginatedResponse } from "../../common/types/response";
-import { paginate } from "../../common/utils/pagination";
+import type { PaginatedResponse } from "@/common/types/response";
+import { paginate } from "@/common/utils/pagination";
 import { tenantWhere } from "@/common/utils/tenant";
-import { PrismaService } from "../prisma/prisma.service";
-
-const DEBT_SELECT = {
-  id: true,
-  type: true,
-  referenceType: true,
-  referenceId: true,
-  partyType: true,
-  partyId: true,
-  partyName: true,
-  description: true,
-  totalAmount: true,
-  paidAmount: true,
-  remainingAmount: true,
-  status: true,
-  dueDate: true,
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  downPayment: true,
-  installmentCount: true,
-  installmentInterval: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.DebtSelect;
-
-const DEBT_DETAIL_SELECT = {
-  ...DEBT_SELECT,
-  payments: {
-    select: {
-      id: true,
-      debtId: true,
-      amount: true,
-      method: true,
-      notes: true,
-      paidBy: true,
-      paidAt: true,
-    },
-    orderBy: { paidAt: "desc" },
-  },
-  installments: {
-    select: {
-      id: true,
-      debtId: true,
-      installmentNo: true,
-      amount: true,
-      dueDate: true,
-      paidAmount: true,
-      paidAt: true,
-      status: true,
-      notes: true,
-    },
-    orderBy: { installmentNo: "asc" },
-  },
-} satisfies Prisma.DebtSelect;
-
-type RawDebt = Prisma.DebtGetPayload<{ select: typeof DEBT_SELECT }>;
-type RawDebtDetail = Prisma.DebtGetPayload<{
-  select: typeof DEBT_DETAIL_SELECT;
-}>;
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  DebtsRepository,
+  type RawDebt,
+  type RawDebtDetail,
+  DEBT_DETAIL_SELECT,
+} from "./debts.repository";
 
 @Injectable()
 export class DebtsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: DebtsRepository,
     private readonly assert: AssertService,
   ) {}
 
@@ -92,26 +40,20 @@ export class DebtsService {
     query: ListDebtsQueryDto,
   ): Promise<PaginatedResponse<DebtResponse>> {
     const { page, perPage } = query;
-    const where = await this.buildListWhere(companyId, query);
+    const where = this.buildListWhere(companyId, query);
 
     const [rows, total] = await Promise.all([
-      this.prisma.debt.findMany({
-        where,
-        select: DEBT_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.debt.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toDebtResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<DebtDetailResponse> {
-    const debt = await this.prisma.debt.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: DEBT_DETAIL_SELECT,
+    const debt = await this.repo.findDetail({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!debt) throw new NotFoundException("Debt not found");
     return toDebtDetailResponse(debt);
@@ -190,14 +132,9 @@ export class DebtsService {
     id: string,
     dto: PayDebtDto,
   ): Promise<DebtDetailResponse> {
-    const debt = await this.prisma.debt.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: {
-        id: true,
-        totalAmount: true,
-        paidAmount: true,
-        status: true,
-      },
+    const debt = await this.repo.findForPayValidation({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!debt) throw new NotFoundException("Debt not found");
     if (debt.status === "PAID") {
@@ -247,9 +184,9 @@ export class DebtsService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.debt.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "branch") },
-      select: { id: true, paidAmount: true },
+    const existing = await this.repo.findForDelete({
+      id,
+      ...tenantWhere(companyId, "direct", "branch"),
     });
     if (!existing) throw new NotFoundException("Debt not found");
     if (existing.paidAmount > 0) {
@@ -257,7 +194,7 @@ export class DebtsService {
         "Hutang yang sudah memiliki pembayaran tidak bisa dihapus",
       );
     }
-    await this.prisma.debt.delete({ where: { id } });
+    await this.repo.delete(id);
     return { success: true };
   }
 
@@ -265,7 +202,7 @@ export class DebtsService {
     companyId: string,
     query: ListDebtsQueryDto,
   ): Promise<DebtSummaryResponse> {
-    const where = await this.buildListWhere(companyId, {
+    const where = this.buildListWhere(companyId, {
       ...query,
       page: 1,
       perPage: 1,
@@ -273,29 +210,13 @@ export class DebtsService {
 
     const now = new Date();
     const [payable, receivable, overdueAgg, totalCount, unpaidCount, partialCount, paidCount] = await Promise.all([
-      this.prisma.debt.aggregate({
-        where: { ...where, type: "PAYABLE" },
-        _sum: { totalAmount: true, remainingAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.debt.aggregate({
-        where: { ...where, type: "RECEIVABLE" },
-        _sum: { totalAmount: true, remainingAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.debt.aggregate({
-        where: {
-          ...where,
-          status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
-          dueDate: { lt: now },
-        },
-        _sum: { remainingAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.debt.count({ where }),
-      this.prisma.debt.count({ where: { ...where, status: "UNPAID" } }),
-      this.prisma.debt.count({ where: { ...where, status: "PARTIAL" } }),
-      this.prisma.debt.count({ where: { ...where, status: "PAID" } }),
+      this.repo.aggregateByType(where, "PAYABLE"),
+      this.repo.aggregateByType(where, "RECEIVABLE"),
+      this.repo.aggregateOverdue(where, now),
+      this.repo.count(where),
+      this.repo.countByStatus(where, "UNPAID"),
+      this.repo.countByStatus(where, "PARTIAL"),
+      this.repo.countByStatus(where, "PAID"),
     ]);
 
     return {
@@ -401,10 +322,10 @@ export class DebtsService {
     return debt.id;
   }
 
-  private async buildListWhere(
+  private buildListWhere(
     companyId: string,
     query: ListDebtsQueryDto,
-  ): Promise<Prisma.DebtWhereInput> {
+  ): Prisma.DebtWhereInput {
     const { type, status, partyType, partyId, branchId, overdue, from, to } =
       query;
     const where: Prisma.DebtWhereInput = tenantWhere(companyId, "direct", "branch");

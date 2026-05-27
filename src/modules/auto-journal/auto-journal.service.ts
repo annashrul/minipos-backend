@@ -10,7 +10,8 @@ import type {
   AutoJournalResponse,
   CreateAutoJournalDto,
 } from "./dto/auto-journal.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { AutoJournalRepository } from "./auto-journal.repository";
 
 type LineInput = {
   accountId: string;
@@ -24,7 +25,10 @@ type LineInput = {
 
 @Injectable()
 export class AutoJournalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repo: AutoJournalRepository,
+  ) {}
 
   async create(
     companyId: string,
@@ -101,47 +105,36 @@ export class AutoJournalService {
     }
 
     const today = new Date();
-    const currentPeriod = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        companyId,
-        startDate: { lte: today },
-        endDate: { gte: today },
-        status: "OPEN",
-      },
-      select: { id: true },
-    });
+    const currentPeriod = await this.repo.findOpenPeriod(companyId, today);
 
     const entry = await this.runWithEntryNumber(today, async (entryNumber) =>
-      this.prisma.journalEntry.create({
-        data: {
-          entryNumber,
-          date: today,
-          description,
-          reference,
-          referenceType,
-          referenceId,
-          branchId,
-          periodId: currentPeriod?.id ?? null,
-          status: "POSTED",
-          totalDebit,
-          totalCredit,
-          createdBy: userId,
-          lines: {
-            createMany: {
-              data: lines.map((line, idx) => ({
-                accountId: line.accountId,
-                description: line.description,
-                debit: line.debit,
-                credit: line.credit,
-                taxType: line.taxType ?? null,
-                taxAmount: line.taxAmount ?? null,
-                taxBaseAmount: line.taxBaseAmount ?? null,
-                sortOrder: idx,
-              })),
-            },
+      this.repo.createJournalEntry({
+        entryNumber,
+        date: today,
+        description,
+        reference,
+        referenceType,
+        referenceId,
+        branchId,
+        periodId: currentPeriod?.id ?? null,
+        status: "POSTED",
+        totalDebit,
+        totalCredit,
+        createdBy: userId,
+        lines: {
+          createMany: {
+            data: lines.map((line, idx) => ({
+              accountId: line.accountId,
+              description: line.description,
+              debit: line.debit,
+              credit: line.credit,
+              taxType: line.taxType ?? null,
+              taxAmount: line.taxAmount ?? null,
+              taxBaseAmount: line.taxBaseAmount ?? null,
+              sortOrder: idx,
+            })),
           },
         },
-        select: { id: true, entryNumber: true },
       }),
     );
 
@@ -162,15 +155,7 @@ export class AutoJournalService {
   ) {
     const taxAccountCodes = ["2-1100"];
     const [txn, accs] = await Promise.all([
-      this.prisma.transaction.findUnique({
-        where: { id: referenceId },
-        include: {
-          items: {
-            include: { product: { select: { purchasePrice: true } } },
-          },
-          payments: true,
-        },
-      }),
+      this.repo.findTransaction(referenceId),
       this.getSystemAccounts(
         ["1-1001", "1-1002", "1-1003", "1-1004", "4-1001", "5-1001", ...taxAccountCodes],
         companyId,
@@ -211,7 +196,7 @@ export class AutoJournalService {
               : bankAccount;
         lines.push({
           accountId: target.id,
-          description: `Penerimaan ${payment.method} â€” ${invoiceRef}`,
+          description: `Penerimaan ${payment.method} — ${invoiceRef}`,
           debit: netAmount,
           credit: 0,
         });
@@ -225,7 +210,7 @@ export class AutoJournalService {
             : bankAccount;
       lines.push({
         accountId: target.id,
-        description: `Penerimaan ${txn.paymentMethod} â€” ${invoiceRef}`,
+        description: `Penerimaan ${txn.paymentMethod} — ${invoiceRef}`,
         debit: txn.grandTotal,
         credit: 0,
       });
@@ -235,7 +220,7 @@ export class AutoJournalService {
     const dpp = txn.grandTotal - taxAmount;
     lines.push({
       accountId: revenueAccount.id,
-      description: `Pendapatan penjualan â€” ${invoiceRef}`,
+      description: `Pendapatan penjualan — ${invoiceRef}`,
       debit: 0,
       credit: dpp,
     });
@@ -243,7 +228,7 @@ export class AutoJournalService {
     if (taxAmount > 0 && ppnKeluaranAccount) {
       lines.push({
         accountId: ppnKeluaranAccount.id,
-        description: `PPN Keluaran â€” ${invoiceRef}`,
+        description: `PPN Keluaran — ${invoiceRef}`,
         debit: 0,
         credit: taxAmount,
         taxType: "PPN_KELUARAN",
@@ -256,18 +241,19 @@ export class AutoJournalService {
     for (const item of txn.items) {
       const costPrice = item.product?.purchasePrice || 0;
       const baseQty = item.baseQty || item.quantity * item.conversionQty;
-      totalCogs += costPrice * baseQty;
+      const cogs = typeof costPrice === "number" ? costPrice : 0;
+      totalCogs += cogs * baseQty;
     }
     if (totalCogs > 0) {
       lines.push({
         accountId: cogsAccount.id,
-        description: `HPP â€” ${invoiceRef}`,
+        description: `HPP — ${invoiceRef}`,
         debit: totalCogs,
         credit: 0,
       });
       lines.push({
         accountId: inventoryAccount.id,
-        description: `Pengurangan persediaan â€” ${invoiceRef}`,
+        description: `Pengurangan persediaan — ${invoiceRef}`,
         debit: 0,
         credit: totalCogs,
       });
@@ -282,10 +268,7 @@ export class AutoJournalService {
     push: (desc: string, ref: string, lines: LineInput[]) => void,
   ) {
     const [po, accs] = await Promise.all([
-      this.prisma.purchaseOrder.findUnique({
-        where: { id: referenceId },
-        include: { supplier: { select: { name: true } } },
-      }),
+      this.repo.findPurchaseOrder(referenceId),
       this.getSystemAccounts(
         ["1-1001", "1-1004", "1-1100", "2-1001"],
         companyId,
@@ -305,14 +288,14 @@ export class AutoJournalService {
     const lines: LineInput[] = [];
     lines.push({
       accountId: inventoryAccount.id,
-      description: `Persediaan masuk â€” ${po.orderNumber}`,
+      description: `Persediaan masuk — ${po.orderNumber}`,
       debit: dpp,
       credit: 0,
     });
     if (ppnAmount > 0 && ppnMasukanAccount) {
       lines.push({
         accountId: ppnMasukanAccount.id,
-        description: `PPN Masukan â€” ${po.orderNumber}`,
+        description: `PPN Masukan — ${po.orderNumber}`,
         debit: ppnAmount,
         credit: 0,
         taxType: "PPN_MASUKAN",
@@ -324,7 +307,7 @@ export class AutoJournalService {
     if (po.paidAmount > 0) {
       lines.push({
         accountId: cashAccount.id,
-        description: `Pembayaran tunai â€” ${po.orderNumber}`,
+        description: `Pembayaran tunai — ${po.orderNumber}`,
         debit: 0,
         credit: po.paidAmount,
       });
@@ -332,14 +315,14 @@ export class AutoJournalService {
     if (unpaid > 0) {
       lines.push({
         accountId: payableAccount.id,
-        description: `Hutang dagang â€” ${po.orderNumber}`,
+        description: `Hutang dagang — ${po.orderNumber}`,
         debit: 0,
         credit: unpaid,
       });
     }
 
     push(
-      `Pembelian ${po.orderNumber} â€” ${po.supplier.name}`,
+      `Pembelian ${po.orderNumber} — ${po.supplier.name}`,
       po.orderNumber,
       lines,
     );
@@ -351,14 +334,7 @@ export class AutoJournalService {
     push: (desc: string, ref: string, lines: LineInput[]) => void,
   ) {
     const [ret, accs] = await Promise.all([
-      this.prisma.returnExchange.findUnique({
-        where: { id: referenceId },
-        include: {
-          items: {
-            include: { product: { select: { purchasePrice: true } } },
-          },
-        },
-      }),
+      this.repo.findReturnExchange(referenceId),
       this.getSystemAccounts(
         ["1-1001", "1-1002", "1-1004", "4-1002", "5-1001"],
         companyId,
@@ -376,7 +352,7 @@ export class AutoJournalService {
     if (ret.totalRefund > 0) {
       lines.push({
         accountId: returnRevenueAccount.id,
-        description: `Retur penjualan â€” ${ret.returnNumber}`,
+        description: `Retur penjualan — ${ret.returnNumber}`,
         debit: ret.totalRefund,
         credit: 0,
       });
@@ -386,7 +362,7 @@ export class AutoJournalService {
           : bankAccount;
       lines.push({
         accountId: refundAccount.id,
-        description: `Pengembalian dana â€” ${ret.returnNumber}`,
+        description: `Pengembalian dana — ${ret.returnNumber}`,
         debit: 0,
         credit: ret.totalRefund,
       });
@@ -398,13 +374,13 @@ export class AutoJournalService {
     if (returnCogs > 0) {
       lines.push({
         accountId: inventoryAccount.id,
-        description: `Persediaan kembali â€” ${ret.returnNumber}`,
+        description: `Persediaan kembali — ${ret.returnNumber}`,
         debit: returnCogs,
         credit: 0,
       });
       lines.push({
         accountId: cogsAccount.id,
-        description: `Reversal HPP â€” ${ret.returnNumber}`,
+        description: `Reversal HPP — ${ret.returnNumber}`,
         debit: 0,
         credit: returnCogs,
       });
@@ -419,19 +395,7 @@ export class AutoJournalService {
     push: (desc: string, ref: string, lines: LineInput[]) => void,
   ) {
     const [payment, accs] = await Promise.all([
-      this.prisma.debtPayment.findUnique({
-        where: { id: referenceId },
-        include: {
-          debt: {
-            select: {
-              id: true,
-              type: true,
-              partyName: true,
-              description: true,
-            },
-          },
-        },
-      }),
+      this.repo.findDebtPayment(referenceId),
       this.getSystemAccounts(["1-1001", "1-1003", "2-1001"], companyId),
     ]);
     if (!payment) {
@@ -449,32 +413,32 @@ export class AutoJournalService {
     let reference: string;
 
     if (payment.debt.type === "PAYABLE") {
-      description = `Pembayaran hutang â€” ${payment.debt.partyName}`;
+      description = `Pembayaran hutang — ${payment.debt.partyName}`;
       reference = payment.debt.description || `Debt-${payment.debtId}`;
       lines.push({
         accountId: payableAccount.id,
-        description: `Pelunasan hutang â€” ${payment.debt.partyName}`,
+        description: `Pelunasan hutang — ${payment.debt.partyName}`,
         debit: payment.amount,
         credit: 0,
       });
       lines.push({
         accountId: cashAccount.id,
-        description: `Pembayaran kas â€” ${payment.debt.partyName}`,
+        description: `Pembayaran kas — ${payment.debt.partyName}`,
         debit: 0,
         credit: payment.amount,
       });
     } else {
-      description = `Penerimaan piutang â€” ${payment.debt.partyName}`;
+      description = `Penerimaan piutang — ${payment.debt.partyName}`;
       reference = payment.debt.description || `Debt-${payment.debtId}`;
       lines.push({
         accountId: cashAccount.id,
-        description: `Penerimaan kas â€” ${payment.debt.partyName}`,
+        description: `Penerimaan kas — ${payment.debt.partyName}`,
         debit: payment.amount,
         credit: 0,
       });
       lines.push({
         accountId: receivableAccount.id,
-        description: `Pelunasan piutang â€” ${payment.debt.partyName}`,
+        description: `Pelunasan piutang — ${payment.debt.partyName}`,
         debit: 0,
         credit: payment.amount,
       });
@@ -488,9 +452,7 @@ export class AutoJournalService {
     companyId: string,
     push: (desc: string, ref: string, lines: LineInput[]) => void,
   ) {
-    const expense = await this.prisma.expense.findUnique({
-      where: { id: referenceId },
-    });
+    const expense = await this.repo.findExpense(referenceId);
     if (!expense) throw new NotFoundException("Pengeluaran tidak ditemukan");
 
     const categoryLower = expense.category.toLowerCase();
@@ -514,7 +476,7 @@ export class AutoJournalService {
       },
       {
         accountId: cashAccount.id,
-        description: `Pengeluaran kas â€” ${expense.description}`,
+        description: `Pengeluaran kas — ${expense.description}`,
         debit: 0,
         credit: expense.amount,
       },
@@ -533,10 +495,7 @@ export class AutoJournalService {
     codes: string[],
     companyId: string,
   ): Promise<Map<string, { id: string }>> {
-    const accs = await this.prisma.account.findMany({
-      where: { code: { in: codes }, category: { companyId } },
-      select: { id: true, code: true },
-    });
+    const accs = await this.repo.findSystemAccounts(codes, companyId);
     const map = new Map<string, { id: string }>();
     for (const a of accs) map.set(a.code, { id: a.id });
     const missing = codes.filter((c) => !map.has(c));
