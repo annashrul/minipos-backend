@@ -84,7 +84,7 @@ export class ModifiersService {
     id: string,
   ): Promise<ModifierGroupResponse> {
     const group = await this.repo.findOne({ id, companyId });
-    if (!group) throw new NotFoundException("Modifier group not found");
+    if (!group) throw new NotFoundException("Grup modifier tidak ditemukan");
     return toGroupResponse(group);
   }
 
@@ -93,7 +93,7 @@ export class ModifiersService {
     dto: CreateModifierGroupDto,
   ): Promise<ModifierGroupResponse> {
     if ((dto.maxSelect ?? 1) < (dto.minSelect ?? 0)) {
-      throw new BadRequestException("maxSelect must be ≥ minSelect");
+      throw new BadRequestException("maxSelect harus ≥ minSelect");
     }
     const created = await this.repo.create({
       companyId,
@@ -142,14 +142,14 @@ export class ModifiersService {
     dto: UpdateModifierGroupDto,
   ): Promise<ModifierGroupResponse> {
     const existing = await this.repo.findExists({ id, companyId });
-    if (!existing) throw new NotFoundException("Modifier group not found");
+    if (!existing) throw new NotFoundException("Grup modifier tidak ditemukan");
 
     if (
       dto.maxSelect !== undefined &&
       dto.minSelect !== undefined &&
       dto.maxSelect < dto.minSelect
     ) {
-      throw new BadRequestException("maxSelect must be ≥ minSelect");
+      throw new BadRequestException("maxSelect harus ≥ minSelect");
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -231,7 +231,7 @@ export class ModifiersService {
 
   async remove(companyId: string, id: string) {
     const group = await this.repo.findExists({ id, companyId });
-    if (!group) throw new NotFoundException("Modifier group not found");
+    if (!group) throw new NotFoundException("Grup modifier tidak ditemukan");
     await this.repo.delete(id);
     return { success: true as const };
   }
@@ -266,14 +266,14 @@ export class ModifiersService {
       companyId,
       dto.productId,
     );
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     const groups = await this.repo.findModifierGroupsByIds(
       companyId,
       dto.modifierGroupIds,
     );
     if (groups.length !== dto.modifierGroupIds.length) {
-      throw new BadRequestException("One or more modifier groups invalid");
+      throw new BadRequestException("Satu atau lebih grup modifier tidak valid");
     }
 
     await this.prisma.$transaction(async (tx) => {

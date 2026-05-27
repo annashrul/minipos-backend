@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -156,7 +155,7 @@ export class SalesTargetsService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!target) throw new NotFoundException("Sales target not found");
+    if (!target) throw new NotFoundException("Target penjualan tidak ditemukan");
     return this.toSalesTargetResponse(target);
   }
 
@@ -213,7 +212,7 @@ export class SalesTargetsService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Sales target not found");
+    if (!existing) throw new NotFoundException("Target penjualan tidak ditemukan");
 
     await this.assertReferences(companyId, dto);
 
@@ -256,7 +255,7 @@ export class SalesTargetsService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Sales target not found");
+    if (!existing) throw new NotFoundException("Target penjualan tidak ditemukan");
 
     const { start, end } = this.getPeriodRange(existing.type, existing.period);
     const achieved = await this.computeAchievement(
@@ -291,7 +290,7 @@ export class SalesTargetsService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Sales target not found");
+    if (!existing) throw new NotFoundException("Target penjualan tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }

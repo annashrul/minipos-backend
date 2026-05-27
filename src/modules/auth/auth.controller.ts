@@ -73,7 +73,7 @@ export class AuthController {
     @Body(new ZodValidationPipe(devTokenSchema)) body: z.infer<typeof devTokenSchema>,
   ) {
     if (process.env.NODE_ENV === "production") {
-      throw new ForbiddenException("dev-token is disabled in production");
+      throw new ForbiddenException("dev-token dinonaktifkan di production");
     }
     const token = this.auth.signToken({
       id: body.userId,

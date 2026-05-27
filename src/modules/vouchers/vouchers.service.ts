@@ -49,7 +49,7 @@ export class VouchersService {
 
   async findById(companyId: string, id: string): Promise<VoucherResponse> {
     const voucher = await this.repo.findOne({ id, promotion: { companyId } });
-    if (!voucher) throw new NotFoundException("Voucher not found");
+    if (!voucher) throw new NotFoundException("Voucher tidak ditemukan");
     return toVoucherResponse(voucher);
   }
 
@@ -69,7 +69,7 @@ export class VouchersService {
     dto: GenerateVouchersDto,
   ): Promise<VoucherGenerateResponse> {
     const promotion = await this.repo.findPromotion(companyId, dto.promotionId);
-    if (!promotion) throw new NotFoundException("Promotion not found");
+    if (!promotion) throw new NotFoundException("Promosi tidak ditemukan");
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
     const codes = new Set<string>();
@@ -112,7 +112,7 @@ export class VouchersService {
       id,
       promotion: { companyId },
     });
-    if (!voucher) throw new NotFoundException("Voucher not found");
+    if (!voucher) throw new NotFoundException("Voucher tidak ditemukan");
     if (voucher.isUsed) {
       throw new BadRequestException("Voucher sudah digunakan");
     }
@@ -133,7 +133,7 @@ export class VouchersService {
       id,
       promotion: { companyId },
     });
-    if (!voucher) throw new NotFoundException("Voucher not found");
+    if (!voucher) throw new NotFoundException("Voucher tidak ditemukan");
     if (voucher.isUsed) {
       throw new BadRequestException(
         "Voucher yang sudah digunakan tidak bisa dihapus",

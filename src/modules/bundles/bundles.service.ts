@@ -81,7 +81,7 @@ export class BundlesService {
 
   async findById(companyId: string, id: string): Promise<BundleResponse> {
     const bundle = await this.repo.findOne({ id, companyId });
-    if (!bundle) throw new NotFoundException("Bundle not found");
+    if (!bundle) throw new NotFoundException("Bundle tidak ditemukan");
     return toBundleResponse(bundle);
   }
 
@@ -133,7 +133,7 @@ export class BundlesService {
     dto: UpdateBundleDto,
   ): Promise<BundleResponse> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Bundle not found");
+    if (!existing) throw new NotFoundException("Bundle tidak ditemukan");
 
     await this.assertReferences(
       companyId,
@@ -190,7 +190,7 @@ export class BundlesService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Bundle not found");
+    if (!existing) throw new NotFoundException("Bundle tidak ditemukan");
     await this.repo.delete(id);
     this.realtime.emit(EVENTS.BUNDLE_UPDATED, { bundleId: id });
     return { success: true };
@@ -213,11 +213,11 @@ export class BundlesService {
   ) {
     if (branchId) {
       const branch = await this.repo.findBranch(companyId, branchId);
-      if (!branch) throw new NotFoundException("Branch not found");
+      if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
     }
     if (categoryId) {
       const category = await this.repo.findCategory(companyId, categoryId);
-      if (!category) throw new NotFoundException("Category not found");
+      if (!category) throw new NotFoundException("Kategori tidak ditemukan");
     }
     if (items && items.length > 0) {
       const productIds = items.map((i) => i.productId);

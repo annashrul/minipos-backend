@@ -129,7 +129,7 @@ export class ReturnsService {
       id,
       ...tenantWhere(companyId, "transaction.user"),
     });
-    if (!ret) throw new NotFoundException("Return not found");
+    if (!ret) throw new NotFoundException("Retur tidak ditemukan");
     return toReturnDetailResponse(ret);
   }
 
@@ -308,7 +308,7 @@ export class ReturnsService {
       id,
       ...tenantWhere(companyId, "transaction.user"),
     });
-    if (!existing) throw new NotFoundException("Return not found");
+    if (!existing) throw new NotFoundException("Retur tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
         "Hanya retur dengan status PENDING yang dapat disetujui",
@@ -422,7 +422,7 @@ export class ReturnsService {
       id,
       ...tenantWhere(companyId, "transaction.user"),
     });
-    if (!existing) throw new NotFoundException("Return not found");
+    if (!existing) throw new NotFoundException("Retur tidak ditemukan");
     if (existing.status === "COMPLETED" || existing.status === "REJECTED") {
       throw new BadRequestException(
         "Retur dengan status ini tidak dapat ditolak",
@@ -454,7 +454,7 @@ export class ReturnsService {
       id,
       ...tenantWhere(companyId, "transaction.user"),
     });
-    if (!existing) throw new NotFoundException("Return not found");
+    if (!existing) throw new NotFoundException("Retur tidak ditemukan");
     if (existing.status !== "APPROVED") {
       throw new BadRequestException(
         "Retur harus dalam status APPROVED untuk diselesaikan",
@@ -656,7 +656,7 @@ export class ReturnsService {
       id,
       ...tenantWhere(companyId, "transaction.user"),
     });
-    if (!existing) throw new NotFoundException("Return not found");
+    if (!existing) throw new NotFoundException("Retur tidak ditemukan");
     if (existing.status !== "PENDING") {
       throw new BadRequestException(
         "Hanya retur dengan status PENDING yang dapat dihapus",

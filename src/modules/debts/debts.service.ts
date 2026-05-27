@@ -55,7 +55,7 @@ export class DebtsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!debt) throw new NotFoundException("Debt not found");
+    if (!debt) throw new NotFoundException("Hutang tidak ditemukan");
     return toDebtDetailResponse(debt);
   }
 
@@ -136,7 +136,7 @@ export class DebtsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!debt) throw new NotFoundException("Debt not found");
+    if (!debt) throw new NotFoundException("Hutang tidak ditemukan");
     if (debt.status === "PAID") {
       throw new BadRequestException("Hutang sudah lunas");
     }
@@ -188,7 +188,7 @@ export class DebtsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!existing) throw new NotFoundException("Debt not found");
+    if (!existing) throw new NotFoundException("Hutang tidak ditemukan");
     if (existing.paidAmount > 0) {
       throw new BadRequestException(
         "Hutang yang sudah memiliki pembayaran tidak bisa dihapus",

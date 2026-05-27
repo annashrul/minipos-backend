@@ -160,7 +160,7 @@ export class SettingsService {
   ): Promise<{ success: true }> {
     if (branchId) await this.assert.branch(companyId, branchId);
     const existing = await this.repo.findFirstByKeyAndBranch(key, branchId);
-    if (!existing) throw new NotFoundException("Setting not found");
+    if (!existing) throw new NotFoundException("Pengaturan tidak ditemukan");
     const deleted = await this.repo.delete(existing.id);
     this.emitConfigEvent(
       detectSettingCategory(deleted.group, deleted.key),

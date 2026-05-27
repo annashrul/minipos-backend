@@ -1,5 +1,4 @@
 ﻿import {
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -82,7 +81,7 @@ export class TablesService {
 
   async findById(companyId: string, id: string): Promise<TableResponse> {
     const table = await this.repo.findOne({ id, branch: { companyId } });
-    if (!table) throw new NotFoundException("Table not found");
+    if (!table) throw new NotFoundException("Meja tidak ditemukan");
     return toTableResponse(table);
   }
 
@@ -177,7 +176,7 @@ export class TablesService {
 
   private async ensureOwned(companyId: string, id: string) {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Table not found");
+    if (!existing) throw new NotFoundException("Meja tidak ditemukan");
   }
 
   private async assertBranch(companyId: string, branchId: string) {

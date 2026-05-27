@@ -93,7 +93,7 @@ export class GiftCardsService {
       id,
       ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
-    if (!giftCard) throw new NotFoundException("Gift card not found");
+    if (!giftCard) throw new NotFoundException("Kartu hadiah tidak ditemukan");
     return toGiftCardDetailResponse(giftCard);
   }
 
@@ -145,7 +145,7 @@ export class GiftCardsService {
         where: { id, ...tenantWhere(companyId, "direct", "branch", "customer") },
         select: { id: true, currentBalance: true, status: true },
       });
-      if (!card) throw new NotFoundException("Gift card not found");
+      if (!card) throw new NotFoundException("Kartu hadiah tidak ditemukan");
       if (card.status !== "ACTIVE") {
         throw new BadRequestException(
           "Gift card tidak aktif, tidak bisa top-up",
@@ -194,7 +194,7 @@ export class GiftCardsService {
           expiresAt: true,
         },
       });
-      if (!card) throw new NotFoundException("Gift card not found");
+      if (!card) throw new NotFoundException("Kartu hadiah tidak ditemukan");
       if (card.status !== "ACTIVE") {
         throw new BadRequestException("Gift card tidak aktif");
       }
@@ -246,7 +246,7 @@ export class GiftCardsService {
       id,
       ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
-    if (!card) throw new NotFoundException("Gift card not found");
+    if (!card) throw new NotFoundException("Kartu hadiah tidak ditemukan");
 
     const data: Prisma.GiftCardUpdateInput = {};
     if (dto.isActive !== undefined) {
@@ -269,7 +269,7 @@ export class GiftCardsService {
       id,
       ...tenantWhere(companyId, "direct", "branch", "customer"),
     });
-    if (!card) throw new NotFoundException("Gift card not found");
+    if (!card) throw new NotFoundException("Kartu hadiah tidak ditemukan");
     if (card.currentBalance !== card.initialBalance) {
       throw new BadRequestException(
         "Gift card sudah pernah dipakai, tidak bisa dihapus",
@@ -322,12 +322,12 @@ export class GiftCardsService {
 
   private async assertCustomer(companyId: string, customerId: string) {
     const customer = await this.repo.findCustomer(companyId, customerId);
-    if (!customer) throw new NotFoundException("Customer not found");
+    if (!customer) throw new NotFoundException("Pelanggan tidak ditemukan");
   }
 
   private async assertBranch(companyId: string, branchId: string) {
     const branch = await this.repo.findBranch(companyId, branchId);
-    if (!branch) throw new NotFoundException("Branch not found");
+    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
 
   private async resolveCode(provided?: string): Promise<string> {

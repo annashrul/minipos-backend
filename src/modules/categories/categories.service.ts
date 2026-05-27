@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -101,7 +100,7 @@ export class CategoriesService {
 
   async findById(companyId: string, id: string): Promise<CategoryResponse> {
     const category = await this.repo.findOne({ id, companyId });
-    if (!category) throw new NotFoundException("Category not found");
+    if (!category) throw new NotFoundException("Kategori tidak ditemukan");
     return toCategoryResponse(category);
   }
 
@@ -133,7 +132,7 @@ export class CategoriesService {
     dto: UpdateCategoryDto,
   ): Promise<CategoryResponse> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Category not found");
+    if (!existing) throw new NotFoundException("Kategori tidak ditemukan");
 
     if (dto.parentId) {
       if (dto.parentId === id) {
@@ -169,7 +168,7 @@ export class CategoriesService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findWithCounts(companyId, id);
-    if (!existing) throw new NotFoundException("Category not found");
+    if (!existing) throw new NotFoundException("Kategori tidak ditemukan");
     if (existing._count.products > 0) {
       throw new BadRequestException(
         `Kategori masih dipakai ${existing._count.products} produk`,

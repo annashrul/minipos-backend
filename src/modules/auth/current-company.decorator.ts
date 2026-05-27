@@ -17,7 +17,7 @@ export const CurrentCompany = createParamDecorator(
     // frontend treat 401 sebagai token-expired → force logout. 403 di-catch
     // diam-diam oleh komponen yang error-tolerant.
     if (!user.companyId) {
-      throw new ForbiddenException("No company context");
+      throw new ForbiddenException("Tidak ada konteks perusahaan");
     }
     return user.companyId;
   },
@@ -45,7 +45,7 @@ export const WhatsappCompany = createParamDecorator(
     if (!user) throw new UnauthorizedException();
     if (user.role === "PLATFORM_OWNER") return PLATFORM_WA_SENDER_ID;
     if (!user.companyId) {
-      throw new ForbiddenException("No company context");
+      throw new ForbiddenException("Tidak ada konteks perusahaan");
     }
     return user.companyId;
   },

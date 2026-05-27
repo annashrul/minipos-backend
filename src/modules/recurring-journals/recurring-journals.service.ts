@@ -69,7 +69,7 @@ export class RecurringJournalsService {
     id: string,
   ): Promise<RecurringJournalDetailResponse> {
     const template = await this.repo.findOne({ id, companyId });
-    if (!template) throw new NotFoundException("Recurring journal not found");
+    if (!template) throw new NotFoundException("Jurnal berulang tidak ditemukan");
     return toTemplateDetailResponse(template);
   }
 
@@ -125,7 +125,7 @@ export class RecurringJournalsService {
     dto: UpdateRecurringJournalDto,
   ): Promise<RecurringJournalDetailResponse> {
     const existing = await this.repo.findExistence({ id, companyId });
-    if (!existing) throw new NotFoundException("Recurring journal not found");
+    if (!existing) throw new NotFoundException("Jurnal berulang tidak ditemukan");
 
     if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
     if (dto.lines) {
@@ -177,7 +177,7 @@ export class RecurringJournalsService {
     dto: RunRecurringJournalDto,
   ): Promise<RunRecurringJournalResponse> {
     const template = await this.repo.findForRun({ id, companyId });
-    if (!template) throw new NotFoundException("Recurring journal not found");
+    if (!template) throw new NotFoundException("Jurnal berulang tidak ditemukan");
     if (!template.isActive) {
       throw new BadRequestException("Template tidak aktif");
     }
@@ -266,7 +266,7 @@ export class RecurringJournalsService {
     dto: ToggleRecurringJournalDto,
   ): Promise<RecurringJournalDetailResponse> {
     const existing = await this.repo.findExistence({ id, companyId });
-    if (!existing) throw new NotFoundException("Recurring journal not found");
+    if (!existing) throw new NotFoundException("Jurnal berulang tidak ditemukan");
     await this.repo.update(id, { isActive: dto.isActive });
     return this.findById(companyId, id);
   }
@@ -276,7 +276,7 @@ export class RecurringJournalsService {
     id: string,
   ): Promise<{ success: true }> {
     const existing = await this.repo.findExistence({ id, companyId });
-    if (!existing) throw new NotFoundException("Recurring journal not found");
+    if (!existing) throw new NotFoundException("Jurnal berulang tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }

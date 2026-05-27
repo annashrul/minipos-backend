@@ -21,7 +21,7 @@ export class MarketplaceGrabController {
   @Get("accounts")
   @UseGuards(AccessGuard)
   async list(@CurrentUser() user: AuthUser) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     const accounts = await this.service.listAccounts(user.companyId);
     return { data: { accounts } };
   }
@@ -33,7 +33,7 @@ export class MarketplaceGrabController {
     @Body()
     body: { cookie: string; userAgent?: string; branchId?: string | null },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     const account = await this.service.saveAccount({
       companyId: user.companyId,
       branchId: body.branchId,
@@ -49,7 +49,7 @@ export class MarketplaceGrabController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     await this.service.deleteAccount(user.companyId, id);
     return { data: { ok: true } };
   }
@@ -73,7 +73,7 @@ export class MarketplaceGrabController {
     @Query("dateTo") dateTo?: string,
     @Query("limit") limit?: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     const reports = await this.service.listDailyReports(user.companyId, {
       accountId,
       dateFrom,
@@ -94,7 +94,7 @@ export class MarketplaceGrabController {
     @Query("limit") limit?: string,
     @Query("cursor") cursor?: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     const orders = await this.service.listOrders(user.companyId, {
       accountId,
       dateFrom,

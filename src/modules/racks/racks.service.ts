@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -107,7 +106,7 @@ export class RacksService {
     id: string,
   ): Promise<RackDetailResponse> {
     const rack = await this.repo.findOne({ id, companyId });
-    if (!rack) throw new NotFoundException("Rack not found");
+    if (!rack) throw new NotFoundException("Rak tidak ditemukan");
 
     // Phase 2A: union dari RackStock (qty actual di rak ini) DAN produk
     // dengan defaultRackId=id (placeholder qty=0 untuk visibility kalau
@@ -184,7 +183,7 @@ export class RacksService {
     dto: UpdateRackDto,
   ): Promise<RackResponse> {
     const existing = await this.repo.findExistence({ id, companyId });
-    if (!existing) throw new NotFoundException("Rack not found");
+    if (!existing) throw new NotFoundException("Rak tidak ditemukan");
 
     const data: Prisma.RackUpdateInput = {};
     if (dto.code !== undefined) data.code = dto.code;
@@ -204,7 +203,7 @@ export class RacksService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findWithStockCount(companyId, id);
-    if (!existing) throw new NotFoundException("Rack not found");
+    if (!existing) throw new NotFoundException("Rak tidak ditemukan");
     if (existing._count.rackStocks > 0) {
       throw new BadRequestException(
         `Rak masih punya ${existing._count.rackStocks} produk dengan stok. Pindahkan stok dulu sebelum hapus.`,
@@ -238,7 +237,7 @@ export class RacksService {
     branchId?: string,
   ): Promise<ProductRackLookupResponse> {
     const product = await this.repo.findProduct(companyId, productId);
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     const stocks = await this.repo.findProductRackStocks(
       productId,
@@ -276,7 +275,7 @@ export class RacksService {
     userId?: string,
   ): Promise<{ success: true; updated: number }> {
     const rack = await this.repo.findWithBranchId(companyId, rackId);
-    if (!rack) throw new NotFoundException("Rack not found");
+    if (!rack) throw new NotFoundException("Rak tidak ditemukan");
 
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.repo.findProductsInCompany(productIds, companyId);
@@ -353,7 +352,7 @@ export class RacksService {
     dto: AssignProductsToRackDto,
   ): Promise<{ success: true; assigned: number; unassigned: number }> {
     const rack = await this.repo.findExistence({ id: rackId, companyId });
-    if (!rack) throw new NotFoundException("Rack not found");
+    if (!rack) throw new NotFoundException("Rak tidak ditemukan");
 
     if (dto.productIds.length > 0) {
       const products = await this.repo.findProductsInCompany(
@@ -563,9 +562,9 @@ export class RacksService {
     dto: ReportDiscrepancyDto,
   ): Promise<DiscrepancyReportResponse> {
     const rack = await this.repo.findWithBranch(companyId, dto.rackId);
-    if (!rack) throw new NotFoundException("Rack not found");
+    if (!rack) throw new NotFoundException("Rak tidak ditemukan");
     const product = await this.repo.findProduct(companyId, dto.productId);
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     const difference = dto.actualQty - dto.expectedQty;
     const created = await this.repo.createDiscrepancy({
@@ -630,7 +629,7 @@ export class RacksService {
     applyAdjustment: boolean,
   ): Promise<DiscrepancyReportResponse> {
     const disc = await this.repo.findDiscrepancy(companyId, id);
-    if (!disc) throw new NotFoundException("Discrepancy not found or already resolved");
+    if (!disc) throw new NotFoundException("Perbedaan tidak ditemukan atau sudah diselesaikan");
 
     await this.prisma.$transaction(async (tx) => {
       if (applyAdjustment && disc.difference !== 0) {

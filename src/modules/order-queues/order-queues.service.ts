@@ -58,7 +58,7 @@ export class OrderQueuesService {
 
   async findById(companyId: string, id: string): Promise<OrderQueueResponse> {
     const queue = await this.repo.findOne(this.tenantWhere(companyId, id));
-    if (!queue) throw new NotFoundException("Order queue not found");
+    if (!queue) throw new NotFoundException("Antrian order tidak ditemukan");
     return toQueueResponse(queue);
   }
 
@@ -107,7 +107,7 @@ export class OrderQueuesService {
     dto: CreateOrderQueueFromTransactionDto,
   ): Promise<OrderQueueResponse> {
     const tx = await this.repo.findTransactionForQueue(companyId, dto.transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
+    if (!tx) throw new NotFoundException("Transaksi tidak ditemukan");
     if (tx.items.length === 0) {
       throw new BadRequestException("Transaksi tidak memiliki item");
     }
@@ -149,7 +149,7 @@ export class OrderQueuesService {
     status: OrderQueueStatusDto,
   ): Promise<OrderQueueResponse> {
     const existing = await this.repo.findOne(this.tenantWhere(companyId, id));
-    if (!existing) throw new NotFoundException("Order queue not found");
+    if (!existing) throw new NotFoundException("Antrian order tidak ditemukan");
 
     const updated = await this.repo.update(id, {
       status,
@@ -198,10 +198,10 @@ export class OrderQueuesService {
     status: OrderQueueItemStatusDto,
   ): Promise<OrderQueueResponse> {
     const queue = await this.repo.findOne(this.tenantWhere(companyId, queueId));
-    if (!queue) throw new NotFoundException("Order queue not found");
+    if (!queue) throw new NotFoundException("Antrian order tidak ditemukan");
 
     const item = await this.repo.findQueueItem(itemId, queueId);
-    if (!item) throw new NotFoundException("Order queue item not found");
+    if (!item) throw new NotFoundException("Item antrian tidak ditemukan");
 
     await this.repo.updateQueueItem(itemId, { status });
 
@@ -230,12 +230,12 @@ export class OrderQueuesService {
 
   private async assertTable(companyId: string, tableId: string) {
     const table = await this.repo.assertTable(companyId, tableId);
-    if (!table) throw new NotFoundException("Table not found");
+    if (!table) throw new NotFoundException("Meja tidak ditemukan");
   }
 
   private async assertTransaction(companyId: string, transactionId: string) {
     const tx = await this.repo.assertTransaction(companyId, transactionId);
-    if (!tx) throw new NotFoundException("Transaction not found");
+    if (!tx) throw new NotFoundException("Transaksi tidak ditemukan");
   }
 }
 

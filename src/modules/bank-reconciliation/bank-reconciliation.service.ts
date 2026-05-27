@@ -62,7 +62,7 @@ export class BankReconciliationService {
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
     const recon = await this.repo.findOne({ id, companyId });
-    if (!recon) throw new NotFoundException("Bank reconciliation not found");
+    if (!recon) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     return toReconDetailResponse(recon);
   }
 
@@ -95,7 +95,7 @@ export class BankReconciliationService {
     dto: UpdateBankReconciliationDto,
   ): Promise<BankReconciliationDetailResponse> {
     const existing = await this.repo.findStatus(id, companyId);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
@@ -127,7 +127,7 @@ export class BankReconciliationService {
     dto: SetReconciliationItemsDto,
   ): Promise<BankReconciliationDetailResponse> {
     const existing = await this.repo.findStatus(id, companyId);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
@@ -173,7 +173,7 @@ export class BankReconciliationService {
     dto: ToggleItemMatchDto,
   ): Promise<BankReconciliationDetailResponse> {
     const existing = await this.repo.findStatusOnly(id, companyId);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa diubah",
@@ -181,7 +181,7 @@ export class BankReconciliationService {
     }
 
     const item = await this.repo.findItem(itemId, id);
-    if (!item) throw new NotFoundException("Item not found");
+    if (!item) throw new NotFoundException("Item tidak ditemukan");
 
     await this.repo.updateItem(itemId, {
       matchStatus: dto.matchStatus,
@@ -202,7 +202,7 @@ export class BankReconciliationService {
       this.repo.countItems(id),
       this.repo.countUnmatchedItems(id),
     ]);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa direkonsiliasi",
@@ -233,7 +233,7 @@ export class BankReconciliationService {
     id: string,
   ): Promise<BankReconciliationDetailResponse> {
     const existing = await this.repo.findStatusOnly(id, companyId);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_COMPLETED) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus COMPLETED yang bisa dibuka kembali",
@@ -254,7 +254,7 @@ export class BankReconciliationService {
     id: string,
   ): Promise<{ success: true }> {
     const existing = await this.repo.findStatusOnly(id, companyId);
-    if (!existing) throw new NotFoundException("Bank reconciliation not found");
+    if (!existing) throw new NotFoundException("Rekonsiliasi bank tidak ditemukan");
     if (existing.status !== STATUS_IN_PROGRESS) {
       throw new BadRequestException(
         "Hanya rekonsiliasi berstatus IN_PROGRESS yang bisa dihapus",
@@ -274,7 +274,7 @@ export class BankReconciliationService {
   private async assertAccount(companyId: string, accountId: string) {
     const account = await this.repo.assertAccount(companyId, accountId);
     if (!account) {
-      throw new NotFoundException("Account not found");
+      throw new NotFoundException("Akun tidak ditemukan");
     }
   }
 

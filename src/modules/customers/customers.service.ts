@@ -1,5 +1,4 @@
 ﻿import {
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -95,7 +94,7 @@ export class CustomersService {
 
   async findById(companyId: string, id: string): Promise<CustomerResponse> {
     const customer = await this.repo.findOne({ id, companyId });
-    if (!customer) throw new NotFoundException("Customer not found");
+    if (!customer) throw new NotFoundException("Pelanggan tidak ditemukan");
     return toCustomerResponse(customer);
   }
 
@@ -127,7 +126,7 @@ export class CustomersService {
     dto: UpdateCustomerDto,
   ): Promise<CustomerResponse> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Customer not found");
+    if (!existing) throw new NotFoundException("Pelanggan tidak ditemukan");
 
     const data: Prisma.CustomerUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -151,7 +150,7 @@ export class CustomersService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Customer not found");
+    if (!existing) throw new NotFoundException("Pelanggan tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }

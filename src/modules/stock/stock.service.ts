@@ -139,7 +139,7 @@ export class StockService {
     dto: AdjustStockDto,
   ): Promise<StockMovementResponse> {
     const product = await this.repo.findProduct(dto.productId, companyId);
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     const selectedUnit = dto.unitId
       ? await this.repo.findProductUnit(dto.unitId, dto.productId)
@@ -383,7 +383,7 @@ export class StockService {
     } = query;
 
     const product = await this.repo.findProductForCard(productId, companyId);
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     let branchInfo: { id: string; name: string } | null = null;
     if (branchId) {

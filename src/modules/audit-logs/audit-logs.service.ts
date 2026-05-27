@@ -48,7 +48,7 @@ export class AuditLogsService {
       id,
       ...this.auditTenantWhere(companyId),
     });
-    if (!row) throw new NotFoundException("Audit log not found");
+    if (!row) throw new NotFoundException("Log audit tidak ditemukan");
     return toAuditLogResponse(row);
   }
 
@@ -133,7 +133,7 @@ export class AuditLogsService {
       id,
       user: { companyId },
     });
-    if (!row) throw new NotFoundException("Activity log not found");
+    if (!row) throw new NotFoundException("Log aktivitas tidak ditemukan");
     return toActivityLogResponse(row);
   }
 

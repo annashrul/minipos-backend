@@ -29,7 +29,7 @@ export class MarketplaceShopeeController {
   @Get("authorize-url")
   @UseGuards(AccessGuard)
   authorize(@CurrentUser() user: AuthUser) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     // Pass companyId di state supaya callback (yang Public) tau owner-nya.
     // Encode minimal — companyId saja, signed dengan JWT-like atau sederhana
     // base64. Untuk simplicity sekarang pakai base64 + cek di callback.
@@ -97,7 +97,7 @@ export class MarketplaceShopeeController {
   @Get("accounts")
   @UseGuards(AccessGuard)
   async listAccounts(@CurrentUser() user: AuthUser) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.listAccounts(user.companyId) };
   }
 
@@ -107,7 +107,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     await this.service.disconnect(user.companyId, id);
     return { data: { success: true } };
   }
@@ -118,7 +118,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.fetchProducts(user.companyId, id) };
   }
 
@@ -133,7 +133,7 @@ export class MarketplaceShopeeController {
   @Post("connect-via-browser")
   @UseGuards(AccessGuard)
   async connectViaBrowser(@CurrentUser() user: AuthUser) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     try {
       const result = await this.service.connectViaPlaywright(user.companyId);
       return { data: result };
@@ -167,7 +167,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Body() body: { cookie?: string; userAgent?: string },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (!body.cookie || body.cookie.trim().length < 10) {
       throw new BadRequestException("Cookie kosong atau tidak valid");
     }
@@ -188,7 +188,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return {
       data: await this.service.verifyConnection(user.companyId, id),
     };
@@ -213,7 +213,7 @@ export class MarketplaceShopeeController {
       scFeVer?: string;
     },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (!body.xSapRi || !body.xSapSec) {
       throw new BadRequestException("xSapRi dan xSapSec wajib di-isi");
     }
@@ -237,7 +237,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.listCachedItems(user.companyId, id) };
   }
 
@@ -251,7 +251,7 @@ export class MarketplaceShopeeController {
     @Param("itemId") itemId: string,
     @Body() body: { productId?: string },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (!body.productId)
       throw new BadRequestException("productId wajib diisi");
     await this.service.linkShopeeItem(user.companyId, itemId, body.productId);
@@ -264,7 +264,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("itemId") itemId: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     await this.service.unlinkShopeeItem(user.companyId, itemId);
     return { data: { success: true } };
   }
@@ -280,7 +280,7 @@ export class MarketplaceShopeeController {
     @Param("itemId") itemId: string,
     @Body() body: { newStock?: number },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (typeof body.newStock !== "number")
       throw new BadRequestException("newStock wajib (angka)");
     return {
@@ -299,7 +299,7 @@ export class MarketplaceShopeeController {
   @Get("linked-product-ids")
   @UseGuards(AccessGuard)
   async getLinkedProductIds(@CurrentUser() user: AuthUser) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.getLinkedProductIds(user.companyId) };
   }
 
@@ -314,7 +314,7 @@ export class MarketplaceShopeeController {
     @Param("productId") productId: string,
     @Body() body: { branchId?: string; newStock?: number },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (!body.branchId) throw new BadRequestException("branchId wajib");
     if (typeof body.newStock !== "number")
       throw new BadRequestException("newStock wajib (angka)");
@@ -338,7 +338,7 @@ export class MarketplaceShopeeController {
     @CurrentUser() user: AuthUser,
     @Param("productId") productId: string,
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return {
       data: await this.service.getProductLinkStatus(user.companyId, productId),
     };
@@ -355,7 +355,7 @@ export class MarketplaceShopeeController {
     @Param("productId") productId: string,
     @Body() body: { branchId?: string },
   ) {
-    if (!user.companyId) throw new BadRequestException("No company");
+    if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     if (!body.branchId) throw new BadRequestException("branchId wajib");
     return {
       data: await this.service.pushStockFromBranch(

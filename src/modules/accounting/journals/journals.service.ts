@@ -108,7 +108,7 @@ export class JournalsService {
       where: { id, ...this.tenantWhere(companyId) },
       select: JOURNAL_DETAIL_SELECT,
     });
-    if (!journal) throw new NotFoundException("Journal entry not found");
+    if (!journal) throw new NotFoundException("Jurnal tidak ditemukan");
     return toJournalDetailResponse(journal);
   }
 
@@ -177,7 +177,7 @@ export class JournalsService {
       where: { id, ...this.tenantWhere(companyId) },
       select: { id: true, status: true },
     });
-    if (!existing) throw new NotFoundException("Journal entry not found");
+    if (!existing) throw new NotFoundException("Jurnal tidak ditemukan");
     if (existing.status !== "DRAFT") {
       throw new BadRequestException(
         "Hanya jurnal berstatus DRAFT yang bisa diubah",
@@ -263,7 +263,7 @@ export class JournalsService {
         lines: { select: { debit: true, credit: true } },
       },
     });
-    if (!existing) throw new NotFoundException("Journal entry not found");
+    if (!existing) throw new NotFoundException("Jurnal tidak ditemukan");
     if (existing.status !== "DRAFT") {
       throw new BadRequestException(
         "Hanya jurnal berstatus DRAFT yang bisa di-post",
@@ -325,7 +325,7 @@ export class JournalsService {
         },
       },
     });
-    if (!existing) throw new NotFoundException("Journal entry not found");
+    if (!existing) throw new NotFoundException("Jurnal tidak ditemukan");
     if (existing.status === "VOIDED") {
       throw new BadRequestException("Jurnal sudah di-void");
     }
@@ -405,7 +405,7 @@ export class JournalsService {
       where: { id, ...this.tenantWhere(companyId) },
       select: { id: true, status: true },
     });
-    if (!existing) throw new NotFoundException("Journal entry not found");
+    if (!existing) throw new NotFoundException("Jurnal tidak ditemukan");
     if (existing.status !== "DRAFT") {
       throw new BadRequestException(
         "Hanya jurnal berstatus DRAFT yang bisa dihapus",

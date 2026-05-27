@@ -62,7 +62,7 @@ export class ClosingReportsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!report) throw new NotFoundException("Closing report not found");
+    if (!report) throw new NotFoundException("Laporan penutupan tidak ditemukan");
     return toClosingReportResponse(report);
   }
 
@@ -85,7 +85,7 @@ export class ClosingReportsService {
       id: shiftId,
       user: { companyId },
     });
-    if (!shift) throw new NotFoundException("Shift not found");
+    if (!shift) throw new NotFoundException("Shift tidak ditemukan");
     if (shift.isOpen) {
       throw new BadRequestException(
         "Shift masih terbuka, tutup terlebih dahulu sebelum membuat closing report",
@@ -282,7 +282,7 @@ export class ClosingReportsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!existing) throw new NotFoundException("Closing report not found");
+    if (!existing) throw new NotFoundException("Laporan penutupan tidak ditemukan");
 
     const data: Prisma.ClosingReportUpdateInput = {};
     if (dto.notes !== undefined) data.notes = dto.notes;
@@ -547,7 +547,7 @@ export class ClosingReportsService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!existing) throw new NotFoundException("Closing report not found");
+    if (!existing) throw new NotFoundException("Laporan penutupan tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }

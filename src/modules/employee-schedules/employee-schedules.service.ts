@@ -84,7 +84,7 @@ export class EmployeeSchedulesService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!row) throw new NotFoundException("Schedule not found");
+    if (!row) throw new NotFoundException("Jadwal tidak ditemukan");
     return toScheduleResponse(row);
   }
 
@@ -145,7 +145,7 @@ export class EmployeeSchedulesService {
         deletedAt: null,
       });
       if (validUsers !== userIds.length) {
-        throw new NotFoundException("One or more users not found");
+        throw new NotFoundException("Satu atau lebih pengguna tidak ditemukan");
       }
     }
     if (branchIds.length) {
@@ -154,7 +154,7 @@ export class EmployeeSchedulesService {
         companyId,
       });
       if (validBranches !== branchIds.length) {
-        throw new NotFoundException("One or more branches not found");
+        throw new NotFoundException("Satu atau lebih cabang tidak ditemukan");
       }
     }
 
@@ -172,7 +172,7 @@ export class EmployeeSchedulesService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Schedule not found");
+    if (!existing) throw new NotFoundException("Jadwal tidak ditemukan");
 
     if (dto.branchId) {
       await this.assertReferences(companyId, undefined, dto.branchId);
@@ -215,7 +215,7 @@ export class EmployeeSchedulesService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Schedule not found");
+    if (!existing) throw new NotFoundException("Jadwal tidak ditemukan");
 
     const updated = await this.repo.update(id, { status });
     return toScheduleResponse(updated);
@@ -229,7 +229,7 @@ export class EmployeeSchedulesService {
       id,
       ...this.tenantWhere(companyId),
     });
-    if (!existing) throw new NotFoundException("Schedule not found");
+    if (!existing) throw new NotFoundException("Jadwal tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }
@@ -247,14 +247,14 @@ export class EmployeeSchedulesService {
         companyId,
         deletedAt: null,
       });
-      if (!user) throw new NotFoundException("User not found");
+      if (!user) throw new NotFoundException("Pengguna tidak ditemukan");
     }
     if (branchId) {
       const branch = await this.repo.findBranch({
         id: branchId,
         companyId,
       });
-      if (!branch) throw new NotFoundException("Branch not found");
+      if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
     }
   }
 

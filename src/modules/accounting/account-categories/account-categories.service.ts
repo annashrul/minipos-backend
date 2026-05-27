@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -67,7 +66,7 @@ export class AccountCategoriesService {
       where: { id, companyId },
       select: CATEGORY_SELECT,
     });
-    if (!category) throw new NotFoundException("Account category not found");
+    if (!category) throw new NotFoundException("Kategori akun tidak ditemukan");
     return toCategoryResponse(category);
   }
 
@@ -102,7 +101,7 @@ export class AccountCategoriesService {
       where: { id, companyId },
       select: { id: true },
     });
-    if (!existing) throw new NotFoundException("Account category not found");
+    if (!existing) throw new NotFoundException("Kategori akun tidak ditemukan");
 
     const data: Prisma.AccountCategoryUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -131,7 +130,7 @@ export class AccountCategoriesService {
       where: { id, companyId },
       select: { id: true, _count: { select: { accounts: true } } },
     });
-    if (!existing) throw new NotFoundException("Account category not found");
+    if (!existing) throw new NotFoundException("Kategori akun tidak ditemukan");
     if (existing._count.accounts > 0) {
       throw new BadRequestException(
         `Kategori masih dipakai ${existing._count.accounts} akun`,

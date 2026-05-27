@@ -122,7 +122,7 @@ export class TransactionsService {
     id: string,
   ): Promise<TransactionDetailResponse> {
     const tx = await this.repo.findById(companyId, id);
-    if (!tx) throw new NotFoundException("Transaction not found");
+    if (!tx) throw new NotFoundException("Transaksi tidak ditemukan");
     return toTransactionDetailResponse(tx);
   }
 
@@ -962,14 +962,14 @@ export class TransactionsService {
     const noun = target === "VOIDED" ? "Void" : "Refund";
 
     const existing = await this.repo.findByIdMinimal(companyId, id);
-    if (!existing) throw new NotFoundException("Transaction not found");
+    if (!existing) throw new NotFoundException("Transaksi tidak ditemukan");
 
     return this.prisma.$transaction(async (tx) => {
       const transaction = await tx.transaction.findUnique({
         where: { id },
         include: { items: true },
       });
-      if (!transaction) throw new NotFoundException("Transaction not found");
+      if (!transaction) throw new NotFoundException("Transaksi tidak ditemukan");
       if (transaction.status !== "COMPLETED") {
         throw new BadRequestException(
           `Hanya transaksi COMPLETED yang bisa di-${noun.toLowerCase()}`,

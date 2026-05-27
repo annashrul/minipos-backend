@@ -1,5 +1,4 @@
 ﻿import {
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -87,7 +86,7 @@ export class PromotionsService {
 
   async findById(companyId: string, id: string): Promise<PromotionResponse> {
     const promotion = await this.repo.findOne({ id, companyId });
-    if (!promotion) throw new NotFoundException("Promotion not found");
+    if (!promotion) throw new NotFoundException("Promosi tidak ditemukan");
     const getProductMap = await this.fetchGetProducts([promotion]);
     return toPromotionResponse(
       promotion,
@@ -166,7 +165,7 @@ export class PromotionsService {
     dto: UpdatePromotionDto,
   ): Promise<PromotionResponse> {
     const existing = await this.repo.findById({ id, companyId });
-    if (!existing) throw new NotFoundException("Promotion not found");
+    if (!existing) throw new NotFoundException("Promosi tidak ditemukan");
 
     await this.assertReferences(companyId, dto);
 
@@ -288,7 +287,7 @@ export class PromotionsService {
     isActive: boolean,
   ): Promise<PromotionResponse> {
     const existing = await this.repo.findById({ id, companyId });
-    if (!existing) throw new NotFoundException("Promotion not found");
+    if (!existing) throw new NotFoundException("Promosi tidak ditemukan");
 
     const updated = await this.repo.update(id, { isActive });
     const map = await this.fetchGetProducts([updated]);
@@ -300,7 +299,7 @@ export class PromotionsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findById({ id, companyId });
-    if (!existing) throw new NotFoundException("Promotion not found");
+    if (!existing) throw new NotFoundException("Promosi tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }
@@ -319,11 +318,11 @@ export class PromotionsService {
     }
     if (dto.productId) {
       const product = await this.repo.assertProduct(companyId, dto.productId);
-      if (!product) throw new NotFoundException("Product not found");
+      if (!product) throw new NotFoundException("Produk tidak ditemukan");
     }
     if (dto.getProductId) {
       const product = await this.repo.assertProduct(companyId, dto.getProductId);
-      if (!product) throw new NotFoundException("Get-product not found");
+      if (!product) throw new NotFoundException("Produk tidak ditemukan");
     }
     if (dto.triggerProductIds && dto.triggerProductIds.length) {
       const ids = dedupeTriggerIds(dto.triggerProductIds);

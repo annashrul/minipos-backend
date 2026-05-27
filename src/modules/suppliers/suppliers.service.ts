@@ -74,7 +74,7 @@ export class SuppliersService {
 
   async findById(companyId: string, id: string): Promise<SupplierResponse> {
     const supplier = await this.repo.findOne({ id, companyId });
-    if (!supplier) throw new NotFoundException("Supplier not found");
+    if (!supplier) throw new NotFoundException("Supplier tidak ditemukan");
     return toSupplierResponse(supplier);
   }
 
@@ -99,7 +99,7 @@ export class SuppliersService {
     dto: UpdateSupplierDto,
   ): Promise<SupplierResponse> {
     const existing = await this.repo.findOne({ id, companyId });
-    if (!existing) throw new NotFoundException("Supplier not found");
+    if (!existing) throw new NotFoundException("Supplier tidak ditemukan");
 
     const data: Prisma.SupplierUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -114,7 +114,7 @@ export class SuppliersService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findWithCounts(companyId, id);
-    if (!existing) throw new NotFoundException("Supplier not found");
+    if (!existing) throw new NotFoundException("Supplier tidak ditemukan");
     if (existing._count.products > 0) {
       throw new BadRequestException(
         `Supplier masih dipakai ${existing._count.products} produk`,

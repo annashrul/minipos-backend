@@ -50,7 +50,7 @@ export class ExpensesService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!expense) throw new NotFoundException("Expense not found");
+    if (!expense) throw new NotFoundException("Pengeluaran tidak ditemukan");
     return toExpenseResponse(expense);
   }
 
@@ -82,7 +82,7 @@ export class ExpensesService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!existing) throw new NotFoundException("Expense not found");
+    if (!existing) throw new NotFoundException("Pengeluaran tidak ditemukan");
 
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
@@ -106,7 +106,7 @@ export class ExpensesService {
       id,
       ...tenantWhere(companyId, "direct", "branch"),
     });
-    if (!existing) throw new NotFoundException("Expense not found");
+    if (!existing) throw new NotFoundException("Pengeluaran tidak ditemukan");
     await this.repo.delete(id);
     return { success: true };
   }
@@ -169,7 +169,7 @@ export class ExpensesService {
 
   private async assertBranch(companyId: string, branchId: string) {
     const branch = await this.repo.findBranch(companyId, branchId);
-    if (!branch) throw new NotFoundException("Branch not found");
+    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
   }
 }
 

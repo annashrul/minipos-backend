@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -57,7 +56,7 @@ export class BranchesService {
 
   async findById(companyId: string, id: string): Promise<BranchResponse> {
     const branch = await this.repo.findOne({ id, companyId });
-    if (!branch) throw new NotFoundException("Branch not found");
+    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
     return toBranchResponse(branch);
   }
 
@@ -90,7 +89,7 @@ export class BranchesService {
     dto: UpdateBranchDto,
   ): Promise<BranchResponse> {
     const existing = await this.repo.findById(companyId, id);
-    if (!existing) throw new NotFoundException("Branch not found");
+    if (!existing) throw new NotFoundException("Cabang tidak ditemukan");
 
     const data: Prisma.BranchUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -113,7 +112,7 @@ export class BranchesService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findWithCounts(companyId, id);
-    if (!existing) throw new NotFoundException("Branch not found");
+    if (!existing) throw new NotFoundException("Cabang tidak ditemukan");
     if (existing._count.users > 0) {
       throw new BadRequestException(
         `Branch masih dipakai ${existing._count.users} user`,

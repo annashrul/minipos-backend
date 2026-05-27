@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -79,7 +78,7 @@ export class AccountsService {
       where: { id, ...tenantWhere(companyId, "category") },
       select: ACCOUNT_SELECT,
     });
-    if (!account) throw new NotFoundException("Account not found");
+    if (!account) throw new NotFoundException("Akun tidak ditemukan");
 
     const agg = await this.prisma.journalEntryLine.aggregate({
       where: {
@@ -168,7 +167,7 @@ export class AccountsService {
       where: { id, ...tenantWhere(companyId, "category") },
       select: { id: true, code: true, isSystem: true },
     });
-    if (!existing) throw new NotFoundException("Account not found");
+    if (!existing) throw new NotFoundException("Akun tidak ditemukan");
 
     if (dto.code !== undefined && dto.code !== existing.code) {
       const linesCount = await this.prisma.journalEntryLine.count({
@@ -246,7 +245,7 @@ export class AccountsService {
         _count: { select: { children: true, journalLines: true } },
       },
     });
-    if (!existing) throw new NotFoundException("Account not found");
+    if (!existing) throw new NotFoundException("Akun tidak ditemukan");
     if (existing.isSystem) {
       throw new BadRequestException("Akun sistem tidak bisa dihapus");
     }
@@ -436,7 +435,7 @@ export class AccountsService {
       where: { id: accountId, ...tenantWhere(companyId, "category") },
       select: { id: true },
     });
-    if (!acc) throw new NotFoundException("Parent account not found");
+    if (!acc) throw new NotFoundException("Akun induk tidak ditemukan");
   }
 
 }

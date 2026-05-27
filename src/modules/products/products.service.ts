@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -151,13 +150,13 @@ export class ProductsService {
 
   async findById(companyId: string, id: string): Promise<ProductResponse> {
     const product = await this.repo.findOne({ id, companyId, deletedAt: null });
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
     return toProductResponse(product);
   }
 
   async findDetail(companyId: string, id: string, branchId?: string) {
     const product = await this.repo.findOne({ id, companyId, deletedAt: null });
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw new NotFoundException("Produk tidak ditemukan");
     const [units, branchSkus, tierPrices, variants, modifierGroups, branches] =
       await Promise.all([
         this.repo.findProductUnits(id),
@@ -243,7 +242,7 @@ export class ProductsService {
       const owned = await this.repo.findOwnedModifierGroups(companyId, modifierGroupIds);
       if (owned.length !== modifierGroupIds.length) {
         throw new BadRequestException(
-          "One or more modifier groups invalid",
+          "Satu atau lebih grup modifier tidak valid",
         );
       }
     }
@@ -325,7 +324,7 @@ export class ProductsService {
     dto: UpdateProductDto,
   ): Promise<ProductResponse> {
     const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
-    if (!existing) throw new NotFoundException("Product not found");
+    if (!existing) throw new NotFoundException("Produk tidak ditemukan");
 
     const data: Prisma.ProductUpdateInput = {};
     if (dto.code !== undefined) data.code = dto.code;
@@ -629,7 +628,7 @@ export class ProductsService {
     id: string,
   ): Promise<{ success: true }> {
     const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
-    if (!existing) throw new NotFoundException("Product not found");
+    if (!existing) throw new NotFoundException("Produk tidak ditemukan");
 
     await this.repo.softDelete(id);
     return { success: true };

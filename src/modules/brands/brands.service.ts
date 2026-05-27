@@ -1,6 +1,5 @@
 ﻿import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -66,7 +65,7 @@ export class BrandsService {
 
   async findById(companyId: string, id: string): Promise<BrandResponse> {
     const brand = await this.repo.findOne({ id, companyId });
-    if (!brand) throw new NotFoundException("Brand not found");
+    if (!brand) throw new NotFoundException("Merek tidak ditemukan");
     return toBrandResponse(brand);
   }
 
@@ -92,7 +91,7 @@ export class BrandsService {
     dto: UpdateBrandDto,
   ): Promise<BrandResponse> {
     const existing = await this.repo.findOne({ id, companyId });
-    if (!existing) throw new NotFoundException("Brand not found");
+    if (!existing) throw new NotFoundException("Merek tidak ditemukan");
 
     const data: Prisma.BrandUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -108,7 +107,7 @@ export class BrandsService {
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
     const existing = await this.repo.findWithCounts(companyId, id);
-    if (!existing) throw new NotFoundException("Brand not found");
+    if (!existing) throw new NotFoundException("Merek tidak ditemukan");
     if (existing._count.products > 0) {
       throw new BadRequestException(
         `Brand masih dipakai ${existing._count.products} produk`,
