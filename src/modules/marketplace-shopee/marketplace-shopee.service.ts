@@ -7,7 +7,6 @@ import {
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import {
   ShopeeApiService,
-  type ShopeeItemBaseInfo,
 } from "./shopee-api.service";
 import {
   ShopeeScraperService,
@@ -15,6 +14,8 @@ import {
 } from "./shopee-scraper.service";
 import { ShopeePlaywrightService } from "./shopee-playwright.service";
 import { MarketplaceShopeeRepository } from "./marketplace-shopee.repository";
+import { ShopeeProductSyncService } from "./shopee-product-sync.service";
+import { ShopeeStockSyncService } from "./shopee-stock-sync.service";
 
 /**
  * Orchestration layer untuk Shopee integration. Handle:
@@ -32,6 +33,8 @@ export class MarketplaceShopeeService {
     private readonly shopeeApi: ShopeeApiService,
     private readonly scraper: ShopeeScraperService,
     private readonly playwright: ShopeePlaywrightService,
+    private readonly productSync: ShopeeProductSyncService,
+    private readonly stockSync: ShopeeStockSyncService,
   ) {}
 
   /**
@@ -226,56 +229,6 @@ export class MarketplaceShopeeService {
   }
 
   /**
-   * Apply Shopee data ke Product yang sudah ada (link existing / revive /
-   * auto-match). Field yang di-overwrite: name, sellingPrice, stock,
-   * imageUrl, plus default ProductUnit + BranchStock + BranchProductPrice
-   * untuk semua cabang aktif.
-   *
-   * Field yang DI-PRESERVE (tidak diganggu, supaya edit manual user tidak
-   * hilang saat re-sync): code, purchasePrice, categoryId, brandId,
-   * supplierId, description, itemType, isActive.
-   */
-  private async applyShopeeDataToProduct(params: {
-    companyId: string;
-    productId: string;
-    name: string;
-    sellingPrice: number;
-    stock: number;
-    imageUrl: string | null;
-  }): Promise<void> {
-    const { companyId, productId, name, sellingPrice, stock, imageUrl } =
-      params;
-    await this.repo.updateProduct(productId, {
-      name: name.slice(0, 200),
-      sellingPrice,
-      stock,
-      imageUrl,
-    });
-    // Update default ProductUnit (kalau ada) — biar form edit nampilin harga
-    // baru. Pakai updateMany supaya tidak error kalau belum ada default unit.
-    await this.repo.updateProductUnitPrice(productId, sellingPrice);
-    // Update / create per-branch price + stock untuk semua cabang aktif.
-    const branches = await this.repo.findActiveBranches(companyId);
-    for (const b of branches) {
-      await this.repo.upsertBranchProductPrice(b.id, productId, sellingPrice, 0);
-      await this.repo.upsertBranchStock(b.id, productId, stock, 5);
-    }
-  }
-
-  /**
-   * Cari atau buat kategori "Shopee Import" untuk company. Dipakai sebagai
-   * default categoryId saat auto-create Product dari Shopee item.
-   */
-  private async ensureShopeeImportCategory(
-    companyId: string,
-  ): Promise<string> {
-    const existing = await this.repo.findShopeeImportCategory(companyId);
-    if (existing) return existing.id;
-    const created = await this.repo.createShopeeImportCategory(companyId);
-    return created.id;
-  }
-
-  /**
    * List cached Shopee items dari DB (instant, gak hit Shopee). Frontend
    * panggil ini saat buka halaman. Tombol "Refresh" panggil
    * refreshProducts() untuk re-fetch dari Shopee.
@@ -401,440 +354,56 @@ export class MarketplaceShopeeService {
       .filter((id): id is string => id != null);
   }
 
+  // ── Delegated: Product Sync ──────────────────────────────────────
+
   /**
-   * Quick update stok: set BranchStock untuk satu cabang + push ke Shopee
-   * sekaligus. Dipakai dialog "Update Stok Shopee" di products list.
+   * Fetch SEMUA produk di shop (paginated loop). Delegates to
+   * ShopeeProductSyncService.
+   */
+  async fetchProducts(companyId: string, accountId: string) {
+    return this.productSync.fetchProducts(
+      companyId,
+      accountId,
+      (aid) => this.getValidAccessToken(aid),
+    );
+  }
+
+  // ── Delegated: Stock Sync ────────────────────────────────────────
+
+  /**
+   * Quick update stok: set BranchStock + push ke Shopee. Delegates to
+   * ShopeeStockSyncService.
    */
   async quickUpdateStock(params: {
     companyId: string;
     productId: string;
     branchId: string;
     newStock: number;
-  }): Promise<{ pushedToShopee: boolean; shopeeError?: string }> {
-    const { companyId, productId, branchId, newStock } = params;
-    if (newStock < 0) throw new BadRequestException("Stok tidak boleh negatif");
-    const safeStock = Math.floor(newStock);
-
-    // Validasi product + branch belong to company.
-    const [product, branch] = await Promise.all([
-      this.repo.findProductByIdAndCompany(productId, companyId, { id: true }),
-      this.repo.findBranchByIdAndCompany(branchId, companyId),
-    ]);
-    if (!product) throw new NotFoundException("Produk tidak ditemukan");
-    if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
-
-    // 1) Update BranchStock di MiniPOS.
-    await this.repo.upsertBranchStock(branchId, productId, safeStock, 5);
-    // Note: DB trigger akan auto-sync Product.stock = SUM(BranchStock).
-
-    // 2) Push ke Shopee — best effort. Kalau gagal, MiniPOS update tetap
-    // tersimpan, hanya report bahwa Shopee belum sinkron.
-    const shopeeItem = await this.repo.findShopeeItemByProduct(productId, companyId);
-    if (!shopeeItem) {
-      return { pushedToShopee: false, shopeeError: "Produk tidak ter-link ke Shopee" };
-    }
-    try {
-      await this.pushStockForItem(companyId, shopeeItem.id, safeStock);
-      return { pushedToShopee: true };
-    } catch (err) {
-      return {
-        pushedToShopee: false,
-        shopeeError: err instanceof Error ? err.message : "unknown",
-      };
-    }
+  }) {
+    return this.stockSync.quickUpdateStock(params);
   }
 
   /**
-   * Push stok produk MiniPOS dari cabang tertentu ke Shopee.
-   * Caller kasih productId + branchId, kita lookup:
-   *  - ShopeeItem yang linked dgn productId (asumsi 1-to-1)
-   *  - BranchStock untuk (productId, branchId)
-   *  - Push value tsb ke Shopee
+   * Push stok produk dari cabang tertentu ke Shopee. Delegates to
+   * ShopeeStockSyncService.
    */
   async pushStockFromBranch(
     companyId: string,
     productId: string,
     branchId: string,
-  ): Promise<{ pushedAt: string; newStock: number }> {
-    // 1) Lookup ShopeeItem linked dengan product ini.
-    const item = await this.repo.findShopeeItemByProduct(productId, companyId);
-    if (!item) {
-      throw new BadRequestException(
-        "Produk ini belum ter-link dengan item Shopee. Sync Shopee dulu.",
-      );
-    }
-    // 2) Lookup BranchStock untuk cabang tsb.
-    const bs = await this.repo.findBranchStock(branchId, productId);
-    const stockValue = bs?.quantity ?? 0;
-    // 3) Push ke Shopee via existing method.
-    return this.pushStockForItem(companyId, item.id, stockValue);
+  ) {
+    return this.stockSync.pushStockFromBranch(companyId, productId, branchId);
   }
 
   /**
-   * Push stok untuk satu ShopeeItem. Item harus sudah punya modelId (untuk
-   * produk dengan model_list — semua row di cache kita punya modelId).
+   * Push stok untuk satu ShopeeItem. Delegates to ShopeeStockSyncService.
    */
   async pushStockForItem(
     companyId: string,
     shopeeItemId: string,
     newStock: number,
-  ): Promise<{ pushedAt: string; newStock: number }> {
-    if (newStock < 0) throw new BadRequestException("Stok tidak boleh negatif");
-    const safeStock = Math.floor(newStock);
-
-    const item = await this.repo.findShopeeItemForPush(shopeeItemId, companyId);
-    if (!item) throw new NotFoundException("Shopee item tidak ditemukan");
-    const account = item.account;
-    if (account.connectionMode !== "COOKIE") {
-      throw new BadRequestException(
-        "Push stok via scraping hanya untuk akun mode COOKIE.",
-      );
-    }
-    if (!account.sellerCookie) {
-      throw new BadRequestException(
-        "Cookie session belum di-set. Re-connect Shopee dulu.",
-      );
-    }
-    const tokens = account.scrapingTokens as ScrapingTokens | null;
-    if (!tokens?.xSapRi || !tokens?.xSapSec) {
-      throw new BadRequestException(
-        "Anti-bot tokens belum di-set. Klik Update Tokens dulu.",
-      );
-    }
-    if (!item.modelId || item.modelId === "0") {
-      throw new BadRequestException(
-        "Item ini tidak punya modelId Shopee. Klik Refresh Products dulu agar data Shopee re-fetched dengan model_list.",
-      );
-    }
-
-    try {
-      await this.scraper.updateStock({
-        cookie: account.sellerCookie,
-        userAgent: account.cookieUserAgent,
-        tokens,
-        productId: Number(item.itemId),
-        modelId: Number(item.modelId),
-        locationId: "IDZ",
-        sellableStock: safeStock,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.repo.updateAccount(account.id, { lastError: msg });
-      throw err;
-    }
-
-    const now = new Date();
-    await this.repo.updateShopeeItem(shopeeItemId, { totalStock: safeStock, lastPushedAt: now });
-    await this.repo.updateAccount(account.id, { lastSyncedAt: now, lastError: null });
-
-    return { pushedAt: now.toISOString(), newStock: safeStock };
-  }
-
-  /**
-   * Fetch SEMUA produk di shop (paginated loop). Return list dengan field
-   * yang UI butuh: name, image, price, stock, status, sku.
-   */
-  async fetchProducts(
-    companyId: string,
-    accountId: string,
-  ): Promise<{
-    items: Array<{
-      itemId: number;
-      name: string;
-      sku: string | null;
-      status: string;
-      currentPrice: number | null;
-      originalPrice: number | null;
-      currency: string | null;
-      totalStock: number | null;
-      imageUrl: string | null;
-      hasModel: boolean;
-      updateTime: string | null;
-      models: Array<{ id: number; name: string | null; sku: string | null; stock: number | null }>;
-    }>;
-    totalCount: number;
-    createdProductCount?: number;
-    matchedProductCount?: number;
-    preservedLinkCount?: number;
-    revivedProductCount?: number;
-  }> {
-    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId);
-    if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
-
-    // COOKIE mode: pakai scraper dengan cookie session.
-    if (account.connectionMode === "COOKIE") {
-      if (!account.sellerCookie) {
-        throw new BadRequestException(
-          "Cookie session belum di-set. Re-connect Shopee dulu.",
-        );
-      }
-      try {
-        const result = await this.scraper.fetchAllProducts(
-          account.sellerCookie,
-          account.cookieUserAgent,
-        );
-        // Persist to ShopeeItem table — 1 row per (itemId, modelId).
-        // - Auto-match by SKU: kalau Shopee sku match Product.code/barcode,
-        //   link ke product existing.
-        // - Auto-create Product: kalau gak match, bikin Product baru di
-        //   kategori "Shopee Import" supaya muncul di master data MiniPOS.
-        // - Saat re-fetch, productId di ShopeeItem TIDAK di-overwrite —
-        //   user manual link tetap dipertahankan.
-        const now = new Date();
-        const importCategoryId = await this.ensureShopeeImportCategory(
-          companyId,
-        );
-        let createdProductCount = 0;
-        let matchedProductCount = 0;
-        let preservedLinkCount = 0;
-        let revivedProductCount = 0;
-        for (const item of result.items) {
-          const itemIdStr = String(item.itemId);
-          const modelRows = item.models.length > 0
-            ? item.models
-            : [{ id: 0, name: null, sku: null, stock: item.totalStock ?? null }];
-          for (const m of modelRows) {
-            const modelIdStr = m.id > 0 ? String(m.id) : "0";
-            const skuForMatch = m.sku || item.sku || null;
-            // Cari produk MiniPOS dengan SKU yang sama (untuk auto-link)
-            let autoMatchProductId: string | null = null;
-            if (skuForMatch) {
-              const matched = await this.repo.findProductByCode(companyId, skuForMatch);
-              autoMatchProductId = matched?.id ?? null;
-            }
-
-            // Auto-create Product kalau belum match — supaya produk Shopee
-            // muncul di master data MiniPOS. Skip kalau ShopeeItem ini sudah
-            // pernah punya productId YANG MASIH HIDUP (preserve manual link).
-            const existingItem = await this.repo.findExistingShopeeItem(accountId, itemIdStr, modelIdStr);
-            // Validasi: linked product masih ada & belum di-soft-delete.
-            // Kalau user pernah delete produk yg di-link Shopee:
-            //   - REVIVE soft-deleted product (clear deletedAt + isActive=true)
-            //     supaya muncul lagi di list MiniPOS tanpa duplikat.
-            //   - Preserve link (productId di ShopeeItem tetap valid).
-            let linkedAlive = false;
-            if (existingItem?.productId) {
-              const linked = await this.repo.findProductByIdOnly(existingItem.productId);
-              if (linked) {
-                if (linked.deletedAt) {
-                  // Revive: clear soft-delete & re-activate.
-                  await this.repo.reviveProduct(linked.id);
-                  revivedProductCount++;
-                }
-                linkedAlive = true;
-              }
-              // linked == null shouldn't happen (FK exists), but kalau hard
-              // deleted by some other path, linkedAlive=false → fall through
-              // to auto-create.
-            }
-            if (linkedAlive && existingItem?.productId) {
-              autoMatchProductId = existingItem.productId;
-              preservedLinkCount++;
-            } else if (autoMatchProductId) {
-              matchedProductCount++;
-            }
-            // Apply latest Shopee data (name/price/stock/image) ke Product
-            // existing — supaya selalu sinkron dengan Shopee. Skip untuk
-            // auto-create branch (data sudah fresh saat create).
-            if (autoMatchProductId) {
-              await this.applyShopeeDataToProduct({
-                companyId,
-                productId: autoMatchProductId,
-                name: item.name + (m.name ? ` - ${m.name}` : ""),
-                sellingPrice: item.currentPrice ?? 0,
-                stock: m.stock ?? item.totalStock ?? 0,
-                imageUrl: item.imageUrl,
-              });
-            }
-            if (!autoMatchProductId) {
-              const productName =
-                item.name + (m.name ? ` - ${m.name}` : "");
-              const productCode =
-                skuForMatch || `SHOPEE-${itemIdStr}-${modelIdStr}`;
-              // Code wajib unique per company. Kalau collision (rare),
-              // tambah suffix random.
-              const codeCollision = await this.repo.findProductCodeCollision(companyId, productCode);
-              const finalCode = codeCollision
-                ? `${productCode}-${Math.random().toString(36).slice(2, 6)}`
-                : productCode;
-              const sellingPriceVal = item.currentPrice ?? 0;
-              const stockVal = m.stock ?? item.totalStock ?? 0;
-              const newProduct = await this.repo.createProduct({
-                companyId,
-                categoryId: importCategoryId,
-                code: finalCode,
-                name: productName.slice(0, 200),
-                purchasePrice: 0,
-                sellingPrice: sellingPriceVal,
-                stock: stockVal,
-                imageUrl: item.imageUrl,
-                itemType: "PRODUCT",
-                isActive: true,
-                // Default unit wajib supaya form edit UI bisa nampilkan
-                // harga (UI baca dari product_units, bukan Product.sellingPrice).
-                units: {
-                  create: {
-                    name: "pcs",
-                    conversionQty: 1,
-                    sellingPrice: sellingPriceVal,
-                    purchasePrice: 0,
-                    isDefault: true,
-                    sortOrder: 0,
-                  },
-                },
-              });
-              autoMatchProductId = newProduct.id;
-              createdProductCount++;
-
-              // Populate per-branch price + stock supaya tab "Harga & Stok"
-              // di product edit form tidak kosong. Skip kalau company belum
-              // punya branch (rare edge case).
-              const branches = await this.repo.findActiveBranches(companyId);
-              if (branches.length > 0) {
-                await this.repo.createManyBranchProductPrices(
-                  branches.map((b) => ({
-                    branchId: b.id,
-                    productId: newProduct.id,
-                    sellingPrice: sellingPriceVal,
-                    purchasePrice: 0,
-                  })),
-                );
-                await this.repo.createManyBranchStocks(
-                  branches.map((b) => ({
-                    branchId: b.id,
-                    productId: newProduct.id,
-                    quantity: stockVal,
-                    minStock: 5,
-                  })),
-                );
-              }
-            }
-            await this.repo.upsertShopeeItem(
-              accountId,
-              itemIdStr,
-              modelIdStr,
-              {
-                shopeeAccountId: accountId,
-                itemId: itemIdStr,
-                modelId: modelIdStr,
-                name: item.name + (m.name ? ` - ${m.name}` : ""),
-                sku: m.sku || item.sku || null,
-                status: item.status,
-                currentPrice: item.currentPrice,
-                originalPrice: item.originalPrice,
-                totalStock: m.stock ?? item.totalStock,
-                imageUrl: item.imageUrl,
-                hasModel: item.hasModel,
-                productId: autoMatchProductId,
-                lastFetchedAt: now,
-              },
-              {
-                // Update data Shopee. productId hanya di-set kalau existing
-                // belum punya — preserve manual link / auto-link sebelumnya.
-                name: item.name + (m.name ? ` - ${m.name}` : ""),
-                sku: m.sku || item.sku || null,
-                status: item.status,
-                currentPrice: item.currentPrice,
-                originalPrice: item.originalPrice,
-                totalStock: m.stock ?? item.totalStock,
-                imageUrl: item.imageUrl,
-                hasModel: item.hasModel,
-                lastFetchedAt: now,
-                // Set productId di update branch hanya kalau:
-                //  - belum ada productId di existing, ATAU
-                //  - existing productId stale (linked product sudah deleted).
-                // Kalau link valid (linkedAlive), jangan ganggu — preserve.
-                productId: linkedAlive
-                  ? undefined
-                  : autoMatchProductId,
-              },
-            );
-          }
-        }
-        await this.repo.updateAccount(accountId, { lastSyncedAt: now, lastError: null });
-        this.logger.log(
-          `[shopee fetch] account=${accountId} shopee_items=${result.items.length} ` +
-            `created=${createdProductCount} matched=${matchedProductCount} ` +
-            `preserved=${preservedLinkCount} revived=${revivedProductCount}`,
-        );
-        return {
-          ...result,
-          createdProductCount,
-          matchedProductCount,
-          preservedLinkCount,
-          revivedProductCount,
-        };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "unknown";
-        await this.repo.updateAccount(accountId, { lastError: msg });
-        throw err;
-      }
-    }
-
-    // OAUTH mode (default): pakai official API.
-    if (!account.accessToken) {
-      throw new BadRequestException(
-        "Akun OAuth tidak punya access_token. Re-authorize Shopee.",
-      );
-    }
-    const { accessToken, shopId } = await this.getValidAccessToken(accountId);
-
-    // Loop get_item_list sampai has_next_page false.
-    const allItemIds: number[] = [];
-    let offset = 0;
-    let totalCount = 0;
-    while (true) {
-      const page = await this.shopeeApi.getItemList(
-        accessToken,
-        shopId,
-        offset,
-        50,
-      );
-      totalCount = page.totalCount;
-      for (const it of page.items) allItemIds.push(it.item_id);
-      if (!page.hasNextPage || page.items.length === 0) break;
-      offset = page.nextOffset;
-      if (allItemIds.length >= 1000) break; // safety cap
-    }
-
-    // Chunk item_id list ke 50-an, panggil get_item_base_info per chunk.
-    const allItems: ShopeeItemBaseInfo[] = [];
-    for (let i = 0; i < allItemIds.length; i += 50) {
-      const chunk = allItemIds.slice(i, i + 50);
-      const details = await this.shopeeApi.getItemBaseInfo(
-        accessToken,
-        shopId,
-        chunk,
-      );
-      allItems.push(...details);
-    }
-
-    // Update last_synced_at
-    await this.repo.updateAccount(accountId, { lastSyncedAt: new Date(), lastError: null });
-
-    return {
-      totalCount,
-      items: allItems.map((it) => {
-        const priceInfo = it.price_info?.[0];
-        return {
-          itemId: it.item_id,
-          name: it.item_name,
-          sku: it.item_sku ?? null,
-          status: it.item_status,
-          currentPrice: priceInfo?.current_price ?? null,
-          originalPrice: priceInfo?.original_price ?? null,
-          currency: priceInfo?.currency ?? null,
-          totalStock:
-            it.stock_info_v2?.summary_info?.total_available_stock ?? null,
-          imageUrl: it.image?.image_url_list?.[0] ?? null,
-          hasModel: it.has_model,
-          updateTime: it.update_time
-            ? new Date(it.update_time * 1000).toISOString()
-            : null,
-          models: [], // OAuth path: model_id butuh call get_model_list terpisah; skip MVP
-        };
-      }),
-    };
+  ) {
+    return this.stockSync.pushStockForItem(companyId, shopeeItemId, newStock);
   }
 
   /**
@@ -930,86 +499,14 @@ export class MarketplaceShopeeService {
   }
 
   /**
-   * Push stok current MiniPOS untuk produk ke Shopee. Caller harus kasih
-   * `newStock` (hasil aggregate stock di branch yang dipilih). Service ini
-   * tidak menghitung sendiri — biar caller (UI / hook) yang menentukan stok
-   * mana yang dipush (per-branch atau total).
+   * Push stok current MiniPOS untuk produk ke Shopee via marketplace
+   * mapping. Delegates to ShopeeStockSyncService.
    */
   async pushStockToShopee(
     companyId: string,
     mappingId: string,
     newStock: number,
-  ): Promise<{ pushedAt: string; newStock: number }> {
-    if (newStock < 0)
-      throw new BadRequestException("Stok tidak boleh negatif");
-    const safeStock = Math.floor(newStock);
-
-    const mapping = await this.prisma.productMarketplaceMapping.findFirst({
-      where: {
-        id: mappingId,
-        marketplace: "SHOPEE",
-        shopeeAccount: { companyId },
-      },
-      include: { shopeeAccount: true },
-    });
-    if (!mapping) throw new NotFoundException("Mapping tidak ditemukan");
-    if (!mapping.syncEnabled)
-      throw new BadRequestException("Sync mapping ini di-disable");
-
-    const account = mapping.shopeeAccount;
-    if (!account)
-      throw new BadRequestException("Mapping tidak punya akun Shopee");
-    if (account.connectionMode !== "COOKIE") {
-      throw new BadRequestException(
-        "Push stok via scraping hanya untuk akun mode COOKIE. Untuk OAuth pakai endpoint resmi (belum implemented).",
-      );
-    }
-    if (!account.sellerCookie) {
-      throw new BadRequestException(
-        "Cookie session belum di-set. Re-connect Shopee dulu.",
-      );
-    }
-    const tokens = account.scrapingTokens as ScrapingTokens | null;
-    if (!tokens?.xSapRi || !tokens?.xSapSec) {
-      throw new BadRequestException(
-        "Anti-bot tokens belum di-set. Buka Pengaturan Shopee → Update Tokens, paste dari DevTools.",
-      );
-    }
-    if (!mapping.externalModelId) {
-      throw new BadRequestException(
-        "Mapping tidak punya externalModelId (Shopee model_id). Re-link produk dengan model_id yang benar.",
-      );
-    }
-
-    try {
-      await this.scraper.updateStock({
-        cookie: account.sellerCookie,
-        userAgent: account.cookieUserAgent,
-        tokens,
-        productId: Number(mapping.externalItemId),
-        modelId: Number(mapping.externalModelId),
-        locationId: "IDZ",
-        sellableStock: safeStock,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.prisma.shopeeAccount.update({
-        where: { id: account.id },
-        data: { lastError: msg },
-      });
-      throw err;
-    }
-
-    const now = new Date();
-    await this.prisma.productMarketplaceMapping.update({
-      where: { id: mappingId },
-      data: { lastSyncedAt: now, lastMarketplaceStock: safeStock },
-    });
-    await this.prisma.shopeeAccount.update({
-      where: { id: account.id },
-      data: { lastSyncedAt: now, lastError: null },
-    });
-
-    return { pushedAt: now.toISOString(), newStock: safeStock };
+  ) {
+    return this.stockSync.pushStockToShopee(companyId, mappingId, newStock);
   }
 }

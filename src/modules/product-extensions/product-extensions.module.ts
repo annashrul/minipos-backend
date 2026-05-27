@@ -6,6 +6,8 @@ import { ProductTierPricesController } from "./product-tier-prices.controller";
 import { ProductUnitsController } from "./product-units.controller";
 import { ProductVariantsController } from "./product-variants.controller";
 import { ProductBranchSkusController } from "./product-branch-skus.controller";
+import { ProductUnitsService } from "./product-units.service";
+import { ProductPricingService } from "./product-pricing.service";
 
 @Module({
   controllers: [
@@ -15,7 +17,12 @@ import { ProductBranchSkusController } from "./product-branch-skus.controller";
     ProductVariantsController,
     ProductBranchSkusController,
   ],
-  providers: [ProductExtensionsService, ProductExtensionsRepository],
+  providers: [
+    ProductExtensionsService,
+    ProductExtensionsRepository,
+    ProductUnitsService,
+    ProductPricingService,
+  ],
   exports: [ProductExtensionsService],
 })
 export class ProductExtensionsModule {}
