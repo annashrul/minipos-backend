@@ -1,4 +1,4 @@
-﻿import { Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
 import type {
@@ -31,11 +31,11 @@ import type {
   ValidateVoucherResponse,
   VoidAbuseEntryResponse,
 } from "./dto/analytics.dto";
-import { PrismaService } from "../prisma/prisma.service";
+import { AnalyticsRepository } from "./analytics.repository";
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: AnalyticsRepository) {}
 
   // ===========================
   // Margin analyzers
@@ -45,19 +45,7 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<MarginProductResponse[]> {
-    const products = await this.prisma.product.findMany({
-      where: { isActive: true, companyId },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        purchasePrice: true,
-        sellingPrice: true,
-        stock: true,
-        category: { select: { name: true } },
-      },
-      orderBy: { name: "asc" },
-    });
+    const products = await this.repo.findActiveProductsWithCategory(companyId);
 
     return products.map((p) => ({
       id: p.id,
@@ -79,15 +67,7 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<CategoryMarginResponse[]> {
-    const categories = await this.prisma.category.findMany({
-      where: { companyId },
-      include: {
-        products: {
-          where: { isActive: true },
-          select: { purchasePrice: true, sellingPrice: true, stock: true },
-        },
-      },
-    });
+    const categories = await this.repo.findCategoriesWithProducts(companyId);
 
     return categories.map((c) => {
       const totalCost = c.products.reduce((sum, p) => sum + p.purchasePrice, 0);
@@ -125,26 +105,10 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const allProducts = await this.prisma.product.findMany({
-      where: { isActive: true, stock: { gt: 0 }, companyId },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        sellingPrice: true,
-        category: { select: { name: true } },
-      },
-    });
-
-    const recentSales = await this.prisma.transactionItem.findMany({
-      where: {
-        createdAt: { gte: thirtyDaysAgo },
-        transaction: { branch: { companyId } },
-      },
-      select: { productId: true },
-      distinct: ["productId"],
-    });
+    const [allProducts, recentSales] = await Promise.all([
+      this.repo.findActiveProductsWithStock(companyId),
+      this.repo.findRecentSoldProductIds(companyId, thirtyDaysAgo),
+    ]);
 
     const soldProductIds = new Set(recentSales.map((s) => s.productId));
 
@@ -168,47 +132,17 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const params: unknown[] = [thirtyDaysAgo];
-    const branchCond = branchId
-      ? `AND t."branchId" = $${params.push(branchId)}`
-      : "";
-    const companyCond = `AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $${params.push(companyId)})`;
-
-    const slowRows = await this.prisma.$queryRawUnsafe<
-      { productId: string; soldQty: number }[]
-    >(
-      `
-      SELECT
-        ti."productId",
-        COALESCE(SUM(ti.quantity), 0)::int AS "soldQty"
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti."transactionId"
-      WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1
-        ${branchCond}
-        ${companyCond}
-      GROUP BY ti."productId"
-      HAVING COALESCE(SUM(ti.quantity), 0) < 5
-      ORDER BY "soldQty" ASC
-      LIMIT 50
-      `,
-      ...params,
+    const slowRows = await this.repo.findSlowMovingProducts(
+      thirtyDaysAgo,
+      branchId,
+      companyId,
     );
 
     const slowIds = slowRows.map((r) => r.productId);
     if (slowIds.length === 0) return [];
 
     const qtyMap = new Map(slowRows.map((r) => [r.productId, r.soldQty]));
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: slowIds }, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        category: { select: { name: true } },
-      },
-    });
+    const products = await this.repo.findProductsByIds(slowIds);
 
     return products.map((p) => ({
       id: p.id,
@@ -231,25 +165,10 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const params: unknown[] = [thirtyDaysAgo];
-    const branchCond = branchId
-      ? `AND "branchId" = $${params.push(branchId)}`
-      : "";
-    const companyCond = `AND "branchId" IN (SELECT id FROM branches WHERE "companyId" = $${params.push(companyId)})`;
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      { h: number; count: bigint; revenue: bigint }[]
-    >(
-      `
-      SELECT EXTRACT(HOUR FROM "createdAt")::int as h,
-             COUNT(*)::bigint as count,
-             COALESCE(SUM("grandTotal"), 0) as revenue
-      FROM transactions
-      WHERE status = 'COMPLETED' AND "createdAt" >= $1 ${branchCond} ${companyCond}
-      GROUP BY EXTRACT(HOUR FROM "createdAt")
-      ORDER BY h
-      `,
-      ...params,
+    const rows = await this.repo.findPeakHours(
+      thirtyDaysAgo,
+      branchId,
+      companyId,
     );
 
     const hourMap = new Map(
@@ -277,19 +196,7 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<ReorderAlertResponse[]> {
-    return this.prisma.$queryRawUnsafe<ReorderAlertResponse[]>(
-      `
-      SELECT p.id, p.name, p.code, p.stock, p."minStock",
-             s.name as "supplierName"
-      FROM products p
-      LEFT JOIN suppliers s ON p."supplierId" = s.id
-      WHERE p."isActive" = true AND p.stock <= p."minStock"
-        AND p."companyId" = $1
-      ORDER BY (p.stock::float / NULLIF(p."minStock", 0)) ASC
-      LIMIT 20
-      `,
-      companyId,
-    );
+    return this.repo.findReorderAlerts(companyId);
   }
 
   async getReorderRecommendations(
@@ -299,40 +206,12 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const lowStockProducts = await this.prisma.$queryRawUnsafe<
-      {
-        id: string;
-        name: string;
-        code: string;
-        stock: number;
-        minStock: number;
-        supplierName: string | null;
-      }[]
-    >(
-      `
-      SELECT p.id, p.name, p.code, p.stock, p."minStock",
-             s.name as "supplierName"
-      FROM products p
-      LEFT JOIN suppliers s ON p."supplierId" = s.id
-      WHERE p."isActive" = true AND p.stock <= p."minStock"
-        AND p."companyId" = $1
-      ORDER BY (p.stock::float / NULLIF(p."minStock", 0)) ASC
-      `,
-      companyId,
-    );
+    const lowStockProducts = await this.repo.findLowStockProducts(companyId);
 
     const productIds = lowStockProducts.map((p) => p.id);
     const salesAgg =
       productIds.length > 0
-        ? await this.prisma.transactionItem.groupBy({
-            by: ["productId"],
-            where: {
-              productId: { in: productIds },
-              createdAt: { gte: thirtyDaysAgo },
-              transaction: { status: "COMPLETED" },
-            },
-            _sum: { quantity: true },
-          })
+        ? await this.repo.findSalesAggByProductIds(productIds, thirtyDaysAgo)
         : [];
 
     const salesMap = new Map(
@@ -376,21 +255,7 @@ export class AnalyticsService {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      { name: string; role: string; voidCount: number }[]
-    >(
-      `
-        SELECT u.name, u.role, COUNT(t.id)::int AS "voidCount"
-        FROM transactions t
-        JOIN users u ON u.id = t."userId"
-        WHERE t.status = 'VOIDED' AND t."createdAt" >= $1
-          AND u."companyId" = $2
-        GROUP BY u.id, u.name, u.role
-        ORDER BY "voidCount" DESC
-        `,
-      sevenDaysAgo,
-      companyId,
-    );
+    const rows = await this.repo.findVoidAbuse(sevenDaysAgo, companyId);
 
     return rows.map((r) => ({
       userName: r.name,
@@ -407,37 +272,7 @@ export class AnalyticsService {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const transactions = await this.prisma.$queryRawUnsafe<
-      {
-        invoiceNumber: string;
-        invoiceDisplayNumber: string | null;
-        cashierName: string;
-        role: string;
-        subtotal: number;
-        discountAmount: number;
-        grandTotal: number;
-        createdAt: string;
-      }[]
-    >(
-      `
-      SELECT t."invoiceNumber",
-             t."invoiceDisplayNumber",
-             u.name AS "cashierName",
-             u.role,
-             t.subtotal,
-             t."discountAmount",
-             t."grandTotal",
-             t."createdAt"::text
-      FROM transactions t
-      JOIN users u ON u.id = t."userId"
-      WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1
-        AND t."discountAmount" > 0
-        AND t.subtotal > 0
-        AND (t."discountAmount" / t.subtotal) * 100 > 20
-        AND u."companyId" = $2
-      ORDER BY t."discountAmount" DESC
-      `,
+    const transactions = await this.repo.findUnusualDiscounts(
       sevenDaysAgo,
       companyId,
     );
@@ -465,24 +300,7 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      { d: Date; revenue: bigint; cost: bigint }[]
-    >(
-      `
-      SELECT DATE_TRUNC('day', t."createdAt") as d,
-             COALESCE(SUM(t."grandTotal"), 0) as revenue,
-             COALESCE(SUM(ti.quantity * p."purchasePrice"), 0) as cost
-      FROM transactions t
-      JOIN transaction_items ti ON ti."transactionId" = t.id
-      JOIN products p ON p.id = ti."productId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
-        AND t."branchId" IN (SELECT id FROM branches WHERE "companyId" = $2)
-      GROUP BY DATE_TRUNC('day', t."createdAt")
-      ORDER BY d ASC
-    `,
-      thirtyDaysAgo,
-      companyId,
-    );
+    const rows = await this.repo.findDailyProfit(thirtyDaysAgo, companyId);
 
     return rows.map((r) => ({
       date: toDateOnly(r.d),
@@ -496,29 +314,12 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<ShiftProfitEntry[]> {
-    const shifts = await this.prisma.cashierShift.findMany({
-      where: { isOpen: false, closedAt: { not: null }, branch: { companyId } },
-      include: { user: { select: { name: true } } },
-      orderBy: { closedAt: "desc" },
-      take: 30,
-    });
+    const shifts = await this.repo.findClosedShifts(companyId);
     if (shifts.length === 0) return [];
-    const rows = await this.prisma.$queryRawUnsafe<
-      { shiftId: string; revenue: number; txCount: number }[]
-    >(
-      `SELECT cs.id as "shiftId",
-              COALESCE(SUM(t."grandTotal"), 0)::float AS revenue,
-              COUNT(t.id)::int AS "txCount"
-       FROM cashier_shifts cs
-       LEFT JOIN transactions t ON t."userId" = cs."userId"
-                                AND t.status = 'COMPLETED'
-                                AND t."createdAt" >= cs."openedAt"
-                                AND t."createdAt" <= cs."closedAt"
-       WHERE cs.id = ANY($1)
-       GROUP BY cs.id`,
-      shifts.map((s) => s.id),
-    );
+
+    const rows = await this.repo.findShiftRevenues(shifts.map((s) => s.id));
     const rowMap = new Map(rows.map((r) => [r.shiftId, r]));
+
     return shifts.map((shift) => {
       const agg = rowMap.get(shift.id) ?? { revenue: 0, txCount: 0 };
       return {
@@ -540,61 +341,18 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<SupplierRankingResponse[]> {
-    return this.prisma.$queryRawUnsafe<SupplierRankingResponse[]>(
-      `
-      SELECT s.name,
-             COUNT(DISTINCT p.id)::int AS "productCount",
-             COALESCE(SUM(po."totalAmount"), 0)::float AS "totalPOValue",
-             COUNT(DISTINCT po.id)::int AS "poCount"
-      FROM suppliers s
-      LEFT JOIN products p ON p."supplierId" = s.id AND p."isActive" = true
-      LEFT JOIN purchase_orders po ON po."supplierId" = s.id
-      WHERE s."isActive" = true AND s."companyId" = $1
-      GROUP BY s.id, s.name
-      ORDER BY "totalPOValue" DESC
-      `,
-      companyId,
-    );
+    return this.repo.findSupplierRanking(companyId) as Promise<
+      SupplierRankingResponse[]
+    >;
   }
 
   async getSupplierDebt(
     companyId: string,
     _branchId?: string,
   ): Promise<SupplierDebtResponse[]> {
-    return this.prisma.$queryRawUnsafe<SupplierDebtResponse[]>(
-      `
-      SELECT
-        s.name as "supplierName",
-        COALESCE((
-          SELECT SUM(po."totalAmount")
-          FROM purchase_orders po
-          WHERE po."supplierId" = s.id
-            AND po.status = 'RECEIVED'
-        ), 0)::float as "totalPO",
-        COALESCE((
-          SELECT SUM(sp.amount)
-          FROM supplier_payments sp
-          WHERE sp."supplierId" = s.id
-        ), 0)::float as "totalPaid",
-        (
-          COALESCE((
-            SELECT SUM(po."totalAmount")
-            FROM purchase_orders po
-            WHERE po."supplierId" = s.id
-              AND po.status = 'RECEIVED'
-          ), 0) -
-          COALESCE((
-            SELECT SUM(sp.amount)
-            FROM supplier_payments sp
-            WHERE sp."supplierId" = s.id
-          ), 0)
-        )::float as debt
-      FROM suppliers s
-      WHERE s."isActive" = true AND s."companyId" = $1
-      ORDER BY debt DESC
-      `,
-      companyId,
-    );
+    return this.repo.findSupplierDebt(companyId) as Promise<
+      SupplierDebtResponse[]
+    >;
   }
 
   // ===========================
@@ -606,21 +364,8 @@ export class AnalyticsService {
     _branchId?: string,
   ): Promise<PromoEffectivenessResponse[]> {
     const [promotions, txAgg] = await Promise.all([
-      this.prisma.promotion.findMany({
-        where: { companyId },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      }),
-      this.prisma.$queryRaw<
-        { promoApplied: string; usageCount: number; totalDiscount: number }[]
-      >`
-          SELECT "promoApplied",
-                 COUNT(*)::int AS "usageCount",
-                 COALESCE(SUM("discountAmount"), 0)::float AS "totalDiscount"
-          FROM transactions
-          WHERE status = 'COMPLETED' AND "promoApplied" IS NOT NULL
-          GROUP BY "promoApplied"
-      `,
+      this.repo.findPromotions(companyId),
+      this.repo.findPromoTxAgg(),
     ]);
 
     const txMap = new Map(txAgg.map((r) => [r.promoApplied, r]));
@@ -651,22 +396,10 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    return this.prisma.$queryRawUnsafe<CashierPerformanceEntry[]>(
-      `
-      SELECT u.name,
-             COUNT(t.id)::int AS transactions,
-             COALESCE(SUM(t."grandTotal"), 0)::float AS revenue,
-             COALESCE(AVG(t."grandTotal"), 0)::float AS "avgTransaction"
-      FROM transactions t
-      JOIN users u ON u.id = t."userId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
-        AND u."companyId" = $2
-      GROUP BY u.id, u.name
-      ORDER BY revenue DESC
-      `,
+    return this.repo.findCashierPerformance(
       thirtyDaysAgo,
       companyId,
-    );
+    ) as Promise<CashierPerformanceEntry[]>;
   }
 
   // ===========================
@@ -677,14 +410,7 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<RepeatCustomerResponse[]> {
-    const customers = await this.prisma.customer.findMany({
-      where: { companyId },
-      include: {
-        _count: { select: { transactions: true } },
-      },
-      orderBy: { totalSpending: "desc" },
-      take: 20,
-    });
+    const customers = await this.repo.findRepeatCustomers(companyId);
 
     return customers.map((c) => ({
       id: c.id,
@@ -703,16 +429,7 @@ export class AnalyticsService {
     customerId: string,
     _branchId?: string,
   ): Promise<CustomerFavoriteResponse[]> {
-    const items = await this.prisma.transactionItem.groupBy({
-      by: ["productId", "productName"],
-      where: {
-        transaction: { customerId },
-      },
-      _sum: { quantity: true, subtotal: true },
-      _count: true,
-      orderBy: { _sum: { quantity: "desc" } },
-      take: 10,
-    });
+    const items = await this.repo.findCustomerFavorites(customerId);
 
     return items.map((i) => ({
       productName: i.productName,
@@ -730,20 +447,10 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const customers = await this.prisma.customer.findMany({
-      where: {
-        companyId,
-        transactions: { some: { createdAt: { gte: thirtyDaysAgo } } },
-      },
-      include: {
-        transactions: {
-          where: { createdAt: { gte: thirtyDaysAgo }, status: "COMPLETED" },
-          select: { createdAt: true, grandTotal: true },
-          orderBy: { createdAt: "desc" },
-        },
-      },
-      take: 20,
-    });
+    const customers = await this.repo.findShoppingFrequencyCustomers(
+      companyId,
+      thirtyDaysAgo,
+    );
 
     return customers
       .map((c) => {
@@ -773,12 +480,7 @@ export class AnalyticsService {
     companyId: string,
     _branchId?: string,
   ): Promise<LoyaltySummaryResponse[]> {
-    const levels = await this.prisma.customer.groupBy({
-      by: ["memberLevel"],
-      where: { companyId },
-      _count: true,
-      _sum: { totalSpending: true, points: true },
-    });
+    const levels = await this.repo.findLoyaltySummary(companyId);
 
     return levels.map((l) => ({
       level: l.memberLevel,
@@ -796,18 +498,7 @@ export class AnalyticsService {
     companyId: string,
   ): Promise<ActivePromotionResponse[]> {
     const now = new Date();
-    const promos = await this.prisma.promotion.findMany({
-      where: {
-        isActive: true,
-        companyId,
-        startDate: { lte: now },
-        endDate: { gte: now },
-      },
-      include: {
-        category: { select: { id: true, name: true } },
-        product: { select: { id: true, name: true } },
-      },
-    });
+    const promos = await this.repo.findActivePromotions(companyId, now);
 
     return promos.map((p) => ({
       id: p.id,
@@ -837,19 +528,7 @@ export class AnalyticsService {
   ): Promise<CalculateAutoPromoResponse> {
     const { items, subtotal } = body;
     const now = new Date();
-    const promotions = await this.prisma.promotion.findMany({
-      where: {
-        isActive: true,
-        companyId,
-        startDate: { lte: now },
-        endDate: { gte: now },
-        type: { notIn: ["VOUCHER", "BUNDLE"] },
-      },
-      include: {
-        category: { select: { id: true } },
-        product: { select: { id: true } },
-      },
-    });
+    const promotions = await this.repo.findAutoPromotions(companyId, now);
 
     const appliedPromos: AppliedPromoResponse[] = [];
     let totalDiscount = 0;
@@ -860,10 +539,9 @@ export class AnalyticsService {
       productIdsForPrice.length > 0
         ? new Map(
             (
-              await this.prisma.product.findMany({
-                where: { id: { in: Array.from(new Set(productIdsForPrice)) } },
-                select: { id: true, name: true, code: true, sellingPrice: true },
-              })
+              await this.repo.findProductsByIdsWithPrice(
+                Array.from(new Set(productIdsForPrice)),
+              )
             ).map((p) => [p.id, p]),
           )
         : new Map<
@@ -986,16 +664,7 @@ export class AnalyticsService {
   ): Promise<ValidateVoucherResponse> {
     const { code, subtotal } = body;
     const now = new Date();
-    const promo = await this.prisma.promotion.findFirst({
-      where: {
-        voucherCode: code.toUpperCase(),
-        isActive: true,
-        companyId,
-        startDate: { lte: now },
-        endDate: { gte: now },
-        type: "VOUCHER",
-      },
-    });
+    const promo = await this.repo.findVoucher(companyId, code, now);
 
     if (!promo) return { error: "Voucher tidak valid atau sudah expired" };
     if (promo.usageLimit && promo.usageCount >= promo.usageLimit) {
@@ -1025,21 +694,7 @@ export class AnalyticsService {
   ): Promise<FindCustomerByPhoneResponse> {
     if (!phone || phone.length < 4) return null;
 
-    return this.prisma.customer.findFirst({
-      where: {
-        companyId,
-        OR: [{ phone: { contains: phone } }, { memberCardCode: phone }],
-      },
-      select: {
-        id: true,
-        name: true,
-        phone: true,
-        memberLevel: true,
-        points: true,
-        totalSpending: true,
-        memberCardCode: true,
-      },
-    });
+    return this.repo.findCustomerByPhone(companyId, phone);
   }
 
   async getTebusMurahOptions(
@@ -1048,50 +703,16 @@ export class AnalyticsService {
   ): Promise<TebusMurahOptionResponse[]> {
     const { items, subtotal, selections } = body;
     const now = new Date();
-    const promos = await this.prisma.promotion.findMany({
-      where: {
-        isActive: true,
-        companyId,
-        startDate: { lte: now },
-        endDate: { gte: now },
-        type: "BUNDLE",
-        // Promo eligible kalau punya getProductId (legacy single) ATAU
-        // punya entry di getProducts (multi-reward).
-        OR: [
-          { getProductId: { not: null } },
-          { getProducts: { some: {} } },
-        ],
-      },
-      include: {
-        category: { select: { id: true, name: true } },
-        product: { select: { id: true, name: true } },
-        triggerProducts: {
-          include: { product: { select: { id: true, name: true } } },
-        },
-        getProducts: {
-          include: { product: { select: { id: true, name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const promos = await this.repo.findBundlePromotions(companyId, now);
 
     const productIds = promos.flatMap((promo) => {
       const ids = promo.getProducts.map((gp) => gp.productId);
       if (promo.getProductId) ids.push(promo.getProductId);
       return ids;
     });
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: Array.from(new Set(productIds)) } },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        sellingPrice: true,
-        stock: true,
-        imageUrl: true,
-        minStock: true,
-      },
-    });
+    const products = await this.repo.findProductsForTebusMurah(
+      Array.from(new Set(productIds)),
+    );
     const productMap = new Map(products.map((product) => [product.id, product]));
     // Quota selektif PER promoId (bukan per option). Pilih salah satu produk
     // tebus konsumsi 1 quota promo; option lain auto-berkurang remainingQty-nya.

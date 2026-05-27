@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -28,101 +28,17 @@ import type {
   UpdatePurchaseDto,
   UpdatePurchaseStatusDto,
 } from "./dto/purchases.dto";
-import { dayRange, nextDocumentNumber } from "@/common/utils/document-number";
 import { PrismaService } from "../prisma/prisma.service";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { tenantWhere } from "@/common/utils/tenant";
-
-const PO_ITEM_SELECT = {
-  id: true,
-  purchaseOrderId: true,
-  productId: true,
-  product: {
-    select: { id: true, code: true, name: true, purchasePrice: true },
-  },
-  unitId: true,
-  unit: { select: { id: true, name: true, purchasePrice: true } },
-  variantId: true,
-  variant: {
-    select: {
-      id: true,
-      purchasePriceOverride: true,
-      options: {
-        select: {
-          option: { select: { name: true } },
-        },
-      },
-    },
-  },
-  quantity: true,
-  receivedQty: true,
-  unitPrice: true,
-  previousPurchasePrice: true,
-  subtotal: true,
-} satisfies Prisma.PurchaseOrderItemSelect;
-
-const PO_SELECT = {
-  id: true,
-  orderNumber: true,
-  purchaseTransactionNumber: true,
-  supplierId: true,
-  supplier: { select: { id: true, name: true, companyId: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true, companyId: true } },
-  companyId: true,
-  status: true,
-  totalAmount: true,
-  receivedAmount: true,
-  paidAmount: true,
-  notes: true,
-  orderDate: true,
-  expectedDate: true,
-  receivedDate: true,
-  createdBy: true,
-  createdAt: true,
-  updatedAt: true,
-  items: { select: PO_ITEM_SELECT, orderBy: { createdAt: "asc" } },
-  _count: { select: { goodsReceipts: true } },
-} satisfies Prisma.PurchaseOrderSelect;
-
-const RECEIPT_ITEM_SELECT = {
-  id: true,
-  goodsReceiptId: true,
-  productId: true,
-  productName: true,
-  quantityOrdered: true,
-  quantityReceived: true,
-  unitPrice: true,
-  previousPurchasePrice: true,
-  notes: true,
-} satisfies Prisma.GoodsReceiptItemSelect;
-
-const RECEIPT_SELECT = {
-  id: true,
-  receiptNumber: true,
-  purchaseOrderId: true,
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  receivedBy: true,
-  receivedByName: true,
-  notes: true,
-  receivedAt: true,
-  createdAt: true,
-  items: { select: RECEIPT_ITEM_SELECT, orderBy: { createdAt: "asc" } },
-} satisfies Prisma.GoodsReceiptSelect;
-
-const PO_DETAIL_SELECT = {
-  ...PO_SELECT,
-  goodsReceipts: { select: RECEIPT_SELECT, orderBy: { receivedAt: "desc" } },
-} satisfies Prisma.PurchaseOrderSelect;
-
-type RawPO = Prisma.PurchaseOrderGetPayload<{ select: typeof PO_SELECT }>;
-type RawPODetail = Prisma.PurchaseOrderGetPayload<{
-  select: typeof PO_DETAIL_SELECT;
-}>;
-type RawReceipt = Prisma.GoodsReceiptGetPayload<{
-  select: typeof RECEIPT_SELECT;
-}>;
+import {
+  PurchasesRepository,
+  PO_DETAIL_SELECT,
+  RECEIPT_SELECT,
+  type RawPO,
+  type RawPODetail,
+  type RawReceipt,
+} from "./purchases.repository";
 
 const ALLOWED_TRANSITIONS: Record<
   PurchaseOrderStatusDto,
@@ -140,6 +56,7 @@ const ALLOWED_TRANSITIONS: Record<
 export class PurchasesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: PurchasesRepository,
     private readonly rackStockHelper: RackStockHelperService,
     private readonly assert: AssertService,
   ) {}
@@ -152,14 +69,8 @@ export class PurchasesService {
     const { page, perPage } = query;
 
     const [rows, total] = await Promise.all([
-      this.prisma.purchaseOrder.findMany({
-        where,
-        select: PO_SELECT,
-        orderBy: { orderDate: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.purchaseOrder.count({ where }),
+      this.repo.findMany(where, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toPurchaseResponse), total, page, perPage);
@@ -172,17 +83,8 @@ export class PurchasesService {
     const where = this.buildListWhere(companyId, query);
 
     const [agg, byStatus] = await Promise.all([
-      this.prisma.purchaseOrder.aggregate({
-        where,
-        _sum: { totalAmount: true },
-        _count: { _all: true },
-      }),
-      this.prisma.purchaseOrder.groupBy({
-        by: ["status"],
-        where,
-        _sum: { totalAmount: true },
-        _count: { _all: true },
-      }),
+      this.repo.aggregate(where),
+      this.repo.groupByStatus(where),
     ]);
 
     return {
@@ -200,10 +102,7 @@ export class PurchasesService {
     companyId: string,
     id: string,
   ): Promise<PurchaseOrderDetailResponse> {
-    const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: PO_DETAIL_SELECT,
-    });
+    const po = await this.repo.findById(companyId, id);
     if (!po) throw new NotFoundException("Purchase order tidak ditemukan");
     return toPurchaseDetailResponse(po);
   }
@@ -218,9 +117,9 @@ export class PurchasesService {
     if (dto.branchId) await this.assert.branch(companyId, dto.branchId);
 
     const totalAmount = dto.items.reduce((sum, it) => sum + it.subtotal, 0);
-    const orderNumber = await this.nextOrderNumber(companyId);
+    const orderNumber = await this.repo.nextOrderNumber(companyId);
     const purchaseTransactionNumber =
-      await this.nextPurchaseTransactionNumber(companyId);
+      await this.repo.nextPurchaseTransactionNumber(companyId);
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -279,75 +178,12 @@ export class PurchasesService {
     }
   }
 
-  // Generate BL-YYYYMMDD-NNNN — pakai utility shared `nextDocumentNumber`
-  // yang reusable lintas module (INV/GR/OP/TR/dll cuma beda prefix).
-  private async nextPurchaseTransactionNumber(
-    companyId: string,
-  ): Promise<string> {
-    const { start, end } = dayRange();
-    return nextDocumentNumber({
-      prefix: "BL",
-      countToday: () =>
-        this.prisma.purchaseOrder.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.purchaseOrder.findFirst({
-          where: { companyId, purchaseTransactionNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
-    });
-  }
-
-  // PO order number — sama format XX-YYYYMMDD-NNNN, prefix PO.
-  private async nextOrderNumber(companyId: string): Promise<string> {
-    const { start, end } = dayRange();
-    return nextDocumentNumber({
-      prefix: "PO",
-      countToday: () =>
-        this.prisma.purchaseOrder.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.purchaseOrder.findFirst({
-          where: { companyId, orderNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
-    });
-  }
-
-  // GR receipt number — prefix GR. Count berdasarkan goods_receipts table.
-  private async nextReceiptNumber(companyId: string): Promise<string> {
-    const { start, end } = dayRange();
-    return nextDocumentNumber({
-      prefix: "GR",
-      countToday: () =>
-        this.prisma.goodsReceipt.count({
-          where: { companyId, createdAt: { gte: start, lt: end } },
-        }),
-      exists: async (candidate) => {
-        const found = await this.prisma.goodsReceipt.findFirst({
-          where: { companyId, receiptNumber: candidate },
-          select: { id: true },
-        });
-        return !!found;
-      },
-    });
-  }
-
   async update(
     companyId: string,
     id: string,
     dto: UpdatePurchaseDto,
   ): Promise<PurchaseOrderDetailResponse> {
-    const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: { id: true, status: true },
-    });
+    const existing = await this.repo.findByIdForUpdate(companyId, id);
     if (!existing)
       throw new NotFoundException("Purchase order tidak ditemukan");
     if (existing.status !== "DRAFT" && existing.status !== "ORDERED") {
@@ -412,16 +248,7 @@ export class PurchasesService {
     id: string,
     dto: UpdatePurchaseStatusDto,
   ): Promise<PurchaseOrderDetailResponse> {
-    const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: {
-        id: true,
-        status: true,
-        orderNumber: true,
-        branchId: true,
-        totalAmount: true,
-      },
-    });
+    const existing = await this.repo.findByIdForStatusUpdate(companyId, id);
     if (!existing)
       throw new NotFoundException("Purchase order tidak ditemukan");
 
@@ -473,48 +300,9 @@ export class PurchasesService {
     dto: ReceivePurchaseDto,
     retryCount = 0,
   ): Promise<ReceivePurchaseResponse> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true },
-    });
+    const user = await this.repo.findUserName(userId);
     const userName = user?.name ?? null;
-    const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: {
-        id: true,
-        orderNumber: true,
-        purchaseTransactionNumber: true,
-        status: true,
-        branchId: true,
-        supplierId: true,
-        supplier: { select: { id: true, name: true } },
-        paidAmount: true,
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            unitId: true,
-            unit: {
-              select: { id: true, isDefault: true, conversionQty: true },
-            },
-            variantId: true,
-            quantity: true,
-            receivedQty: true,
-            unitPrice: true,
-            previousPurchasePrice: true,
-            product: { select: { id: true, name: true } },
-            variant: {
-              select: {
-                id: true,
-                options: {
-                  select: { option: { select: { name: true } } },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const po = await this.repo.findByIdForReceive(companyId, id);
     if (!po) throw new NotFoundException("Purchase order tidak ditemukan");
     if (po.status !== "ORDERED" && po.status !== "PARTIAL") {
       throw new BadRequestException(
@@ -577,7 +365,7 @@ export class PurchasesService {
       resolvedInputs.push({ ...input, _resolvedPoItemId: poItem.id });
     }
 
-    const receiptNumber = await this.nextReceiptNumber(companyId);
+    const receiptNumber = await this.repo.nextReceiptNumber(companyId);
 
     // Pre-pass: snapshot harga master sebelum di-sync. Map keyed by resolved
     // PO item id supaya bisa di-lookup saat create GR item + saat compare.
@@ -586,26 +374,14 @@ export class PurchasesService {
       const poItem = itemById.get(input._resolvedPoItemId)!;
       let oldPrice: number | null = null;
       if (poItem.unitId) {
-        const u = await this.prisma.productUnit.findUnique({
-          where: { id: poItem.unitId },
-          select: { purchasePrice: true },
-        });
+        const u = await this.repo.findProductUnitPrice(poItem.unitId);
         oldPrice = u?.purchasePrice ?? null;
       } else if (poItem.variantId) {
-        const v = await this.prisma.productVariant.findUnique({
-          where: { id: poItem.variantId },
-          select: {
-            purchasePriceOverride: true,
-            product: { select: { purchasePrice: true } },
-          },
-        });
+        const v = await this.repo.findVariantPrice(poItem.variantId);
         oldPrice =
           v?.purchasePriceOverride ?? v?.product?.purchasePrice ?? null;
       } else {
-        const p = await this.prisma.product.findUnique({
-          where: { id: poItem.productId },
-          select: { purchasePrice: true },
-        });
+        const p = await this.repo.findProductPrice(poItem.productId);
         oldPrice = p?.purchasePrice ?? null;
       }
       oldPriceByPoItemId.set(input._resolvedPoItemId, oldPrice);
@@ -975,20 +751,7 @@ export class PurchasesService {
     id: string,
     dto: ClosePurchaseDto,
   ): Promise<ClosePurchaseResponse> {
-    const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: {
-        id: true,
-        orderNumber: true,
-        purchaseTransactionNumber: true,
-        status: true,
-        totalAmount: true,
-        receivedAmount: true,
-        paidAmount: true,
-        branchId: true,
-        notes: true,
-      },
-    });
+    const po = await this.repo.findByIdForClose(companyId, id);
     if (!po) throw new NotFoundException("Purchase order tidak ditemukan");
     if (po.status !== "PARTIAL") {
       throw new BadRequestException(
@@ -1153,33 +916,12 @@ export class PurchasesService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.purchaseTransactionLog.findMany({
+      this.repo.findTransactionLogs(
         where,
-        select: {
-          id: true,
-          purchaseOrderId: true,
-          purchaseOrder: {
-            select: {
-              id: true,
-              orderNumber: true,
-              purchaseTransactionNumber: true,
-              supplier: { select: { id: true, name: true } },
-            },
-          },
-          branchId: true,
-          documentNumber: true,
-          documentType: true,
-          status: true,
-          amount: true,
-          note: true,
-          createdBy: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
-      }),
-      this.prisma.purchaseTransactionLog.count({ where }),
+        (query.page - 1) * query.perPage,
+        query.perPage,
+      ),
+      this.repo.countTransactionLogs(where),
     ]);
 
     // Enrich branch + user.
@@ -1191,16 +933,10 @@ export class PurchasesService {
     );
     const [branches, users] = await Promise.all([
       branchIds.length > 0
-        ? this.prisma.branch.findMany({
-            where: { id: { in: branchIds }, companyId },
-            select: { id: true, name: true },
-          })
+        ? this.repo.findBranchesByIds(companyId, branchIds)
         : Promise.resolve([] as { id: string; name: string }[]),
       userIds.length > 0
-        ? this.prisma.user.findMany({
-            where: { id: { in: userIds } },
-            select: { id: true, name: true },
-          })
+        ? this.repo.findUsersByIds(userIds)
         : Promise.resolve([] as { id: string; name: string }[]),
     ]);
     const branchMap = new Map(branches.map((b) => [b.id, b]));
@@ -1238,14 +974,7 @@ export class PurchasesService {
   }
 
   async delete(companyId: string, id: string): Promise<{ success: true }> {
-    const existing = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...tenantWhere(companyId, "direct", "supplier", "branch") },
-      select: {
-        id: true,
-        status: true,
-        _count: { select: { goodsReceipts: true } },
-      },
-    });
+    const existing = await this.repo.findByIdForDelete(companyId, id);
     if (!existing)
       throw new NotFoundException("Purchase order tidak ditemukan");
     if (existing.status !== "DRAFT") {
@@ -1258,7 +987,7 @@ export class PurchasesService {
         "Purchase order yang sudah memiliki penerimaan tidak bisa dihapus",
       );
     }
-    await this.prisma.purchaseOrder.delete({ where: { id } });
+    await this.repo.deletePurchaseOrder(id);
     return { success: true };
   }
 

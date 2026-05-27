@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
 import {
   ShopeeApiService,
   type ShopeeItemBaseInfo,
@@ -14,6 +14,7 @@ import {
   type ScrapingTokens,
 } from "./shopee-scraper.service";
 import { ShopeePlaywrightService } from "./shopee-playwright.service";
+import { MarketplaceShopeeRepository } from "./marketplace-shopee.repository";
 
 /**
  * Orchestration layer untuk Shopee integration. Handle:
@@ -27,6 +28,7 @@ export class MarketplaceShopeeService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: MarketplaceShopeeRepository,
     private readonly shopeeApi: ShopeeApiService,
     private readonly scraper: ShopeeScraperService,
     private readonly playwright: ShopeePlaywrightService,
@@ -64,11 +66,10 @@ export class MarketplaceShopeeService {
     const cleaned = cookie.trim();
     const info = await this.scraper.verifyCookie(cleaned, userAgent);
 
-    const account = await this.prisma.shopeeAccount.upsert({
-      where: {
-        companyId_shopId: { companyId, shopId: info.shopId },
-      },
-      create: {
+    const account = await this.repo.upsertAccountByCookie(
+      companyId,
+      info.shopId,
+      {
         companyId,
         shopId: info.shopId,
         shopName: info.shopName,
@@ -77,14 +78,14 @@ export class MarketplaceShopeeService {
         cookieUserAgent: userAgent,
         isActive: true,
       },
-      update: {
+      {
         connectionMode: "COOKIE",
         sellerCookie: cleaned,
         cookieUserAgent: userAgent,
         isActive: true,
         lastError: null,
       },
-    });
+    );
     return { accountId: account.id, shopId: info.shopId };
   }
 
@@ -128,11 +129,10 @@ export class MarketplaceShopeeService {
       );
     }
 
-    const account = await this.prisma.shopeeAccount.upsert({
-      where: {
-        companyId_shopId: { companyId, shopId },
-      },
-      create: {
+    const account = await this.repo.upsertAccountByOAuth(
+      companyId,
+      shopId,
+      {
         companyId,
         shopId,
         shopName,
@@ -142,7 +142,7 @@ export class MarketplaceShopeeService {
         refreshExpiresAt,
         isActive: true,
       },
-      update: {
+      {
         shopName,
         accessToken: tokenData.accessToken,
         refreshToken: tokenData.refreshToken,
@@ -151,27 +151,12 @@ export class MarketplaceShopeeService {
         isActive: true,
         lastError: null,
       },
-    });
+    );
     return { accountId: account.id, shopName };
   }
 
   async listAccounts(companyId: string) {
-    const accounts = await this.prisma.shopeeAccount.findMany({
-      where: { companyId },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        shopId: true,
-        shopName: true,
-        region: true,
-        isActive: true,
-        expiresAt: true,
-        refreshExpiresAt: true,
-        lastSyncedAt: true,
-        lastError: true,
-        createdAt: true,
-      },
-    });
+    const accounts = await this.repo.findManyAccounts(companyId);
     return accounts.map((a) => ({
       id: a.id,
       shopId: a.shopId,
@@ -195,12 +180,9 @@ export class MarketplaceShopeeService {
   }
 
   async disconnect(companyId: string, accountId: string): Promise<void> {
-    const account = await this.prisma.shopeeAccount.findFirst({
-      where: { id: accountId, companyId },
-      select: { id: true },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId, { id: true });
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
-    await this.prisma.shopeeAccount.delete({ where: { id: accountId } });
+    await this.repo.deleteAccount(accountId);
   }
 
   /**
@@ -211,9 +193,7 @@ export class MarketplaceShopeeService {
     accessToken: string;
     shopId: string;
   }> {
-    const account = await this.prisma.shopeeAccount.findUnique({
-      where: { id: accountId },
-    });
+    const account = await this.repo.findAccountById(accountId);
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
 
     // Only valid for OAUTH mode — caller harus cek connectionMode dulu.
@@ -236,14 +216,11 @@ export class MarketplaceShopeeService {
       account.shopId,
     );
     const newExpiresAt = new Date(Date.now() + refreshed.expireIn * 1000);
-    await this.prisma.shopeeAccount.update({
-      where: { id: accountId },
-      data: {
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        expiresAt: newExpiresAt,
-        lastError: null,
-      },
+    await this.repo.updateAccount(accountId, {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: newExpiresAt,
+      lastError: null,
     });
     return { accessToken: refreshed.accessToken, shopId: account.shopId };
   }
@@ -268,51 +245,20 @@ export class MarketplaceShopeeService {
   }): Promise<void> {
     const { companyId, productId, name, sellingPrice, stock, imageUrl } =
       params;
-    await this.prisma.product.update({
-      where: { id: productId },
-      data: {
-        name: name.slice(0, 200),
-        sellingPrice,
-        stock,
-        imageUrl,
-      },
+    await this.repo.updateProduct(productId, {
+      name: name.slice(0, 200),
+      sellingPrice,
+      stock,
+      imageUrl,
     });
     // Update default ProductUnit (kalau ada) — biar form edit nampilin harga
     // baru. Pakai updateMany supaya tidak error kalau belum ada default unit.
-    await this.prisma.productUnit.updateMany({
-      where: { productId, isDefault: true },
-      data: { sellingPrice },
-    });
+    await this.repo.updateProductUnitPrice(productId, sellingPrice);
     // Update / create per-branch price + stock untuk semua cabang aktif.
-    const branches = await this.prisma.branch.findMany({
-      where: { companyId, isActive: true },
-      select: { id: true },
-    });
+    const branches = await this.repo.findActiveBranches(companyId);
     for (const b of branches) {
-      await this.prisma.branchProductPrice.upsert({
-        where: {
-          branchId_productId: { branchId: b.id, productId },
-        },
-        create: {
-          branchId: b.id,
-          productId,
-          sellingPrice,
-          purchasePrice: 0,
-        },
-        update: { sellingPrice },
-      });
-      await this.prisma.branchStock.upsert({
-        where: {
-          branchId_productId: { branchId: b.id, productId },
-        },
-        create: {
-          branchId: b.id,
-          productId,
-          quantity: stock,
-          minStock: 5,
-        },
-        update: { quantity: stock },
-      });
+      await this.repo.upsertBranchProductPrice(b.id, productId, sellingPrice, 0);
+      await this.repo.upsertBranchStock(b.id, productId, stock, 5);
     }
   }
 
@@ -323,20 +269,9 @@ export class MarketplaceShopeeService {
   private async ensureShopeeImportCategory(
     companyId: string,
   ): Promise<string> {
-    const existing = await this.prisma.category.findFirst({
-      where: { companyId, name: "Shopee Import", kind: "PRODUCT" },
-      select: { id: true },
-    });
+    const existing = await this.repo.findShopeeImportCategory(companyId);
     if (existing) return existing.id;
-    const created = await this.prisma.category.create({
-      data: {
-        companyId,
-        name: "Shopee Import",
-        kind: "PRODUCT",
-        description: "Produk auto-imported dari Shopee. Edit jika perlu.",
-      },
-      select: { id: true },
-    });
+    const created = await this.repo.createShopeeImportCategory(companyId);
     return created.id;
   }
 
@@ -346,19 +281,10 @@ export class MarketplaceShopeeService {
    * refreshProducts() untuk re-fetch dari Shopee.
    */
   async listCachedItems(companyId: string, accountId: string) {
-    const account = await this.prisma.shopeeAccount.findFirst({
-      where: { id: accountId, companyId },
-      select: { id: true },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId, { id: true });
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
 
-    const items = await this.prisma.shopeeItem.findMany({
-      where: { shopeeAccountId: accountId },
-      orderBy: { lastFetchedAt: "desc" },
-      include: {
-        product: { select: { id: true, name: true, code: true } },
-      },
-    });
+    const items = await this.repo.findCachedItems(accountId);
     return items.map((it) => ({
       id: it.id,
       itemId: it.itemId,
@@ -387,39 +313,21 @@ export class MarketplaceShopeeService {
     productId: string,
   ): Promise<void> {
     const [item, product] = await Promise.all([
-      this.prisma.shopeeItem.findFirst({
-        where: {
-          id: shopeeItemId,
-          account: { companyId },
-        },
-        select: { id: true },
-      }),
-      this.prisma.product.findFirst({
-        where: { id: productId, companyId },
-        select: { id: true },
-      }),
+      this.repo.findShopeeItemByIdAndCompany(shopeeItemId, companyId),
+      this.repo.findProductByIdAndCompany(productId, companyId, { id: true }),
     ]);
     if (!item) throw new NotFoundException("Shopee item tidak ditemukan");
     if (!product) throw new NotFoundException("Produk MiniPOS tidak ditemukan");
-    await this.prisma.shopeeItem.update({
-      where: { id: shopeeItemId },
-      data: { productId },
-    });
+    await this.repo.updateShopeeItem(shopeeItemId, { productId });
   }
 
   async unlinkShopeeItem(
     companyId: string,
     shopeeItemId: string,
   ): Promise<void> {
-    const item = await this.prisma.shopeeItem.findFirst({
-      where: { id: shopeeItemId, account: { companyId } },
-      select: { id: true },
-    });
+    const item = await this.repo.findShopeeItemByIdAndCompany(shopeeItemId, companyId);
     if (!item) throw new NotFoundException("Shopee item tidak ditemukan");
-    await this.prisma.shopeeItem.update({
-      where: { id: shopeeItemId },
-      data: { productId: null },
-    });
+    await this.repo.updateShopeeItem(shopeeItemId, { productId: null });
   }
 
   /**
@@ -435,9 +343,7 @@ export class MarketplaceShopeeService {
     tokensSet: boolean;
     error?: string;
   }> {
-    const account = await this.prisma.shopeeAccount.findFirst({
-      where: { id: accountId, companyId },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId);
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
     if (account.connectionMode !== "COOKIE") {
       return { cookieValid: false, tokensSet: false, error: "Bukan akun mode COOKIE" };
@@ -453,17 +359,11 @@ export class MarketplaceShopeeService {
         account.cookieUserAgent,
       );
       // Cookie valid — clear any lastError.
-      await this.prisma.shopeeAccount.update({
-        where: { id: account.id },
-        data: { lastError: null },
-      });
+      await this.repo.updateAccount(account.id, { lastError: null });
       return { cookieValid: true, tokensSet };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown";
-      await this.prisma.shopeeAccount.update({
-        where: { id: account.id },
-        data: { lastError: msg },
-      });
+      await this.repo.updateAccount(account.id, { lastError: msg });
       return { cookieValid: false, tokensSet, error: msg };
     }
   }
@@ -481,13 +381,7 @@ export class MarketplaceShopeeService {
     shopeeItemId: string | null;
     shopeeAccountId: string | null;
   }> {
-    const item = await this.prisma.shopeeItem.findFirst({
-      where: {
-        productId,
-        account: { companyId, isActive: true },
-      },
-      select: { id: true, shopeeAccountId: true },
-    });
+    const item = await this.repo.findShopeeItemByProductForLink(productId, companyId);
     return {
       linked: !!item,
       shopeeItemId: item?.id ?? null,
@@ -501,14 +395,7 @@ export class MarketplaceShopeeService {
    * produk yang punya tombol "Update Stok Shopee".
    */
   async getLinkedProductIds(companyId: string): Promise<string[]> {
-    const items = await this.prisma.shopeeItem.findMany({
-      where: {
-        productId: { not: null },
-        account: { companyId, isActive: true },
-      },
-      select: { productId: true },
-      distinct: ["productId"],
-    });
+    const items = await this.repo.findLinkedProductIds(companyId);
     return items
       .map((i) => i.productId)
       .filter((id): id is string => id != null);
@@ -530,35 +417,19 @@ export class MarketplaceShopeeService {
 
     // Validasi product + branch belong to company.
     const [product, branch] = await Promise.all([
-      this.prisma.product.findFirst({
-        where: { id: productId, companyId, deletedAt: null },
-        select: { id: true },
-      }),
-      this.prisma.branch.findFirst({
-        where: { id: branchId, companyId, isActive: true },
-        select: { id: true },
-      }),
+      this.repo.findProductByIdAndCompany(productId, companyId, { id: true }),
+      this.repo.findBranchByIdAndCompany(branchId, companyId),
     ]);
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
     if (!branch) throw new NotFoundException("Cabang tidak ditemukan");
 
     // 1) Update BranchStock di MiniPOS.
-    await this.prisma.branchStock.upsert({
-      where: { branchId_productId: { branchId, productId } },
-      create: { branchId, productId, quantity: safeStock, minStock: 5 },
-      update: { quantity: safeStock },
-    });
+    await this.repo.upsertBranchStock(branchId, productId, safeStock, 5);
     // Note: DB trigger akan auto-sync Product.stock = SUM(BranchStock).
 
     // 2) Push ke Shopee — best effort. Kalau gagal, MiniPOS update tetap
     // tersimpan, hanya report bahwa Shopee belum sinkron.
-    const shopeeItem = await this.prisma.shopeeItem.findFirst({
-      where: {
-        productId,
-        account: { companyId, isActive: true },
-      },
-      select: { id: true },
-    });
+    const shopeeItem = await this.repo.findShopeeItemByProduct(productId, companyId);
     if (!shopeeItem) {
       return { pushedToShopee: false, shopeeError: "Produk tidak ter-link ke Shopee" };
     }
@@ -586,25 +457,14 @@ export class MarketplaceShopeeService {
     branchId: string,
   ): Promise<{ pushedAt: string; newStock: number }> {
     // 1) Lookup ShopeeItem linked dengan product ini.
-    const item = await this.prisma.shopeeItem.findFirst({
-      where: {
-        productId,
-        account: { companyId, isActive: true },
-      },
-      select: { id: true },
-    });
+    const item = await this.repo.findShopeeItemByProduct(productId, companyId);
     if (!item) {
       throw new BadRequestException(
         "Produk ini belum ter-link dengan item Shopee. Sync Shopee dulu.",
       );
     }
     // 2) Lookup BranchStock untuk cabang tsb.
-    const bs = await this.prisma.branchStock.findUnique({
-      where: {
-        branchId_productId: { branchId, productId },
-      },
-      select: { quantity: true },
-    });
+    const bs = await this.repo.findBranchStock(branchId, productId);
     const stockValue = bs?.quantity ?? 0;
     // 3) Push ke Shopee via existing method.
     return this.pushStockForItem(companyId, item.id, stockValue);
@@ -622,10 +482,7 @@ export class MarketplaceShopeeService {
     if (newStock < 0) throw new BadRequestException("Stok tidak boleh negatif");
     const safeStock = Math.floor(newStock);
 
-    const item = await this.prisma.shopeeItem.findFirst({
-      where: { id: shopeeItemId, account: { companyId } },
-      include: { account: true },
-    });
+    const item = await this.repo.findShopeeItemForPush(shopeeItemId, companyId);
     if (!item) throw new NotFoundException("Shopee item tidak ditemukan");
     const account = item.account;
     if (account.connectionMode !== "COOKIE") {
@@ -662,22 +519,13 @@ export class MarketplaceShopeeService {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await this.prisma.shopeeAccount.update({
-        where: { id: account.id },
-        data: { lastError: msg },
-      });
+      await this.repo.updateAccount(account.id, { lastError: msg });
       throw err;
     }
 
     const now = new Date();
-    await this.prisma.shopeeItem.update({
-      where: { id: shopeeItemId },
-      data: { totalStock: safeStock, lastPushedAt: now },
-    });
-    await this.prisma.shopeeAccount.update({
-      where: { id: account.id },
-      data: { lastSyncedAt: now, lastError: null },
-    });
+    await this.repo.updateShopeeItem(shopeeItemId, { totalStock: safeStock, lastPushedAt: now });
+    await this.repo.updateAccount(account.id, { lastSyncedAt: now, lastError: null });
 
     return { pushedAt: now.toISOString(), newStock: safeStock };
   }
@@ -710,9 +558,7 @@ export class MarketplaceShopeeService {
     preservedLinkCount?: number;
     revivedProductCount?: number;
   }> {
-    const account = await this.prisma.shopeeAccount.findFirst({
-      where: { id: accountId, companyId },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId);
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
 
     // COOKIE mode: pakai scraper dengan cookie session.
@@ -753,32 +599,14 @@ export class MarketplaceShopeeService {
             // Cari produk MiniPOS dengan SKU yang sama (untuk auto-link)
             let autoMatchProductId: string | null = null;
             if (skuForMatch) {
-              const matched = await this.prisma.product.findFirst({
-                where: {
-                  companyId,
-                  OR: [
-                    { code: skuForMatch },
-                    { barcode: skuForMatch },
-                  ],
-                },
-                select: { id: true },
-              });
+              const matched = await this.repo.findProductByCode(companyId, skuForMatch);
               autoMatchProductId = matched?.id ?? null;
             }
 
             // Auto-create Product kalau belum match — supaya produk Shopee
             // muncul di master data MiniPOS. Skip kalau ShopeeItem ini sudah
             // pernah punya productId YANG MASIH HIDUP (preserve manual link).
-            const existingItem = await this.prisma.shopeeItem.findUnique({
-              where: {
-                shopeeAccountId_itemId_modelId: {
-                  shopeeAccountId: accountId,
-                  itemId: itemIdStr,
-                  modelId: modelIdStr,
-                },
-              },
-              select: { productId: true },
-            });
+            const existingItem = await this.repo.findExistingShopeeItem(accountId, itemIdStr, modelIdStr);
             // Validasi: linked product masih ada & belum di-soft-delete.
             // Kalau user pernah delete produk yg di-link Shopee:
             //   - REVIVE soft-deleted product (clear deletedAt + isActive=true)
@@ -786,17 +614,11 @@ export class MarketplaceShopeeService {
             //   - Preserve link (productId di ShopeeItem tetap valid).
             let linkedAlive = false;
             if (existingItem?.productId) {
-              const linked = await this.prisma.product.findFirst({
-                where: { id: existingItem.productId },
-                select: { id: true, deletedAt: true },
-              });
+              const linked = await this.repo.findProductByIdOnly(existingItem.productId);
               if (linked) {
                 if (linked.deletedAt) {
                   // Revive: clear soft-delete & re-activate.
-                  await this.prisma.product.update({
-                    where: { id: linked.id },
-                    data: { deletedAt: null, isActive: true },
-                  });
+                  await this.repo.reviveProduct(linked.id);
                   revivedProductCount++;
                 }
                 linkedAlive = true;
@@ -831,41 +653,35 @@ export class MarketplaceShopeeService {
                 skuForMatch || `SHOPEE-${itemIdStr}-${modelIdStr}`;
               // Code wajib unique per company. Kalau collision (rare),
               // tambah suffix random.
-              const codeCollision = await this.prisma.product.findFirst({
-                where: { companyId, code: productCode },
-                select: { id: true },
-              });
+              const codeCollision = await this.repo.findProductCodeCollision(companyId, productCode);
               const finalCode = codeCollision
                 ? `${productCode}-${Math.random().toString(36).slice(2, 6)}`
                 : productCode;
               const sellingPriceVal = item.currentPrice ?? 0;
               const stockVal = m.stock ?? item.totalStock ?? 0;
-              const newProduct = await this.prisma.product.create({
-                data: {
-                  companyId,
-                  categoryId: importCategoryId,
-                  code: finalCode,
-                  name: productName.slice(0, 200),
-                  purchasePrice: 0,
-                  sellingPrice: sellingPriceVal,
-                  stock: stockVal,
-                  imageUrl: item.imageUrl,
-                  itemType: "PRODUCT",
-                  isActive: true,
-                  // Default unit wajib supaya form edit UI bisa nampilkan
-                  // harga (UI baca dari product_units, bukan Product.sellingPrice).
-                  units: {
-                    create: {
-                      name: "pcs",
-                      conversionQty: 1,
-                      sellingPrice: sellingPriceVal,
-                      purchasePrice: 0,
-                      isDefault: true,
-                      sortOrder: 0,
-                    },
+              const newProduct = await this.repo.createProduct({
+                companyId,
+                categoryId: importCategoryId,
+                code: finalCode,
+                name: productName.slice(0, 200),
+                purchasePrice: 0,
+                sellingPrice: sellingPriceVal,
+                stock: stockVal,
+                imageUrl: item.imageUrl,
+                itemType: "PRODUCT",
+                isActive: true,
+                // Default unit wajib supaya form edit UI bisa nampilkan
+                // harga (UI baca dari product_units, bukan Product.sellingPrice).
+                units: {
+                  create: {
+                    name: "pcs",
+                    conversionQty: 1,
+                    sellingPrice: sellingPriceVal,
+                    purchasePrice: 0,
+                    isDefault: true,
+                    sortOrder: 0,
                   },
                 },
-                select: { id: true },
               });
               autoMatchProductId = newProduct.id;
               createdProductCount++;
@@ -873,40 +689,31 @@ export class MarketplaceShopeeService {
               // Populate per-branch price + stock supaya tab "Harga & Stok"
               // di product edit form tidak kosong. Skip kalau company belum
               // punya branch (rare edge case).
-              const branches = await this.prisma.branch.findMany({
-                where: { companyId, isActive: true },
-                select: { id: true },
-              });
+              const branches = await this.repo.findActiveBranches(companyId);
               if (branches.length > 0) {
-                await this.prisma.branchProductPrice.createMany({
-                  data: branches.map((b) => ({
+                await this.repo.createManyBranchProductPrices(
+                  branches.map((b) => ({
                     branchId: b.id,
                     productId: newProduct.id,
                     sellingPrice: sellingPriceVal,
                     purchasePrice: 0,
                   })),
-                  skipDuplicates: true,
-                });
-                await this.prisma.branchStock.createMany({
-                  data: branches.map((b) => ({
+                );
+                await this.repo.createManyBranchStocks(
+                  branches.map((b) => ({
                     branchId: b.id,
                     productId: newProduct.id,
                     quantity: stockVal,
                     minStock: 5,
                   })),
-                  skipDuplicates: true,
-                });
+                );
               }
             }
-            await this.prisma.shopeeItem.upsert({
-              where: {
-                shopeeAccountId_itemId_modelId: {
-                  shopeeAccountId: accountId,
-                  itemId: itemIdStr,
-                  modelId: modelIdStr,
-                },
-              },
-              create: {
+            await this.repo.upsertShopeeItem(
+              accountId,
+              itemIdStr,
+              modelIdStr,
+              {
                 shopeeAccountId: accountId,
                 itemId: itemIdStr,
                 modelId: modelIdStr,
@@ -921,7 +728,7 @@ export class MarketplaceShopeeService {
                 productId: autoMatchProductId,
                 lastFetchedAt: now,
               },
-              update: {
+              {
                 // Update data Shopee. productId hanya di-set kalau existing
                 // belum punya — preserve manual link / auto-link sebelumnya.
                 name: item.name + (m.name ? ` - ${m.name}` : ""),
@@ -941,13 +748,10 @@ export class MarketplaceShopeeService {
                   ? undefined
                   : autoMatchProductId,
               },
-            });
+            );
           }
         }
-        await this.prisma.shopeeAccount.update({
-          where: { id: accountId },
-          data: { lastSyncedAt: now, lastError: null },
-        });
+        await this.repo.updateAccount(accountId, { lastSyncedAt: now, lastError: null });
         this.logger.log(
           `[shopee fetch] account=${accountId} shopee_items=${result.items.length} ` +
             `created=${createdProductCount} matched=${matchedProductCount} ` +
@@ -962,10 +766,7 @@ export class MarketplaceShopeeService {
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown";
-        await this.prisma.shopeeAccount.update({
-          where: { id: accountId },
-          data: { lastError: msg },
-        });
+        await this.repo.updateAccount(accountId, { lastError: msg });
         throw err;
       }
     }
@@ -1009,10 +810,7 @@ export class MarketplaceShopeeService {
     }
 
     // Update last_synced_at
-    await this.prisma.shopeeAccount.update({
-      where: { id: accountId },
-      data: { lastSyncedAt: new Date(), lastError: null },
-    });
+    await this.repo.updateAccount(accountId, { lastSyncedAt: new Date(), lastError: null });
 
     return {
       totalCount,
@@ -1055,15 +853,9 @@ export class MarketplaceShopeeService {
         "x-sap-ri dan x-sap-sec wajib di-isi",
       );
     }
-    const account = await this.prisma.shopeeAccount.findFirst({
-      where: { id: accountId, companyId },
-      select: { id: true },
-    });
+    const account = await this.repo.findAccountByIdAndCompany(accountId, companyId, { id: true });
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
-    await this.prisma.shopeeAccount.update({
-      where: { id: accountId },
-      data: { scrapingTokens: tokens as unknown as object },
-    });
+    await this.repo.updateAccount(accountId, { scrapingTokens: tokens as unknown as object });
   }
 
   /**
@@ -1082,66 +874,43 @@ export class MarketplaceShopeeService {
   ): Promise<{ id: string }> {
     // Validasi: account & product belong ke company.
     const [account, product] = await Promise.all([
-      this.prisma.shopeeAccount.findFirst({
-        where: { id: params.shopeeAccountId, companyId },
-        select: { id: true },
-      }),
-      this.prisma.product.findFirst({
-        where: { id: params.productId, companyId },
-        select: { id: true },
-      }),
+      this.repo.findAccountByIdAndCompany(params.shopeeAccountId, companyId, { id: true }),
+      this.repo.findProductByIdAndCompany(params.productId, companyId, { id: true }),
     ]);
     if (!account) throw new NotFoundException("Akun Shopee tidak ditemukan");
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
-    const existing = await this.prisma.productMarketplaceMapping.findFirst({
-      where: {
-        marketplace: "SHOPEE",
-        externalItemId: params.externalItemId,
-        externalModelId: params.externalModelId,
-      },
-      select: { id: true },
-    });
+    const existing = await this.repo.findMappingByExternal(
+      params.externalItemId,
+      params.externalModelId,
+    );
 
     if (existing) {
-      const updated = await this.prisma.productMarketplaceMapping.update({
-        where: { id: existing.id },
-        data: {
-          productId: params.productId,
-          shopeeAccountId: params.shopeeAccountId,
-          externalSku: params.externalSku ?? null,
-          syncEnabled: true,
-        },
+      const updated = await this.repo.updateMapping(existing.id, {
+        productId: params.productId,
+        shopeeAccountId: params.shopeeAccountId,
+        externalSku: params.externalSku ?? null,
+        syncEnabled: true,
       });
       return { id: updated.id };
     }
 
-    const created = await this.prisma.productMarketplaceMapping.create({
-      data: {
-        productId: params.productId,
-        marketplace: "SHOPEE",
-        externalItemId: params.externalItemId,
-        externalModelId: params.externalModelId,
-        externalSku: params.externalSku ?? null,
-        shopeeAccountId: params.shopeeAccountId,
-        syncEnabled: true,
-      },
+    const created = await this.repo.createMapping({
+      productId: params.productId,
+      marketplace: "SHOPEE",
+      externalItemId: params.externalItemId,
+      externalModelId: params.externalModelId,
+      externalSku: params.externalSku ?? null,
+      shopeeAccountId: params.shopeeAccountId,
+      syncEnabled: true,
     });
     return { id: created.id };
   }
 
   async unlinkProduct(companyId: string, mappingId: string): Promise<void> {
-    const mapping = await this.prisma.productMarketplaceMapping.findFirst({
-      where: {
-        id: mappingId,
-        shopeeAccount: { companyId },
-      },
-      select: { id: true },
-    });
+    const mapping = await this.repo.findMappingByIdAndCompany(mappingId, companyId);
     if (!mapping) throw new NotFoundException("Mapping tidak ditemukan");
-    await this.prisma.productMarketplaceMapping.delete({
-      where: { id: mappingId },
-    });
+    await this.repo.deleteMapping(mappingId);
   }
 
   async listMappings(companyId: string, accountId: string) {

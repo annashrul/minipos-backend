@@ -2,9 +2,9 @@
 import { ConfigService } from "@nestjs/config";
 import type { AiChatMessageDto, AiChatResponse } from "./dto/ai-assistant.dto";
 import Groq from "groq-sdk";
-import { PrismaService } from "../prisma/prisma.service";
-import { CashierService } from "../cashier/cashier.service";
-import { PurchasesService } from "../purchases/purchases.service";
+import { CashierService } from "@/modules/cashier/cashier.service";
+import { PurchasesService } from "@/modules/purchases/purchases.service";
+import { AiAssistantRepository } from "./ai-assistant.repository";
 
 // OpenAI-compatible tool definitions for Groq
 const TOOLS: Groq.Chat.ChatCompletionTool[] = [
@@ -226,7 +226,7 @@ export class AiAssistantService {
   private readonly logger = new Logger(AiAssistantService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: AiAssistantRepository,
     private readonly config: ConfigService,
     private readonly cashier: CashierService,
     private readonly purchases: PurchasesService,
@@ -256,13 +256,7 @@ export class AiAssistantService {
       };
     }
 
-    const items = await this.prisma.transactionItem.groupBy({
-      by: ["productName", "productCode"],
-      _sum: { quantity: true, subtotal: true },
-      where,
-      orderBy: { _sum: { quantity: "desc" } },
-      take: limit,
-    });
+    const items = await this.repo.groupTopProducts(where, limit);
 
     return items.map((i, idx) => ({
       rank: idx + 1,
@@ -282,29 +276,10 @@ export class AiAssistantService {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const soldProducts = await this.prisma.transactionItem.groupBy({
-      by: ["productId"],
-      where: {
-        transaction: { status: "COMPLETED", createdAt: { gte: since } },
-      },
-    });
+    const soldProducts = await this.repo.groupSoldProductIds(since);
     const soldIds = soldProducts.map((p) => p.productId);
 
-    const slow = await this.prisma.product.findMany({
-      where: { isActive: true, id: { notIn: soldIds } },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        sellingPrice: true,
-        purchasePrice: true,
-        unit: true,
-        category: { select: { name: true } },
-      },
-      take: limit,
-      orderBy: { stock: "desc" },
-    });
+    const slow = await this.repo.findSlowProducts(soldIds, limit);
 
     return slow.map((p) => ({
       id: p.id,
@@ -345,11 +320,8 @@ export class AiAssistantService {
     if (input.branchId) where.branchId = input.branchId;
 
     const [agg, count] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        _sum: { grandTotal: true, discountAmount: true, taxAmount: true },
-        where,
-      }),
-      this.prisma.transaction.count({ where }),
+      this.repo.aggregateSales(where),
+      this.repo.countTransactions(where),
     ]);
 
     return {
@@ -366,35 +338,7 @@ export class AiAssistantService {
   private async executeGetLowStock(input: { limit?: number }) {
     const limit = input.limit || 20;
 
-    const products = await this.prisma.$queryRawUnsafe<
-      {
-        id: string;
-        name: string;
-        code: string;
-        stock: number;
-        minStock: number;
-        unit: string;
-        sellingPrice: number;
-        purchasePrice: number;
-        supplierName: string | null;
-        supplierId: string | null;
-        categoryName: string | null;
-      }[]
-    >(
-      `
-      SELECT p.id, p.name, p.code, p.stock, p."minStock", p.unit,
-             p."sellingPrice", p."purchasePrice",
-             s.name as "supplierName", s.id as "supplierId",
-             c.name as "categoryName"
-      FROM products p
-      LEFT JOIN suppliers s ON p."supplierId" = s.id
-      LEFT JOIN categories c ON p."categoryId" = c.id
-      WHERE p."isActive" = true AND p.stock <= p."minStock"
-      ORDER BY p.stock ASC
-      LIMIT $1
-      `,
-      limit,
-    );
+    const products = await this.repo.findLowStockRaw(limit);
 
     return products.map((p) => ({
       id: p.id,
@@ -469,10 +413,7 @@ export class AiAssistantService {
 
     // Need productCode + subtotal for the API DTO; load missing fields from products.
     const productIds = input.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, companyId: auth.companyId },
-      select: { id: true, code: true, name: true },
-    });
+    const products = await this.repo.findProductsByIds(productIds, auth.companyId);
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     const items = input.items.map((it) => {
@@ -502,26 +443,8 @@ export class AiAssistantService {
     since.setDate(since.getDate() - days);
 
     const [salesData, products] = await Promise.all([
-      this.prisma.transactionItem.groupBy({
-        by: ["productId"],
-        _sum: { quantity: true },
-        where: {
-          transaction: { status: "COMPLETED", createdAt: { gte: since } },
-        },
-      }),
-      this.prisma.product.findMany({
-        where: { isActive: true },
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          stock: true,
-          minStock: true,
-          purchasePrice: true,
-          unit: true,
-          supplier: { select: { id: true, name: true } },
-        },
-      }),
+      this.repo.groupSalesData(since),
+      this.repo.findActiveProducts(),
     ]);
 
     const salesMap = new Map(
@@ -561,39 +484,7 @@ export class AiAssistantService {
     input: { query: string },
   ) {
     const q = input.query || "";
-    const products = await this.prisma.product.findMany({
-      where: {
-        ...(auth.companyId ? { companyId: auth.companyId } : {}),
-        isActive: true,
-        deletedAt: null,
-        OR: [
-          { name: { contains: q, mode: "insensitive" } },
-          { code: { contains: q, mode: "insensitive" } },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        sellingPrice: true,
-        purchasePrice: true,
-        unit: true,
-        minStock: true,
-        category: { select: { name: true } },
-        supplier: { select: { id: true, name: true } },
-        defaultRack: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            location: true,
-            branch: { select: { name: true } },
-          },
-        },
-      },
-      take: 10,
-    });
+    const products = await this.repo.searchProducts(auth.companyId, q);
 
     return products.map((p) => ({
       id: p.id,
@@ -627,56 +518,7 @@ export class AiAssistantService {
     input: { query: string },
   ) {
     const q = input.query || "";
-    const products = await this.prisma.product.findMany({
-      where: {
-        ...(auth.companyId ? { companyId: auth.companyId } : {}),
-        deletedAt: null,
-        OR: [
-          { name: { contains: q, mode: "insensitive" } },
-          { code: { contains: q, mode: "insensitive" } },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        unit: true,
-        sellingPrice: true,
-        stock: true,
-        category: { select: { name: true } },
-        defaultRack: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            location: true,
-            branch: { select: { id: true, name: true } },
-          },
-        },
-        rackStocks: {
-          where: { qty: { gt: 0 } },
-          select: {
-            qty: true,
-            rack: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                location: true,
-                branch: { select: { id: true, name: true } },
-              },
-            },
-          },
-        },
-        branchStocks: {
-          select: {
-            quantity: true,
-            branch: { select: { id: true, name: true } },
-          },
-        },
-      },
-      take: 5,
-    });
+    const products = await this.repo.findProductLocations(auth.companyId, q);
 
     if (products.length === 0) {
       return {
@@ -727,48 +569,7 @@ export class AiAssistantService {
     input: { rackQuery: string },
   ) {
     const q = input.rackQuery || "";
-    const racks = await this.prisma.rack.findMany({
-      where: {
-        ...(auth.companyId ? { companyId: auth.companyId } : {}),
-        OR: [
-          { code: { contains: q, mode: "insensitive" } },
-          { name: { contains: q, mode: "insensitive" } },
-        ],
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        location: true,
-        isActive: true,
-        branch: { select: { name: true } },
-        rackStocks: {
-          where: { qty: { gt: 0 } },
-          select: {
-            qty: true,
-            product: {
-              select: {
-                code: true,
-                name: true,
-                unit: true,
-                category: { select: { name: true } },
-              },
-            },
-          },
-          orderBy: { qty: "desc" },
-        },
-        defaultForProducts: {
-          where: { deletedAt: null },
-          select: {
-            code: true,
-            name: true,
-            unit: true,
-            stock: true,
-          },
-        },
-      },
-      take: 5,
-    });
+    const racks = await this.repo.findRackContents(auth.companyId, q);
 
     if (racks.length === 0) {
       return {
@@ -819,32 +620,7 @@ export class AiAssistantService {
     input: { limit?: number },
   ) {
     const limit = input.limit || 20;
-    const lowStock = await this.prisma.product.findMany({
-      where: {
-        ...(auth.companyId ? { companyId: auth.companyId } : {}),
-        isActive: true,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        stock: true,
-        minStock: true,
-        unit: true,
-        category: { select: { name: true } },
-        defaultRack: {
-          select: {
-            code: true,
-            name: true,
-            location: true,
-            branch: { select: { name: true } },
-          },
-        },
-      },
-      orderBy: { stock: "asc" },
-      take: limit * 2, // overscan, filter later
-    });
+    const lowStock = await this.repo.findLowStockWithLocation(auth.companyId, limit);
 
     const filtered = lowStock
       .filter((p) => p.stock <= p.minStock)
@@ -870,17 +646,7 @@ export class AiAssistantService {
   }
 
   private async executeGetSuppliers() {
-    return this.prisma.supplier.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        contact: true,
-        email: true,
-        address: true,
-      },
-      orderBy: { name: "asc" },
-    });
+    return this.repo.findActiveSuppliers();
   }
 
   private async executeGetCategorySales(input: { days?: number }) {
@@ -888,24 +654,7 @@ export class AiAssistantService {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      { name: string; qty: bigint; revenue: bigint; items: bigint }[]
-    >(
-      `
-      SELECT COALESCE(c.name, 'Tanpa Kategori') as name,
-             SUM(ti.quantity)::bigint as qty,
-             SUM(ti.subtotal)::bigint as revenue,
-             COUNT(*)::bigint as items
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti."transactionId"
-      JOIN products p ON p.id = ti."productId"
-      LEFT JOIN categories c ON c.id = p."categoryId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
-      GROUP BY c.name
-      ORDER BY revenue DESC
-      `,
-      since,
-    );
+    const rows = await this.repo.getCategorySalesRaw(since);
 
     return rows.map((r) => ({
       category: r.name,

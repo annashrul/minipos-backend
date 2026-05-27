@@ -25,83 +25,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { paginate } from "../../common/utils/pagination";
 import { RackStockHelperService } from "../racks/rack-stock-helper.service";
 import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
-
-const TX_SELECT = {
-  id: true,
-  invoiceNumber: true,
-  invoiceDisplayNumber: true,
-  userId: true,
-  user: { select: { id: true, name: true } },
-  branchId: true,
-  branch: { select: { id: true, name: true } },
-  customerId: true,
-  customer: { select: { id: true, name: true, phone: true } },
-  subtotal: true,
-  discountAmount: true,
-  taxAmount: true,
-  grandTotal: true,
-  paymentMethod: true,
-  paymentAmount: true,
-  changeAmount: true,
-  status: true,
-  voidReason: true,
-  notes: true,
-  createdAt: true,
-  updatedAt: true,
-  _count: { select: { items: true } },
-  // Include payments di list response biar UI tabel bisa render badge
-  // bank/ewallet (reference) tanpa fetch detail per row.
-  payments: {
-    select: {
-      id: true,
-      method: true,
-      amount: true,
-      reference: true,
-      personLabel: true,
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.TransactionSelect;
-
-const TX_DETAIL_SELECT = {
-  ...TX_SELECT,
-  items: {
-    select: {
-      id: true,
-      productId: true,
-      productName: true,
-      productCode: true,
-      quantity: true,
-      unitName: true,
-      unitPrice: true,
-      discount: true,
-      subtotal: true,
-      promoType: true,
-      promoName: true,
-      // modifiers stored as JSON: [{groupId, groupName, optionId, optionName, priceAdjustment}].
-      // Dipakai untuk display nama varian/modifier di riwayat.
-      modifiers: true,
-      notes: true,
-    },
-    orderBy: { createdAt: "asc" },
-  },
-  payments: {
-    select: {
-      id: true,
-      method: true,
-      amount: true,
-      reference: true,
-      personLabel: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "asc" },
-  },
-} satisfies Prisma.TransactionSelect;
-
-type RawTx = Prisma.TransactionGetPayload<{ select: typeof TX_SELECT }>;
-type RawTxDetail = Prisma.TransactionGetPayload<{
-  select: typeof TX_DETAIL_SELECT;
-}>;
+import {
+  TransactionsRepository,
+  TX_DETAIL_SELECT,
+  type RawTx,
+  type RawTxDetail,
+} from "./transactions.repository";
 
 import { RealtimeService, EVENTS } from "../realtime/realtime.service";
 import { AutoJournalService } from "../auto-journal/auto-journal.service";
@@ -112,6 +41,7 @@ export class TransactionsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: TransactionsRepository,
     private readonly debts: DebtsService,
     private readonly points: PointsService,
     private readonly realtime: RealtimeService,
@@ -180,14 +110,8 @@ export class TransactionsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.transaction.findMany({
-        where,
-        select: TX_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.transaction.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toTransactionResponse), total, page, perPage);
@@ -197,10 +121,7 @@ export class TransactionsService {
     companyId: string,
     id: string,
   ): Promise<TransactionDetailResponse> {
-    const tx = await this.prisma.transaction.findFirst({
-      where: { id, user: { companyId } },
-      select: TX_DETAIL_SELECT,
-    });
+    const tx = await this.repo.findById(companyId, id);
     if (!tx) throw new NotFoundException("Transaction not found");
     return toTransactionDetailResponse(tx);
   }
@@ -216,22 +137,16 @@ export class TransactionsService {
     if (dto.customerId) await this.assert.customer(companyId, dto.customerId);
 
     const [company, branch] = await Promise.all([
-      this.prisma.company.findUnique({
-        where: { id: companyId },
-        select: { slug: true, name: true },
-      }),
+      this.repo.findCompanySlug(companyId),
       branchId
-        ? this.prisma.branch.findUnique({
-            where: { id: branchId },
-            select: { code: true, name: true },
-          })
+        ? this.repo.findBranchCode(branchId)
         : Promise.resolve(null),
     ]);
     const invoiceNumber = `${normalizeCodePart(
       company?.slug ?? company?.name,
       "COMPANY",
     )}-${normalizeCodePart(branch?.code ?? branch?.name, "MAIN")}-${randomInvoicePart(8)}`;
-    const invoiceDisplayNumber = await this.generateDisplayInvoiceNumber(
+    const invoiceDisplayNumber = await this.repo.generateDisplayInvoiceNumber(
       companyId,
       new Date(),
     );
@@ -251,16 +166,7 @@ export class TransactionsService {
       ),
     );
     const recipes = candidateProductIds.length
-      ? await this.prisma.recipe.findMany({
-          where: { productId: { in: candidateProductIds } },
-          include: {
-            ingredients: {
-              include: {
-                ingredient: { select: { id: true, name: true } },
-              },
-            },
-          },
-        })
+      ? await this.repo.findRecipesByProductIds(candidateProductIds)
       : [];
     const recipeMap = new Map<
       string,
@@ -299,19 +205,7 @@ export class TransactionsService {
       const productIdsWithMods = Array.from(
         new Set(itemsNeedingVariant.map(({ item }) => item.productId)),
       );
-      const variantRows = await this.prisma.productVariant.findMany({
-        where: { productId: { in: productIdsWithMods } },
-        select: {
-          id: true,
-          productId: true,
-          options: {
-            select: {
-              optionId: true,
-              option: { select: { name: true } },
-            },
-          },
-        },
-      });
+      const variantRows = await this.repo.findVariantsByProductIds(productIdsWithMods);
       const byProduct = new Map<
         string,
         Array<{ id: string; optionIds: Set<string>; label: string }>
@@ -709,16 +603,10 @@ export class TransactionsService {
       let finalInvoiceDisplayNumber = created.invoiceDisplayNumber;
       if (dto.replaceTransactionId) {
         try {
-          const src = await this.prisma.transaction.findFirst({
-            where: { id: dto.replaceTransactionId, user: { companyId } },
-            select: {
-              id: true,
-              status: true,
-              invoiceNumber: true,
-              invoiceDisplayNumber: true,
-              createdAt: true,
-            },
-          });
+          const src = await this.repo.findForReplace(
+            companyId,
+            dto.replaceTransactionId,
+          );
           if (!src) {
             this.logger.warn(
               `[edit-tx] source ${dto.replaceTransactionId} tidak ditemukan`,
@@ -802,10 +690,7 @@ export class TransactionsService {
     invoiceNumber: string,
   ): Promise<void> {
     try {
-      const customer = await this.prisma.customer.findFirst({
-        where: { id: customerId, companyId },
-        select: { phone: true, name: true },
-      });
+      const customer = await this.repo.findCustomerPhone(companyId, customerId);
       const phone = customer?.phone?.trim();
       if (!phone) {
         this.logger.log(
@@ -882,22 +767,16 @@ export class TransactionsService {
     if (branchId) await this.assert.branch(companyId, branchId);
     if (dto.customerId) await this.assert.customer(companyId, dto.customerId);
     const [company, branch] = await Promise.all([
-      this.prisma.company.findUnique({
-        where: { id: companyId },
-        select: { slug: true, name: true },
-      }),
+      this.repo.findCompanySlug(companyId),
       branchId
-        ? this.prisma.branch.findUnique({
-            where: { id: branchId },
-            select: { code: true, name: true },
-          })
+        ? this.repo.findBranchCode(branchId)
         : Promise.resolve(null),
     ]);
     const invoiceNumber = `${normalizeCodePart(
       company?.slug ?? company?.name,
       "COMPANY",
     )}-${normalizeCodePart(branch?.code ?? branch?.name, "MAIN")}-${randomInvoicePart(8)}`;
-    const invoiceDisplayNumber = await this.generateDisplayInvoiceNumber(
+    const invoiceDisplayNumber = await this.repo.generateDisplayInvoiceNumber(
       companyId,
       new Date(),
     );
@@ -958,17 +837,14 @@ export class TransactionsService {
    * COMPLETED tidak bisa di-delete, harus void/refund).
    */
   async deleteDraft(companyId: string, id: string): Promise<{ id: string }> {
-    const tx = await this.prisma.transaction.findFirst({
-      where: { id, user: { companyId } },
-      select: { id: true, status: true },
-    });
+    const tx = await this.repo.findDraft(companyId, id);
     if (!tx) throw new NotFoundException("Draft tidak ditemukan");
     if (tx.status !== "DRAFT") {
       throw new BadRequestException(
         "Hanya draft yang bisa dihapus. Pakai void/refund untuk transaksi selesai.",
       );
     }
-    await this.prisma.transaction.delete({ where: { id } });
+    await this.repo.deleteTransaction(id);
     return { id };
   }
 
@@ -983,36 +859,7 @@ export class TransactionsService {
     userId: string,
     sourceId: string,
   ): Promise<CheckoutResponse> {
-    const source = await this.prisma.transaction.findFirst({
-      where: { id: sourceId, user: { companyId } },
-      include: {
-        items: {
-          orderBy: { createdAt: "asc" },
-          select: {
-            productId: true,
-            productName: true,
-            productCode: true,
-            quantity: true,
-            unitName: true,
-            conversionQty: true,
-            unitPrice: true,
-            discount: true,
-            subtotal: true,
-            modifiers: true,
-            notes: true,
-            promoType: true,
-          },
-        },
-        payments: {
-          select: {
-            method: true,
-            amount: true,
-            reference: true,
-            personLabel: true,
-          },
-        },
-      },
-    });
+    const source = await this.repo.findForDuplicate(companyId, sourceId);
     if (!source)
       throw new NotFoundException("Transaksi sumber tidak ditemukan");
     if (source.status !== "COMPLETED") {
@@ -1114,10 +961,7 @@ export class TransactionsService {
   ): Promise<VoidTransactionResponse | RefundTransactionResponse> {
     const noun = target === "VOIDED" ? "Void" : "Refund";
 
-    const existing = await this.prisma.transaction.findFirst({
-      where: { id, user: { companyId } },
-      select: { id: true },
-    });
+    const existing = await this.repo.findByIdMinimal(companyId, id);
     if (!existing) throw new NotFoundException("Transaction not found");
 
     return this.prisma.$transaction(async (tx) => {
@@ -1262,21 +1106,9 @@ export class TransactionsService {
     };
 
     const [completedAgg, refundedAgg, voidedAgg] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: completedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: refundedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: voidedWhere,
-        _sum: { grandTotal: true },
-        _count: { _all: true },
-      }),
+      this.repo.aggregateTransactions(completedWhere),
+      this.repo.aggregateTransactions(refundedWhere),
+      this.repo.aggregateTransactions(voidedWhere),
     ]);
 
     const totalSales = completedAgg._sum.grandTotal ?? 0;
@@ -1295,55 +1127,13 @@ export class TransactionsService {
     };
   }
 
-  /**
-   * Generate `invoiceDisplayNumber` per (companyId, date) sequential.
-   * Format: "INV-DDMMYYYY-NNNNN" (5-digit zero-padded).
-   *
-   * Cara kerja:
-   *   - Cari max NNNNN di transaksi dgn companyId & tanggal yang sama
-   *   - Tambah 1, pad jadi 5 digit
-   *   - Race protection ditangani retry on P2002 di catch block checkout
-   *     (sama dengan invoiceNumber lama).
-   */
-  private async generateDisplayInvoiceNumber(
-    companyId: string,
-    date: Date,
-  ): Promise<string> {
-    const dd = String(date.getDate()).padStart(2, "0");
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const yyyy = String(date.getFullYear());
-    const prefix = `INV-${dd}${mm}${yyyy}-`;
-
-    const last = await this.prisma.transaction.findFirst({
-      where: {
-        companyId,
-        invoiceDisplayNumber: { startsWith: prefix },
-      },
-      orderBy: { invoiceDisplayNumber: "desc" },
-      select: { invoiceDisplayNumber: true },
-    });
-
-    let nextSeq = 1;
-    if (last?.invoiceDisplayNumber) {
-      const tail = last.invoiceDisplayNumber.slice(prefix.length);
-      const parsed = parseInt(tail, 10);
-      if (!Number.isNaN(parsed)) nextSeq = parsed + 1;
-    }
-
-    return `${prefix}${String(nextSeq).padStart(5, "0")}`;
-  }
-
   private async shouldValidateStock(branchId: string | null): Promise<boolean> {
     const setting = branchId
-      ? await this.prisma.setting.findFirst({
-          where: { key: "pos.validateStock", branchId },
-        })
+      ? await this.repo.findSetting("pos.validateStock", branchId)
       : null;
     const fallback = setting
       ? null
-      : await this.prisma.setting.findFirst({
-          where: { key: "pos.validateStock", branchId: null },
-        });
+      : await this.repo.findSettingFallback("pos.validateStock");
     const value = (setting ?? fallback)?.value;
     return value !== "false";
   }
@@ -1352,15 +1142,11 @@ export class TransactionsService {
     branchId: string | null,
   ): Promise<boolean> {
     const setting = branchId
-      ? await this.prisma.setting.findFirst({
-          where: { key: "pos.autoSendWhatsappReceipt", branchId },
-        })
+      ? await this.repo.findSetting("pos.autoSendWhatsappReceipt", branchId)
       : null;
     const fallback = setting
       ? null
-      : await this.prisma.setting.findFirst({
-          where: { key: "pos.autoSendWhatsappReceipt", branchId: null },
-        });
+      : await this.repo.findSettingFallback("pos.autoSendWhatsappReceipt");
     const value = (setting ?? fallback)?.value;
     // Default true (preserve existing behavior). Hanya off kalau eksplisit "false".
     return value !== "false";

@@ -1,7 +1,6 @@
 import type Groq from "groq-sdk";
-import type { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
-import type { PrismaService } from "../prisma/prisma.service";
+import type { WhatsappChatbotRepository } from "./whatsapp-chatbot.repository";
 
 // ─── Tool catalog ────────────────────────────────────────────────────
 // Definisi function calling untuk Groq. Dipisah per role:
@@ -551,7 +550,7 @@ function resolvePeriod(
 }
 
 export type ToolContext = {
-  prisma: PrismaService;
+  repo: WhatsappChatbotRepository;
   companyId: string;
   // Nomor WA pengirim (normalized 62xxx). Dipakai oleh customer-tools
   // supaya `get_my_bookings` tidak butuh argumen.
@@ -563,7 +562,7 @@ export async function executeOwnerTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const { prisma, companyId } = ctx;
+  const { repo, companyId } = ctx;
   switch (name) {
     // Alias backward-compat: kalau model masih panggil get_today_sales,
     // forward ke get_sales_summary tanpa period (default today).
@@ -576,15 +575,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const rows = await prisma.transaction.findMany({
-        where: {
-          companyId,
-          status: "COMPLETED",
-          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-          ...(branchId ? { branchId } : {}),
-        },
-        select: { grandTotal: true },
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const rows = await repo.findCompletedTransactions(companyId, dateRange, branchId);
       const total = rows.reduce((s, r) => s + r.grandTotal, 0);
       return {
         period: label,
@@ -621,23 +613,8 @@ export async function executeOwnerTool(
         end.setHours(23, 59, 59, 999);
         label = `${days} hari terakhir`;
       }
-      const items = await prisma.transactionItem.findMany({
-        where: {
-          transaction: {
-            companyId,
-            status: "COMPLETED",
-            ...(start && end
-              ? { createdAt: { gte: start, lte: end } }
-              : {}),
-          },
-        },
-        select: {
-          quantity: true,
-          subtotal: true,
-          product: { select: { name: true, code: true } },
-        },
-        take: 5000,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const items = await repo.findTransactionItems(companyId, dateRange);
       const map = new Map<string, { qty: number; revenue: number; code: string }>();
       for (const it of items) {
         const n = it.product?.name ?? "(unknown)";
@@ -664,22 +641,7 @@ export async function executeOwnerTool(
 
     case "get_low_stock": {
       const limit = Math.max(1, Math.min(50, Number(args.limit) || 10));
-      const products = await prisma.product.findMany({
-        where: {
-          companyId,
-          isActive: true,
-          itemType: "PRODUCT",
-          deletedAt: null,
-        },
-        select: {
-          name: true,
-          code: true,
-          stock: true,
-          minStock: true,
-          unit: true,
-          sellingPrice: true,
-        },
-      });
+      const products = await repo.findActiveProducts(companyId);
       const low = products
         .filter((p) => p.stock <= p.minStock)
         .sort((a, b) => a.stock - b.stock)
@@ -698,28 +660,7 @@ export async function executeOwnerTool(
     case "search_product_stock": {
       const query = String(args.query || "").trim();
       if (!query) return { error: "Query kosong" };
-      const products = await prisma.product.findMany({
-        where: {
-          companyId,
-          isActive: true,
-          deletedAt: null,
-          OR: [
-            { name: { contains: query, mode: "insensitive" } },
-            { code: { contains: query, mode: "insensitive" } },
-            { barcode: { contains: query, mode: "insensitive" } },
-          ],
-        },
-        select: {
-          name: true,
-          code: true,
-          stock: true,
-          minStock: true,
-          unit: true,
-          sellingPrice: true,
-          itemType: true,
-        },
-        take: 10,
-      });
+      const products = await repo.searchProducts(companyId, query);
       return {
         items: products.map((p) => ({
           name: p.name,
@@ -742,26 +683,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const bookings = await prisma.booking.findMany({
-        where: {
-          companyId,
-          ...(start && end
-            ? { scheduledAt: { gte: start, lte: end } }
-            : {}),
-          ...(status ? { status } : {}),
-        },
-        select: {
-          customerName: true,
-          customerPhone: true,
-          customer: { select: { name: true, phone: true } },
-          scheduledAt: true,
-          status: true,
-          serviceType: true,
-          bookingType: true,
-        },
-        orderBy: { scheduledAt: "asc" },
-        take: 30,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const bookings = await repo.findBookings(companyId, dateRange, status);
       return {
         period: label,
         ...(start && end
@@ -789,19 +712,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const txs = await prisma.transaction.findMany({
-        where: {
-          companyId,
-          status: "COMPLETED",
-          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-        },
-        select: {
-          grandTotal: true,
-          userId: true,
-          user: { select: { name: true } },
-        },
-        take: 10000,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const txs = await repo.findTransactionsWithUser(companyId, dateRange);
       const map = new Map<
         string,
         { name: string; transactionCount: number; totalSales: number }
@@ -842,27 +754,11 @@ export async function executeOwnerTool(
           ? { status: statusArg as "UNPAID" | "PARTIAL" | "PAID" | "OVERDUE" }
           : { status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] as ("UNPAID" | "PARTIAL" | "OVERDUE")[] } };
 
-      const debts = await prisma.debt.findMany({
-        where: {
-          companyId,
-          ...statusFilter,
-          ...(type === "PAYABLE" || type === "RECEIVABLE"
-            ? { type: type as "PAYABLE" | "RECEIVABLE" }
-            : {}),
-        },
-        select: {
-          type: true,
-          partyName: true,
-          totalAmount: true,
-          paidAmount: true,
-          remainingAmount: true,
-          status: true,
-          dueDate: true,
-          createdAt: true,
-        },
-        orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
-        take: 100,
-      });
+      const typeFilter =
+        type === "PAYABLE" || type === "RECEIVABLE"
+          ? (type as "PAYABLE" | "RECEIVABLE")
+          : undefined;
+      const debts = await repo.findDebts(companyId, statusFilter, typeFilter);
 
       const totalPayable = debts
         .filter((d) => d.type === "PAYABLE")
@@ -903,22 +799,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const txs = await prisma.transaction.findMany({
-        where: {
-          companyId,
-          status: "COMPLETED",
-          customerId: { not: null },
-          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-        },
-        select: {
-          grandTotal: true,
-          customerId: true,
-          customer: {
-            select: { name: true, phone: true, memberLevel: true },
-          },
-        },
-        take: 10000,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const txs = await repo.findTransactionsWithCustomer(companyId, dateRange);
       const map = new Map<
         string,
         {
@@ -963,18 +845,8 @@ export async function executeOwnerTool(
       );
       const category =
         typeof args.category === "string" ? args.category : undefined;
-      const expenses = await prisma.expense.findMany({
-        where: {
-          companyId,
-          ...(start && end ? { date: { gte: start, lte: end } } : {}),
-          ...(category
-            ? { category: { contains: category, mode: "insensitive" } }
-            : {}),
-        },
-        select: { category: true, amount: true, description: true, date: true },
-        take: 5000,
-        orderBy: { date: "desc" },
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const expenses = await repo.findExpenses(companyId, dateRange, category);
       const total = expenses.reduce((s, e) => s + e.amount, 0);
       const byCategory = new Map<string, { total: number; count: number }>();
       for (const e of expenses) {
@@ -1006,32 +878,8 @@ export async function executeOwnerTool(
       );
       const statusArg =
         typeof args.status === "string" ? args.status.toUpperCase() : "ALL";
-      const shifts = await prisma.cashierShift.findMany({
-        where: {
-          user: { companyId },
-          ...(start && end ? { openedAt: { gte: start, lte: end } } : {}),
-          ...(statusArg === "OPEN"
-            ? { isOpen: true }
-            : statusArg === "CLOSED"
-              ? { isOpen: false }
-              : {}),
-        },
-        select: {
-          openedAt: true,
-          closedAt: true,
-          openingCash: true,
-          closingCash: true,
-          expectedCash: true,
-          cashDifference: true,
-          totalSales: true,
-          totalTransactions: true,
-          isOpen: true,
-          user: { select: { name: true } },
-          branch: { select: { name: true } },
-        },
-        orderBy: { openedAt: "desc" },
-        take: 30,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const shifts = await repo.findCashierShifts(companyId, dateRange, statusArg);
       return {
         period: label,
         count: shifts.length,
@@ -1057,20 +905,7 @@ export async function executeOwnerTool(
       const limit = Math.max(1, Math.min(20, Number(args.limit) || 5));
       const statusArg =
         typeof args.status === "string" ? args.status.toUpperCase() : "COMPLETED";
-      const where: Prisma.TransactionWhereInput = { companyId };
-      if (statusArg !== "ALL") {
-        // TransactionStatus enum di Prisma generated client.
-        (where as { status?: unknown }).status = statusArg;
-      }
-      const txs = await prisma.transaction.findMany({
-        where,
-        include: {
-          user: { select: { name: true } },
-          customer: { select: { name: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: limit,
-      });
+      const txs = await repo.findRecentTransactions(companyId, limit, statusArg);
       return {
         count: txs.length,
         items: txs.map((t) => ({
@@ -1088,39 +923,7 @@ export async function executeOwnerTool(
     case "search_transaction": {
       const query = String(args.invoiceNumber || "").trim();
       if (!query) return { error: "Nomor invoice kosong" };
-      const tx = await prisma.transaction.findFirst({
-        where: {
-          companyId,
-          OR: [
-            { invoiceDisplayNumber: { contains: query, mode: "insensitive" } },
-            { invoiceNumber: { contains: query, mode: "insensitive" } },
-          ],
-        },
-        select: {
-          invoiceDisplayNumber: true,
-          invoiceNumber: true,
-          subtotal: true,
-          discountAmount: true,
-          taxAmount: true,
-          grandTotal: true,
-          paymentMethod: true,
-          paymentAmount: true,
-          changeAmount: true,
-          status: true,
-          createdAt: true,
-          user: { select: { name: true } },
-          customer: { select: { name: true, phone: true } },
-          branch: { select: { name: true } },
-          items: {
-            select: {
-              name: true,
-              quantity: true,
-              unitPrice: true,
-              subtotal: true,
-            },
-          },
-        },
-      });
+      const tx = await repo.findTransactionByInvoice(companyId, query);
       if (!tx) return { found: false, query };
       return {
         found: true,
@@ -1153,14 +956,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const txs = await prisma.transaction.findMany({
-        where: {
-          companyId,
-          status: "COMPLETED",
-          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-        },
-        select: { paymentMethod: true, grandTotal: true },
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const txs = await repo.findTransactionPayments(companyId, dateRange);
       const map = new Map<string, { total: number; count: number }>();
       for (const t of txs) {
         const key = t.paymentMethod || "OTHER";
@@ -1191,13 +988,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const orders = await prisma.serviceOrder.findMany({
-        where: {
-          companyId,
-          ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-        },
-        select: { status: true, finalAmount: true, estimateAmount: true },
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const orders = await repo.findServiceOrders(companyId, dateRange);
       const map = new Map<string, { count: number; totalValue: number }>();
       for (const o of orders) {
         const e = map.get(o.status) ?? { count: 0, totalValue: 0 };
@@ -1223,24 +1015,8 @@ export async function executeOwnerTool(
         args.from,
         args.to,
       );
-      const refunds = await prisma.refund.findMany({
-        where: {
-          transaction: {
-            companyId,
-            ...(start && end ? { createdAt: { gte: start, lte: end } } : {}),
-          },
-        },
-        select: {
-          amount: true,
-          reason: true,
-          createdAt: true,
-          transaction: {
-            select: { invoiceDisplayNumber: true, invoiceNumber: true },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const refunds = await repo.findRefunds(companyId, dateRange);
       const total = refunds.reduce((s, r) => s + r.amount, 0);
       return {
         period: label,
@@ -1265,21 +1041,12 @@ export async function executeOwnerTool(
       );
       const statusArg =
         typeof args.status === "string" ? args.status.toUpperCase() : null;
-      const poWhere: Prisma.PurchaseOrderWhereInput = { companyId };
-      if (start && end) {
-        poWhere.createdAt = { gte: start, lte: end };
-      }
-      if (statusArg) {
-        (poWhere as { status?: unknown }).status = statusArg;
-      }
-      const pos = await prisma.purchaseOrder.findMany({
-        where: poWhere,
-        select: {
-          status: true,
-          totalAmount: true,
-          supplier: { select: { name: true } },
-        },
-      });
+      const dateRange = start && end ? { start, end } : null;
+      const pos = await repo.findPurchaseOrders(
+        companyId,
+        dateRange,
+        statusArg ?? undefined,
+      );
       const map = new Map<string, { count: number; totalValue: number }>();
       for (const p of pos) {
         const e = map.get(p.status) ?? { count: 0, totalValue: 0 };
@@ -1303,48 +1070,14 @@ export async function executeOwnerTool(
       // Quick comprehensive snapshot untuk pertanyaan general "gimana bisnis
       // hari ini". Paralel beberapa query supaya cepat.
       const today = resolvePeriod("today", undefined, undefined);
+      const todayRange = { start: today.start!, end: today.end! };
       const [txs, lowStockProducts, openShifts, bookings, topItems] =
         await Promise.all([
-          prisma.transaction.findMany({
-            where: {
-              companyId,
-              status: "COMPLETED",
-              createdAt: { gte: today.start!, lte: today.end! },
-            },
-            select: { grandTotal: true },
-          }),
-          prisma.product.findMany({
-            where: {
-              companyId,
-              isActive: true,
-              itemType: "PRODUCT",
-              deletedAt: null,
-            },
-            select: { stock: true, minStock: true },
-          }),
-          prisma.cashierShift.count({
-            where: { user: { companyId }, isOpen: true },
-          }),
-          prisma.booking.count({
-            where: {
-              companyId,
-              scheduledAt: { gte: today.start!, lte: today.end! },
-            },
-          }),
-          prisma.transactionItem.findMany({
-            where: {
-              transaction: {
-                companyId,
-                status: "COMPLETED",
-                createdAt: { gte: today.start!, lte: today.end! },
-              },
-            },
-            select: {
-              quantity: true,
-              product: { select: { name: true } },
-            },
-            take: 500,
-          }),
+          repo.findCompletedTransactions(companyId, todayRange),
+          repo.findProductStocks(companyId),
+          repo.countOpenShifts(companyId),
+          repo.countBookingsInRange(companyId, today.start!, today.end!),
+          repo.findTransactionItemsWithQuantity(companyId, todayRange),
         ]);
 
       const totalRevenue = txs.reduce((s, t) => s + t.grandTotal, 0);
@@ -1379,31 +1112,7 @@ export async function executeOwnerTool(
     case "search_customer": {
       const query = String(args.query || "").trim();
       if (!query) return { error: "Query kosong" };
-      const customers = await prisma.customer.findMany({
-        where: {
-          companyId,
-          OR: [
-            { name: { contains: query, mode: "insensitive" } },
-            { phone: { contains: query } },
-            { email: { contains: query, mode: "insensitive" } },
-          ],
-        },
-        select: {
-          name: true,
-          phone: true,
-          email: true,
-          memberLevel: true,
-          totalSpending: true,
-          points: true,
-          _count: { select: { transactions: true } },
-          transactions: {
-            select: { createdAt: true, grandTotal: true },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-          },
-        },
-        take: 10,
-      });
+      const customers = await repo.searchCustomers(companyId, query);
       return {
         count: customers.length,
         items: customers.map((c) => ({
@@ -1432,42 +1141,21 @@ export async function executeCustomerTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const { prisma, companyId, senderPhone } = ctx;
+  const { repo, companyId, senderPhone } = ctx;
   switch (name) {
     case "get_my_bookings": {
       if (!senderPhone) {
         return { error: "Nomor pengirim tidak terdeteksi" };
       }
       const variants = phoneVariants(senderPhone);
-      const customer = await prisma.customer.findFirst({
-        where: { companyId, phone: { in: variants } },
-        select: { id: true },
-      });
+      const customer = await repo.findCustomerByPhone(companyId, variants);
       const statusFilter = { in: ["PENDING", "CONFIRMED", "IN_PROGRESS"] };
-      const bookings = await prisma.booking.findMany({
-        where: customer
-          ? {
-              companyId,
-              OR: [
-                { customerId: customer.id },
-                { customerPhone: { in: variants } },
-              ],
-              status: statusFilter,
-            }
-          : {
-              companyId,
-              customerPhone: { in: variants },
-              status: statusFilter,
-            },
-        select: {
-          scheduledAt: true,
-          status: true,
-          serviceType: true,
-          branch: { select: { name: true } },
-        },
-        orderBy: { scheduledAt: "asc" },
-        take: 5,
-      });
+      const bookings = await repo.findCustomerBookings(
+        companyId,
+        customer?.id ?? null,
+        variants,
+        statusFilter,
+      );
       return {
         count: bookings.length,
         items: bookings.map((b) => ({
@@ -1481,24 +1169,7 @@ export async function executeCustomerTool(
 
     case "list_services": {
       const query = typeof args.query === "string" ? args.query.trim() : "";
-      const services = await prisma.product.findMany({
-        where: {
-          companyId,
-          isActive: true,
-          itemType: "SERVICE",
-          deletedAt: null,
-          ...(query
-            ? { name: { contains: query, mode: "insensitive" as const } }
-            : {}),
-        },
-        select: {
-          name: true,
-          sellingPrice: true,
-          description: true,
-        },
-        take: 20,
-        orderBy: { name: "asc" },
-      });
+      const services = await repo.findServices(companyId, query);
       if (services.length === 0) {
         return {
           count: 0,
@@ -1530,37 +1201,11 @@ export async function executeCustomerTool(
             "Query kosong. Beri kata kunci nama produk (mis. 'oli', 'kampas rem').",
         };
       }
-      const products = await prisma.product.findMany({
-        where: {
-          companyId,
-          isActive: true,
-          itemType: "PRODUCT",
-          deletedAt: null,
-          OR: [
-            { name: { contains: query, mode: "insensitive" } },
-            { description: { contains: query, mode: "insensitive" } },
-            { barcode: { contains: query, mode: "insensitive" } },
-          ],
-          ...(category
-            ? {
-                category: {
-                  name: { contains: category, mode: "insensitive" as const },
-                },
-              }
-            : {}),
-        },
-        select: {
-          name: true,
-          sellingPrice: true,
-          stock: true,
-          unit: true,
-          description: true,
-          category: { select: { name: true } },
-          brand: { select: { name: true } },
-        },
-        take: 15,
-        orderBy: [{ stock: "desc" }, { name: "asc" }],
-      });
+      const products = await repo.searchProductsCatalog(
+        companyId,
+        query,
+        category || undefined,
+      );
       if (products.length === 0) {
         return {
           count: 0,
@@ -1589,15 +1234,7 @@ export async function executeCustomerTool(
     }
 
     case "list_categories": {
-      const categories = await prisma.category.findMany({
-        where: { companyId },
-        select: {
-          name: true,
-          _count: { select: { products: true } },
-        },
-        take: 50,
-        orderBy: { name: "asc" },
-      });
+      const categories = await repo.findCategories(companyId);
       const withProducts = categories.filter((c) => c._count.products > 0);
       return {
         count: withProducts.length,

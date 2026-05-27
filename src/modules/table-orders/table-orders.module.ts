@@ -5,6 +5,7 @@ import {
   TableOrdersController,
   TableSessionsController,
 } from "./table-orders.controller";
+import { TableOrdersRepository } from "./table-orders.repository";
 import { TableOrdersService } from "./table-orders.service";
 
 @Module({
@@ -14,7 +15,7 @@ import { TableOrdersService } from "./table-orders.service";
     TableOrdersController,
     TableSessionsController,
   ],
-  providers: [TableOrdersService],
+  providers: [TableOrdersService, TableOrdersRepository],
   exports: [TableOrdersService],
 })
 export class TableOrdersModule {}

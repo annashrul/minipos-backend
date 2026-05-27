@@ -5,6 +5,7 @@ import { PointsModule } from "../points/points.module";
 import { RacksModule } from "../racks/racks.module";
 import { WhatsappReceiptModule } from "../whatsapp-receipt/whatsapp-receipt.module";
 import { TransactionsController } from "./transactions.controller";
+import { TransactionsRepository } from "./transactions.repository";
 import { TransactionsService } from "./transactions.service";
 
 @Module({
@@ -16,7 +17,7 @@ import { TransactionsService } from "./transactions.service";
     RacksModule,
   ],
   controllers: [TransactionsController],
-  providers: [TransactionsService],
+  providers: [TransactionsRepository, TransactionsService],
   exports: [TransactionsService],
 })
 export class TransactionsModule {}

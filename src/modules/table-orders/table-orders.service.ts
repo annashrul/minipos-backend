@@ -23,59 +23,13 @@ import type {
 } from "./dto/table-orders.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EVENTS, RealtimeService } from "../realtime/realtime.service";
-
-const ORDER_SELECT = {
-  id: true,
-  sessionId: true,
-  tableId: true,
-  branchId: true,
-  status: true,
-  total: true,
-  customerNote: true,
-  rejectReason: true,
-  approvedBy: true,
-  approvedAt: true,
-  orderQueueId: true,
-  createdAt: true,
-  updatedAt: true,
-  table: { select: { id: true, number: true, name: true } },
-  items: {
-    select: {
-      id: true,
-      productId: true,
-      productName: true,
-      qty: true,
-      unitPrice: true,
-      subtotal: true,
-      note: true,
-      product: { select: { code: true } },
-    },
-    orderBy: { id: "asc" },
-  },
-} satisfies Prisma.TableOrderSelect;
-
-const SESSION_SELECT = {
-  id: true,
-  tableId: true,
-  branchId: true,
-  status: true,
-  customerName: true,
-  customerPhone: true,
-  subtotal: true,
-  paidAmount: true,
-  transactionId: true,
-  openedAt: true,
-  closedAt: true,
-  createdAt: true,
-  updatedAt: true,
-  table: { select: { id: true, number: true, name: true } },
-  orders: { select: ORDER_SELECT, orderBy: { createdAt: "asc" } },
-} satisfies Prisma.TableSessionSelect;
-
-type RawOrder = Prisma.TableOrderGetPayload<{ select: typeof ORDER_SELECT }>;
-type RawSession = Prisma.TableSessionGetPayload<{
-  select: typeof SESSION_SELECT;
-}>;
+import {
+  ORDER_SELECT,
+  SESSION_SELECT,
+  TableOrdersRepository,
+  type RawOrder,
+  type RawSession,
+} from "./table-orders.repository";
 
 function readPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -92,6 +46,7 @@ export class TableOrdersService {
   );
 
   constructor(
+    private readonly repo: TableOrdersRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
   ) {}
@@ -101,33 +56,7 @@ export class TableOrdersService {
     branchId?: string | null,
   ): Promise<void> {
     const cutoff = new Date(Date.now() - TableOrdersService.STALE_SESSION_MS);
-    const stale = await this.prisma.tableSession.findMany({
-      where: {
-        branch: { companyId },
-        status: { in: ["OPEN", "AWAITING_PAYMENT"] },
-        openedAt: { lt: cutoff },
-        ...(branchId ? { branchId } : {}),
-      },
-      select: {
-        id: true,
-        tableId: true,
-        branchId: true,
-        orders: {
-          where: {
-            status: {
-              in: [
-                "PENDING_APPROVAL",
-                "APPROVED",
-                "SENT_TO_KITCHEN",
-                "READY",
-                "SERVED",
-              ],
-            },
-          },
-          select: { id: true },
-        },
-      },
-    });
+    const stale = await this.repo.findStaleSessions(companyId, cutoff, branchId);
     if (stale.length === 0) return;
 
     const sessionIds = stale.map((s) => s.id);
@@ -231,20 +160,7 @@ export class TableOrdersService {
     if (!table.branch) {
       throw new BadRequestException("Meja belum di-assign ke cabang");
     }
-    const categories = await this.prisma.category.findMany({
-      where: {
-        companyId: table.branch.companyId,
-        products: {
-          some: {
-            isActive: true,
-            deletedAt: null,
-            itemType: { not: "INGREDIENT" },
-          },
-        },
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    });
+    const categories = await this.repo.findCatalogCategories(table.branch.companyId);
     return { categories, products: [] };
   }
 
@@ -279,24 +195,7 @@ export class TableOrdersService {
       ];
     }
 
-    const rows = await this.prisma.product.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        categoryId: true,
-        category: { select: { name: true } },
-        sellingPrice: true,
-        imageUrl: true,
-        description: true,
-        unit: true,
-        _count: { select: { units: true, modifierGroups: true } },
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1, // peek one ahead to know if more exist
-      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-    });
+    const rows = await this.repo.findPublicProducts(where, limit, query.cursor);
 
     const hasMore = rows.length > limit;
     const slice = hasMore ? rows.slice(0, limit) : rows;
@@ -328,47 +227,10 @@ export class TableOrdersService {
     if (!table.branch) {
       throw new BadRequestException("Meja belum di-assign ke cabang");
     }
-    const product = await this.prisma.product.findFirst({
-      where: {
-        id: productId,
-        companyId: table.branch.companyId,
-        isActive: true,
-        deletedAt: null,
-        itemType: { not: "INGREDIENT" },
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        categoryId: true,
-        category: { select: { name: true } },
-        sellingPrice: true,
-        imageUrl: true,
-        description: true,
-        unit: true,
-        units: {
-          select: {
-            id: true,
-            name: true,
-            conversionQty: true,
-            sellingPrice: true,
-            isDefault: true,
-            sortOrder: true,
-          },
-          orderBy: { sortOrder: "asc" },
-        },
-        modifierGroups: {
-          orderBy: { sortOrder: "asc" },
-          include: {
-            modifierGroup: {
-              include: {
-                options: { orderBy: { sortOrder: "asc" } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const product = await this.repo.findPublicProductDetail(
+      table.branch.companyId,
+      productId,
+    );
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
     return {
@@ -418,14 +280,7 @@ export class TableOrdersService {
     if (table.branch) {
       await this.cleanupStaleSessions(table.branch.companyId, table.branch.id);
     }
-    const session = await this.prisma.tableSession.findFirst({
-      where: {
-        tableId: table.id,
-        status: { in: ["OPEN", "AWAITING_PAYMENT"] },
-      },
-      select: SESSION_SELECT,
-      orderBy: { openedAt: "desc" },
-    });
+    const session = await this.repo.findActiveSession(table.id);
     return session ? toSessionResponse(session) : null;
   }
 
@@ -442,38 +297,8 @@ export class TableOrdersService {
     await this.cleanupStaleSessions(companyId, table.branch.id);
 
     // Resolve product prices server-side (don't trust client).
-    // Pull units + modifierGroups too so we can validate selections + compute price.
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
-    const products = await this.prisma.product.findMany({
-      where: {
-        id: { in: productIds },
-        companyId,
-        isActive: true,
-        deletedAt: null,
-        itemType: { not: "INGREDIENT" },
-      },
-      select: {
-        id: true,
-        name: true,
-        sellingPrice: true,
-        unit: true,
-        units: {
-          select: {
-            id: true,
-            name: true,
-            conversionQty: true,
-            sellingPrice: true,
-          },
-        },
-        modifierGroups: {
-          include: {
-            modifierGroup: {
-              include: { options: true },
-            },
-          },
-        },
-      },
-    });
+    const products = await this.repo.findProductsForOrder(companyId, productIds);
     const productMap = new Map(products.map((p) => [p.id, p]));
     if (productMap.size !== productIds.length) {
       throw new BadRequestException(
@@ -500,7 +325,7 @@ export class TableOrdersService {
       const unitMap = unitMapByProduct.get(p.id)!;
       const modGroupMap = modGroupMapByProduct.get(p.id)!;
 
-      // ── Resolve unit (fallback to base unit when no unitId provided)
+      // Resolve unit (fallback to base unit when no unitId provided)
       let unitName = p.unit;
       let unitPrice = p.sellingPrice;
       if (i.unitId) {
@@ -514,7 +339,7 @@ export class TableOrdersService {
         unitPrice = unit.sellingPrice;
       }
 
-      // ── Resolve modifier selections + price adjustment
+      // Resolve modifier selections + price adjustment
       let modifierAdjust = 0;
       const modifierSnapshot: Array<{
         groupId: string;
@@ -721,14 +546,8 @@ export class TableOrdersService {
       if (query.to) where.createdAt.lte = new Date(query.to);
     }
     const [rows, total] = await Promise.all([
-      this.prisma.tableOrder.findMany({
-        where,
-        select: ORDER_SELECT,
-        orderBy: { createdAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
-      }),
-      this.prisma.tableOrder.count({ where }),
+      this.repo.findOrdersFull(where, (query.page - 1) * query.perPage, query.perPage),
+      this.repo.countOrders(where),
     ]);
     return {
       orders: rows.map(toOrderResponse),
@@ -749,14 +568,8 @@ export class TableOrdersService {
     if (query.tableId) where.tableId = query.tableId;
     if (query.status) where.status = query.status;
     const [rows, total] = await Promise.all([
-      this.prisma.tableSession.findMany({
-        where,
-        select: SESSION_SELECT,
-        orderBy: { openedAt: "desc" },
-        skip: (query.page - 1) * query.perPage,
-        take: query.perPage,
-      }),
-      this.prisma.tableSession.count({ where }),
+      this.repo.findSessionsFull(where, (query.page - 1) * query.perPage, query.perPage),
+      this.repo.countSessions(where),
     ]);
     return {
       sessions: rows.map(toSessionResponse),
@@ -888,11 +701,7 @@ export class TableOrdersService {
     orderId: string,
   ): Promise<TableOrderResponse> {
     const order = await this.findOrderForCompany(companyId, orderId);
-    const updated = await this.prisma.tableOrder.update({
-      where: { id: order.id },
-      data: { status: "READY" },
-      select: ORDER_SELECT,
-    });
+    const updated = await this.repo.updateOrder(order.id, { status: "READY" });
     const resp = toOrderResponse(updated);
     this.realtime.emit(
       EVENTS.TABLE_ORDER_READY,
@@ -933,11 +742,11 @@ export class TableOrdersService {
     }
 
     const invoiceNumber = await nextInvoiceNumber(
-      this.prisma,
+      this.repo,
       session.branchId,
     );
     const invoiceDisplayNumber = await nextInvoiceDisplayNumber(
-      this.prisma,
+      this.repo,
       companyId,
     );
 
@@ -964,7 +773,7 @@ export class TableOrdersService {
               o.items.map((i) => ({
                 productId: i.productId,
                 productName: i.productName,
-                productCode: "", // resolved below if needed; keep blank fallback
+                productCode: "",
                 quantity: i.qty,
                 unitPrice: i.unitPrice,
                 subtotal: i.subtotal,
@@ -1048,10 +857,6 @@ export class TableOrdersService {
 
   /**
    * Link an existing POS Transaction to a TableSession + close the session.
-   * Dipakai saat kasir billing order meja lewat halaman POS — POS sudah
-   * buat Transaction dengan flow normal (diskon, voucher, multi-payment,
-   * member tier, dll), lalu memanggil endpoint ini untuk menutup sesi
-   * dan free meja.
    */
   async linkTransactionAndClose(
     companyId: string,
@@ -1063,10 +868,7 @@ export class TableOrdersService {
       throw new BadRequestException("Sesi sudah ditutup");
     }
     // Verify transaction belongs to same company
-    const trx = await this.prisma.transaction.findFirst({
-      where: { id: transactionId, user: { companyId } },
-      select: { id: true },
-    });
+    const trx = await this.repo.findTransactionForCompany(companyId, transactionId);
     if (!trx) throw new NotFoundException("Transaksi tidak ditemukan");
 
     const closed = await this.prisma.$transaction(async (tx) => {
@@ -1105,22 +907,13 @@ export class TableOrdersService {
   // ────────────────────────────────────────────────────────────
   // PAYMENT FOUNDATION (online — provider-agnostic)
   // ────────────────────────────────────────────────────────────
-  /**
-   * Create a payment record + return a placeholder reference.
-   * Real provider integration (Midtrans/Xendit/QRIS dynamic) will
-   * fill `externalId` and a redirect/QR string. For now we register
-   * a PENDING payment so the UI can wait for webhook / manual settle.
-   */
   async startOnlinePayment(
     qrToken: string,
     sessionId: string,
     dto: StartOnlinePaymentDto,
   ): Promise<TablePaymentResponse> {
     const table = await this.findTableByToken(qrToken);
-    const session = await this.prisma.tableSession.findFirst({
-      where: { id: sessionId, tableId: table.id },
-      select: { id: true, status: true, subtotal: true, branchId: true },
-    });
+    const session = await this.repo.findSessionForPayment(sessionId, table.id);
     if (!session) throw new NotFoundException("Sesi tidak ditemukan");
     if (session.status === "CLOSED") {
       throw new BadRequestException("Sesi sudah ditutup");
@@ -1129,31 +922,15 @@ export class TableOrdersService {
       throw new BadRequestException("Belum ada order yang bisa dibayar");
     }
 
-    const payment = await this.prisma.tableSessionPayment.create({
-      data: {
-        sessionId: session.id,
-        provider: dto.provider,
-        channel: dto.channel ?? null,
-        amount: session.subtotal,
-        status: "PENDING",
-      },
-      select: {
-        id: true,
-        sessionId: true,
-        provider: true,
-        channel: true,
-        amount: true,
-        status: true,
-        externalId: true,
-        paidAt: true,
-        createdAt: true,
-      },
+    const payment = await this.repo.createPayment({
+      sessionId: session.id,
+      provider: dto.provider,
+      channel: dto.channel ?? null,
+      amount: session.subtotal,
+      status: "PENDING",
     });
 
-    await this.prisma.tableSession.update({
-      where: { id: session.id },
-      data: { status: "AWAITING_PAYMENT" },
-    });
+    await this.repo.updateSessionStatus(session.id, "AWAITING_PAYMENT");
 
     this.realtime.emit(
       EVENTS.TABLE_PAYMENT_UPDATED,
@@ -1178,18 +955,7 @@ export class TableOrdersService {
   // helpers
   // ────────────────────────────────────────────────────────────
   private async findTableByToken(qrToken: string) {
-    const table = await this.prisma.restaurantTable.findUnique({
-      where: { qrToken },
-      select: {
-        id: true,
-        number: true,
-        name: true,
-        section: true,
-        status: true,
-        branchId: true,
-        branch: { select: { id: true, name: true, companyId: true } },
-      },
-    });
+    const table = await this.repo.findTableByToken(qrToken);
     if (!table || !table.branchId) {
       throw new NotFoundException("Token meja tidak valid");
     }
@@ -1197,28 +963,13 @@ export class TableOrdersService {
   }
 
   private async findOrderForCompany(companyId: string, orderId: string) {
-    const order = await this.prisma.tableOrder.findFirst({
-      where: { id: orderId, branch: { companyId } },
-      select: {
-        id: true,
-        sessionId: true,
-        tableId: true,
-        branchId: true,
-        status: true,
-        total: true,
-        customerNote: true,
-        items: { select: { productName: true, qty: true, note: true } },
-      },
-    });
+    const order = await this.repo.findOrderForCompany(companyId, orderId);
     if (!order) throw new NotFoundException("Order tidak ditemukan");
     return order;
   }
 
   private async findSessionForCompany(companyId: string, sessionId: string) {
-    const session = await this.prisma.tableSession.findFirst({
-      where: { id: sessionId, branch: { companyId } },
-      select: SESSION_SELECT,
-    });
+    const session = await this.repo.findSessionForCompany(companyId, sessionId);
     if (!session) throw new NotFoundException("Sesi tidak ditemukan");
     return session;
   }
@@ -1242,16 +993,14 @@ async function nextQueueNumber(
 }
 
 async function nextInvoiceNumber(
-  prisma: PrismaService,
+  repo: TableOrdersRepository,
   branchId: string,
 ): Promise<string> {
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
-  const count = await prisma.transaction.count({
-    where: { branchId, createdAt: { gte: startOfDay } },
-  });
+  const count = await repo.countTransactionsToday(branchId, startOfDay);
   const seq = String(count + 1).padStart(4, "0");
   return `INV-${ymd}-${seq}`;
 }
@@ -1261,7 +1010,7 @@ async function nextInvoiceNumber(
  * (companyId, date). Mirror logika di TransactionsService.generateDisplayInvoiceNumber.
  */
 async function nextInvoiceDisplayNumber(
-  prisma: PrismaService,
+  repo: TableOrdersRepository,
   companyId: string,
 ): Promise<string> {
   const date = new Date();
@@ -1270,14 +1019,7 @@ async function nextInvoiceDisplayNumber(
   const yyyy = String(date.getFullYear());
   const prefix = `INV-${dd}${mm}${yyyy}-`;
 
-  const last = await prisma.transaction.findFirst({
-    where: {
-      companyId,
-      invoiceDisplayNumber: { startsWith: prefix },
-    },
-    orderBy: { invoiceDisplayNumber: "desc" },
-    select: { invoiceDisplayNumber: true },
-  });
+  const last = await repo.findLastInvoiceDisplayNumber(companyId, prefix);
 
   let nextSeq = 1;
   if (last?.invoiceDisplayNumber) {

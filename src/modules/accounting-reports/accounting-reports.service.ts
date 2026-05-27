@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { toDateOnly } from "@/common/utils/date";
 import { round2 } from "@/common/utils/math";
@@ -30,7 +30,6 @@ import type {
   IncomeStatementQueryDto,
   IncomeStatementResponse,
   LedgerEntryResponse,
-  TaxSummaryDetailResponse,
   TaxSummaryQueryDto,
   TaxSummaryResponse,
   TrialBalanceQueryDto,
@@ -38,23 +37,11 @@ import type {
   TrialBalanceRowResponse,
 } from "./dto/accounting-reports.dto";
 import { PrismaService } from "../prisma/prisma.service";
+import { AccountingReportsRepository } from "./accounting-reports.repository";
 
 // ===========================
 // HELPERS
 // ===========================
-
-function branchSQL(
-  branchId: string | undefined,
-  alias: string | undefined,
-  paramIndex: number,
-): { condition: string; params: unknown[] } {
-  if (!branchId) return { condition: "", params: [] };
-  const prefix = alias ? `${alias}.` : "";
-  return {
-    condition: ` AND ${prefix}"branchId" = $${paramIndex}`,
-    params: [branchId],
-  };
-}
 
 function toDate(iso: string): Date {
   return new Date(iso);
@@ -73,7 +60,10 @@ function dateToIso(d: Date | string): string {
 
 @Injectable()
 export class AccountingReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repo: AccountingReportsRepository,
+  ) {}
 
   // ===========================
   // 1. BUKU BESAR (General Ledger)
@@ -87,64 +77,10 @@ export class AccountingReportsService {
     const from = dateFrom ? toDate(dateFrom) : new Date("2000-01-01");
     const to = dateTo ? endOfDay(dateTo) : new Date("2099-12-31");
 
-    const priorBranch = branchSQL(branchId, "je", 3);
-    const entriesBranch = branchSQL(branchId, "je", 4);
-
     const [account, priorMovements, entries] = await Promise.all([
-      this.prisma.account.findFirst({
-        where: { id: accountId, category: { companyId } },
-        include: { category: true },
-      }),
-
-      this.prisma.$queryRawUnsafe<{ totalDebit: number; totalCredit: number }[]>(
-        `
-          SELECT
-            COALESCE(SUM(jel.debit), 0)::float AS "totalDebit",
-            COALESCE(SUM(jel.credit), 0)::float AS "totalCredit"
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          WHERE jel."accountId" = $1
-            AND je.status = 'POSTED'
-            AND je.date < $2
-            ${priorBranch.condition}
-          `,
-        accountId,
-        from,
-        ...priorBranch.params,
-      ),
-
-      this.prisma.$queryRawUnsafe<
-        {
-          date: Date;
-          entryNumber: string;
-          description: string;
-          lineDescription: string | null;
-          debit: number;
-          credit: number;
-        }[]
-      >(
-        `
-          SELECT
-            je.date,
-            je."entryNumber",
-            je.description,
-            jel.description AS "lineDescription",
-            jel.debit::float AS debit,
-            jel.credit::float AS credit
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          WHERE jel."accountId" = $1
-            AND je.status = 'POSTED'
-            AND je.date >= $2
-            AND je.date <= $3
-            ${entriesBranch.condition}
-          ORDER BY je.date ASC, je."createdAt" ASC
-          `,
-        accountId,
-        from,
-        to,
-        ...entriesBranch.params,
-      ),
+      this.repo.findAccountWithCategory(accountId, companyId),
+      this.repo.findPriorMovements(accountId, from, branchId),
+      this.repo.findLedgerEntries(accountId, from, to, branchId),
     ]);
 
     if (!account) throw new NotFoundException("Akun tidak ditemukan");
@@ -207,57 +143,10 @@ export class AccountingReportsService {
     params: TrialBalanceQueryDto,
   ): Promise<TrialBalanceResponse> {
     const { asOfDate, branchId } = params;
-    const upTo = asOfDate ? endOfDay(asOfDate) : new Date("2099-12-31");
 
-    const tbBranch = branchSQL(branchId, "je", 2);
-    const acctBranchIdx = 2 + tbBranch.params.length + 1;
-    const acctBranchCondition = branchId
-      ? `AND (a."branchId" = $${acctBranchIdx} OR a."branchId" IS NULL)`
-      : "";
-    const acctBranchParams = branchId ? [branchId] : [];
-    const companyIdx = 2 + tbBranch.params.length + acctBranchParams.length;
-
-    const rows = await this.prisma.$queryRawUnsafe<
-      {
-        accountId: string;
-        accountCode: string;
-        accountName: string;
-        categoryType: string;
-        categoryName: string;
-        normalSide: string;
-        openingBalance: number;
-        totalDebit: number;
-        totalCredit: number;
-        isActive: boolean;
-      }[]
-    >(
-      `
-        SELECT
-          a.id AS "accountId",
-          a.code AS "accountCode",
-          a.name AS "accountName",
-          ac.type AS "categoryType",
-          ac.name AS "categoryName",
-          ac."normalSide",
-          a."openingBalance"::float AS "openingBalance",
-          COALESCE(SUM(jel.debit), 0)::float AS "totalDebit",
-          COALESCE(SUM(jel.credit), 0)::float AS "totalCredit"
-        FROM accounts a
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
-        LEFT JOIN journal_entries je ON je.id = jel."journalId"
-          AND je.status = 'POSTED'
-          AND je.date <= $1
-          ${tbBranch.condition}
-        WHERE a."isActive" = true
-          AND ac."companyId" = $${companyIdx}
-          ${acctBranchCondition}
-        GROUP BY a.id, a.code, a.name, ac.type, ac.name, ac."normalSide", a."openingBalance"
-        ORDER BY a.code ASC
-        `,
-      upTo,
-      ...tbBranch.params,
-      ...acctBranchParams,
+    const rows = await this.repo.findTrialBalanceRows(
+      asOfDate,
+      branchId,
       companyId,
     );
 
@@ -321,47 +210,11 @@ export class AccountingReportsService {
     params: IncomeStatementQueryDto,
   ): Promise<IncomeStatementResponse> {
     const { dateFrom, dateTo, branchId } = params;
-    const from = toDate(dateFrom);
-    const to = endOfDay(dateTo);
-    const isBranch = branchSQL(branchId, "je", 3);
-    const companyIdx = 3 + isBranch.params.length;
 
-    const allRows = await this.prisma.$queryRawUnsafe<
-      {
-        accountId: string;
-        code: string;
-        name: string;
-        type: string;
-        amount: number;
-      }[]
-    >(
-      `
-        SELECT
-          a.id AS "accountId",
-          a.code,
-          a.name,
-          ac.type,
-          CASE
-            WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0))
-            WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0))
-          END::float AS amount
-        FROM accounts a
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
-        LEFT JOIN journal_entries je ON je.id = jel."journalId"
-          AND je.status = 'POSTED'
-          AND je.date >= $1
-          AND je.date <= $2
-          ${isBranch.condition}
-        WHERE ac.type IN ('REVENUE', 'EXPENSE')
-          AND a."isActive" = true
-          AND ac."companyId" = $${companyIdx}
-        GROUP BY a.id, a.code, a.name, ac.type
-        ORDER BY a.code ASC
-        `,
-      from,
-      to,
-      ...isBranch.params,
+    const allRows = await this.repo.findIncomeStatementRows(
+      dateFrom,
+      dateTo,
+      branchId,
       companyId,
     );
 
@@ -410,72 +263,10 @@ export class AccountingReportsService {
     params: BalanceSheetQueryDto,
   ): Promise<BalanceSheetResponse> {
     const { asOfDate, branchId } = params;
-    const upTo = endOfDay(asOfDate);
-    const bsBranch = branchSQL(branchId, "je", 2);
-    const companyIdx = 2 + bsBranch.params.length;
 
     const [accountBalances, retainedEarningsResult] = await Promise.all([
-      this.prisma.$queryRawUnsafe<
-        {
-          accountId: string;
-          code: string;
-          name: string;
-          categoryType: string;
-          categoryName: string;
-          normalSide: string;
-          openingBalance: number;
-          totalDebit: number;
-          totalCredit: number;
-        }[]
-      >(
-        `
-          SELECT
-            a.id AS "accountId",
-            a.code,
-            a.name,
-            ac.type AS "categoryType",
-            ac.name AS "categoryName",
-            ac."normalSide",
-            a."openingBalance"::float AS "openingBalance",
-            COALESCE(SUM(jel.debit), 0)::float AS "totalDebit",
-            COALESCE(SUM(jel.credit), 0)::float AS "totalCredit"
-          FROM accounts a
-          JOIN account_categories ac ON ac.id = a."categoryId"
-          LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
-          LEFT JOIN journal_entries je ON je.id = jel."journalId"
-            AND je.status = 'POSTED'
-            AND je.date <= $1
-            ${bsBranch.condition}
-          WHERE a."isActive" = true
-            AND ac.type IN ('ASSET', 'LIABILITY', 'EQUITY')
-            AND ac."companyId" = $${companyIdx}
-          GROUP BY a.id, a.code, a.name, ac.type, ac.name, ac."normalSide", a."openingBalance"
-          ORDER BY a.code ASC
-          `,
-        upTo,
-        ...bsBranch.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ revenue: number; expense: number }[]>(
-        `
-          SELECT
-            COALESCE(SUM(CASE WHEN ac.type = 'REVENUE' THEN jel.credit - jel.debit ELSE 0 END), 0)::float AS revenue,
-            COALESCE(SUM(CASE WHEN ac.type = 'EXPENSE' THEN jel.debit - jel.credit ELSE 0 END), 0)::float AS expense
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          JOIN accounts a ON a.id = jel."accountId"
-          JOIN account_categories ac ON ac.id = a."categoryId"
-          WHERE je.status = 'POSTED'
-            AND je.date <= $1
-            AND ac.type IN ('REVENUE', 'EXPENSE')
-            AND ac."companyId" = $${companyIdx}
-            ${bsBranch.condition}
-          `,
-        upTo,
-        ...bsBranch.params,
-        companyId,
-      ),
+      this.repo.findBalanceSheetAccounts(asOfDate, branchId, companyId),
+      this.repo.findRetainedEarnings(asOfDate, branchId, companyId),
     ]);
 
     const retainedEarnings =
@@ -608,83 +399,10 @@ export class AccountingReportsService {
     params: CashFlowQueryDto,
   ): Promise<CashFlowResponse> {
     const { dateFrom, dateTo, branchId } = params;
-    const from = toDate(dateFrom);
-    const to = endOfDay(dateTo);
-
-    const cfBranch = branchSQL(branchId, "je", 2);
-    const cfRangeBranch = branchSQL(branchId, "je", 3);
-    const companyIdxOpening = 2 + cfBranch.params.length;
-    const companyIdxRange = 3 + cfRangeBranch.params.length;
 
     const [openingCashResult, cashMovements] = await Promise.all([
-      this.prisma.$queryRawUnsafe<{ balance: number }[]>(
-        `
-          SELECT
-            COALESCE(SUM(
-              a."openingBalance" + COALESCE(mv."totalDebit", 0) - COALESCE(mv."totalCredit", 0)
-            ), 0)::float AS balance
-          FROM accounts a
-          JOIN account_categories ac ON ac.id = a."categoryId"
-          LEFT JOIN (
-            SELECT
-              jel."accountId",
-              SUM(jel.debit)::float AS "totalDebit",
-              SUM(jel.credit)::float AS "totalCredit"
-            FROM journal_entry_lines jel
-            JOIN journal_entries je ON je.id = jel."journalId"
-            WHERE je.status = 'POSTED'
-              AND je.date < $1
-              ${cfBranch.condition}
-            GROUP BY jel."accountId"
-          ) mv ON mv."accountId" = a.id
-          WHERE ac.type = 'ASSET'
-            AND (a.code LIKE '1-1001%' OR a.code LIKE '1-1002%')
-            AND a."isActive" = true
-            AND ac."companyId" = $${companyIdxOpening}
-          `,
-        from,
-        ...cfBranch.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<
-        {
-          entryNumber: string;
-          date: Date;
-          description: string;
-          lineDescription: string | null;
-          debitAmount: number;
-          creditAmount: number;
-          referenceType: string | null;
-        }[]
-      >(
-        `
-          SELECT
-            je."entryNumber",
-            je.date,
-            je.description,
-            jel.description AS "lineDescription",
-            jel.debit::float AS "debitAmount",
-            jel.credit::float AS "creditAmount",
-            je."referenceType"
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          JOIN accounts a ON a.id = jel."accountId"
-          JOIN account_categories ac ON ac.id = a."categoryId"
-          WHERE je.status = 'POSTED'
-            AND je.date >= $1
-            AND je.date <= $2
-            AND (a.code LIKE '1-1001%' OR a.code LIKE '1-1002%')
-            AND (jel.debit > 0 OR jel.credit > 0)
-            AND ac."companyId" = $${companyIdxRange}
-            ${cfRangeBranch.condition}
-          ORDER BY je.date ASC, je."createdAt" ASC
-          `,
-        from,
-        to,
-        ...cfRangeBranch.params,
-        companyId,
-      ),
+      this.repo.findOpeningCashBalance(dateFrom, branchId, companyId),
+      this.repo.findCashMovements(dateFrom, dateTo, branchId, companyId),
     ]);
 
     const openingCash = openingCashResult[0]?.balance ?? 0;
@@ -766,11 +484,6 @@ export class AccountingReportsService {
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const branchCond0 = branchSQL(branchId, "je", 1);
-    const branchCond2 = branchSQL(branchId, "je", 3);
-    const companyIdx0 = 1 + branchCond0.params.length;
-    const companyIdx2 = 3 + branchCond2.params.length;
-
     const recentJournalInclude = {
       lines: {
         include: { account: { select: { code: true, name: true } } },
@@ -783,6 +496,9 @@ export class AccountingReportsService {
       include: typeof recentJournalInclude;
     }>;
 
+    const sevenDaysAgo = new Date(todayStart);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+
     const [
       cashBalance,
       receivableBalance,
@@ -793,180 +509,14 @@ export class AccountingReportsService {
       topExpenses,
       recentJournals,
     ] = await Promise.all([
-      this.prisma.$queryRawUnsafe<{ balance: number }[]>(
-        `
-        SELECT COALESCE(SUM(
-          a."openingBalance" + COALESCE(mv.net, 0)
-        ), 0)::float AS balance
-        FROM accounts a
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        LEFT JOIN (
-          SELECT jel."accountId", SUM(jel.debit - jel.credit)::float AS net
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          WHERE je.status = 'POSTED' ${branchCond0.condition}
-          GROUP BY jel."accountId"
-        ) mv ON mv."accountId" = a.id
-        WHERE (a.code LIKE '1-1001%' OR a.code LIKE '1-1002%')
-          AND a."isActive" = true
-          AND ac."companyId" = $${companyIdx0}
-        `,
-        ...branchCond0.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ balance: number }[]>(
-        `
-        SELECT COALESCE(SUM(
-          a."openingBalance" + COALESCE(mv.net, 0)
-        ), 0)::float AS balance
-        FROM accounts a
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        LEFT JOIN (
-          SELECT jel."accountId", SUM(jel.debit - jel.credit)::float AS net
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          WHERE je.status = 'POSTED' ${branchCond0.condition}
-          GROUP BY jel."accountId"
-        ) mv ON mv."accountId" = a.id
-        WHERE a.code LIKE '1-1003%'
-          AND a."isActive" = true
-          AND ac."companyId" = $${companyIdx0}
-        `,
-        ...branchCond0.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ balance: number }[]>(
-        `
-        SELECT COALESCE(SUM(
-          a."openingBalance" + COALESCE(mv.net, 0)
-        ), 0)::float AS balance
-        FROM accounts a
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        LEFT JOIN (
-          SELECT jel."accountId", SUM(jel.credit - jel.debit)::float AS net
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel."journalId"
-          WHERE je.status = 'POSTED' ${branchCond0.condition}
-          GROUP BY jel."accountId"
-        ) mv ON mv."accountId" = a.id
-        WHERE ac.type = 'LIABILITY'
-          AND a."isActive" = true
-          AND ac."companyId" = $${companyIdx0}
-        `,
-        ...branchCond0.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ revenue: number; expense: number }[]>(
-        `
-        SELECT
-          COALESCE(SUM(CASE WHEN ac.type = 'REVENUE' THEN jel.credit - jel.debit ELSE 0 END), 0)::float AS revenue,
-          COALESCE(SUM(CASE WHEN ac.type = 'EXPENSE' THEN jel.debit - jel.credit ELSE 0 END), 0)::float AS expense
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE je.status = 'POSTED'
-          AND je.date >= $1 AND je.date < $2
-          AND ac.type IN ('REVENUE', 'EXPENSE')
-          AND ac."companyId" = $${companyIdx2}
-          ${branchCond2.condition}
-        `,
-        todayStart,
-        todayEnd,
-        ...branchCond2.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ revenue: number; expense: number }[]>(
-        `
-        SELECT
-          COALESCE(SUM(CASE WHEN ac.type = 'REVENUE' THEN jel.credit - jel.debit ELSE 0 END), 0)::float AS revenue,
-          COALESCE(SUM(CASE WHEN ac.type = 'EXPENSE' THEN jel.debit - jel.credit ELSE 0 END), 0)::float AS expense
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE je.status = 'POSTED'
-          AND je.date >= $1 AND je.date < $2
-          AND ac.type IN ('REVENUE', 'EXPENSE')
-          AND ac."companyId" = $${companyIdx2}
-          ${branchCond2.condition}
-        `,
-        monthStart,
-        todayEnd,
-        ...branchCond2.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<{ date: Date; revenue: number }[]>(
-        `
-        SELECT
-          je.date,
-          COALESCE(SUM(jel.credit - jel.debit), 0)::float AS revenue
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE je.status = 'POSTED'
-          AND ac.type = 'REVENUE'
-          AND je.date >= $1
-          AND je.date < $2
-          AND ac."companyId" = $${companyIdx2}
-          ${branchCond2.condition}
-        GROUP BY je.date
-        ORDER BY je.date ASC
-        `,
-        (() => {
-          const d = new Date(todayStart);
-          d.setDate(d.getDate() - 6);
-          return d;
-        })(),
-        todayEnd,
-        ...branchCond2.params,
-        companyId,
-      ),
-
-      this.prisma.$queryRawUnsafe<
-        { accountCode: string; accountName: string; amount: number }[]
-      >(
-        `
-        SELECT
-          a.code AS "accountCode",
-          a.name AS "accountName",
-          COALESCE(SUM(jel.debit - jel.credit), 0)::float AS amount
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE je.status = 'POSTED'
-          AND ac.type = 'EXPENSE'
-          AND je.date >= $1 AND je.date < $2
-          AND ac."companyId" = $${companyIdx2}
-          ${branchCond2.condition}
-        GROUP BY a.id, a.code, a.name
-        HAVING SUM(jel.debit - jel.credit) > 0
-        ORDER BY amount DESC
-        LIMIT 5
-        `,
-        monthStart,
-        todayEnd,
-        ...branchCond2.params,
-        companyId,
-      ),
-
-      this.prisma.journalEntry.findMany({
-        where: {
-          status: "POSTED",
-          createdByUser: { companyId },
-          ...(branchId ? { branchId } : {}),
-        },
-        include: recentJournalInclude,
-        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-        take: 10,
-      }),
+      this.repo.findCashBalance(branchId, companyId),
+      this.repo.findReceivableBalance(branchId, companyId),
+      this.repo.findPayableBalance(branchId, companyId),
+      this.repo.findPnL(todayStart, todayEnd, branchId, companyId),
+      this.repo.findPnL(monthStart, todayEnd, branchId, companyId),
+      this.repo.findRevenueTrend(sevenDaysAgo, todayEnd, branchId, companyId),
+      this.repo.findTopExpenses(monthStart, todayEnd, branchId, companyId),
+      this.repo.findRecentJournals(companyId, branchId),
     ] as const);
 
     const recentJournalsTyped = recentJournals as unknown as RecentJournal[];
@@ -1040,13 +590,6 @@ export class AccountingReportsService {
       sortBy,
       sortDir = "desc",
     } = params;
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const typeFilter =
-      taxType && taxType !== "ALL" ? `AND jel."taxType" = '${taxType}'` : "";
-    const searchFilter = search
-      ? `AND (je."entryNumber" ILIKE '%${search}%' OR je.description ILIKE '%${search}%' OR je.reference ILIKE '%${search}%')`
-      : "";
 
     // Whitelist sort columns to avoid SQL injection
     const sortColumnMap: Record<string, string> = {
@@ -1061,78 +604,35 @@ export class AccountingReportsService {
         : "je.date";
     const sortDirSql = sortDir === "asc" ? "ASC" : "DESC";
 
-    const results = await this.prisma.$queryRawUnsafe<
-      Array<{
-        tax_type: string;
-        total_tax: number;
-        total_dpp: number;
-        count: number;
-      }>
-    >(`
-      SELECT
-        jel."taxType" AS tax_type,
-        COALESCE(SUM(COALESCE(jel."taxAmount", 0)), 0)::float AS total_tax,
-        COALESCE(SUM(COALESCE(jel."taxBaseAmount", 0)), 0)::float AS total_dpp,
-        COUNT(*)::int AS count
-      FROM journal_entry_lines jel
-      JOIN journal_entries je ON je.id = jel."journalId"
-      JOIN accounts a ON a.id = jel."accountId"
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED'
-        AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
-      GROUP BY jel."taxType"
-    `);
+    const [results, details, countResult] = await Promise.all([
+      this.repo.findTaxSummaryAgg(dateFrom, dateTo, branchId, companyId),
+      this.repo.findTaxSummaryDetails(
+        dateFrom,
+        dateTo,
+        branchId,
+        companyId,
+        taxType,
+        search,
+        sortColumn,
+        sortDirSql,
+        perPage,
+        (page - 1) * perPage,
+      ),
+      this.repo.findTaxSummaryCount(
+        dateFrom,
+        dateTo,
+        branchId,
+        companyId,
+        taxType,
+        search,
+      ),
+    ]);
 
     const map = new Map(results.map((r) => [r.tax_type, r]));
     const ppnKeluaran = map.get("PPN_KELUARAN")?.total_tax ?? 0;
     const ppnMasukan = map.get("PPN_MASUKAN")?.total_tax ?? 0;
     const ppnKurangBayar = ppnKeluaran - ppnMasukan;
 
-    const details = await this.prisma.$queryRawUnsafe<
-      TaxSummaryDetailResponse[]
-    >(`
-      SELECT
-        je."entryNumber" AS entry_number, je.date::text, je.description,
-        COALESCE(je.reference, '') AS reference,
-        jel."taxType" AS tax_type,
-        COALESCE(jel."taxAmount", 0)::float AS tax_amount,
-        COALESCE(jel."taxBaseAmount", 0)::float AS dpp,
-        COALESCE(je."referenceType", 'MANUAL') AS reference_type
-      FROM journal_entry_lines jel
-      JOIN journal_entries je ON je.id = jel."journalId"
-      JOIN accounts a ON a.id = jel."accountId"
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED'
-        AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
-        ${typeFilter}
-        ${searchFilter}
-      ORDER BY ${sortColumn} ${sortDirSql}
-      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
-    `);
-
-    const countResult = await this.prisma.$queryRawUnsafe<[{ total: number }]>(`
-      SELECT COUNT(*)::int AS total
-      FROM journal_entry_lines jel
-      JOIN journal_entries je ON je.id = jel."journalId"
-      JOIN accounts a ON a.id = jel."accountId"
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED'
-        AND jel."taxType" IS NOT NULL
-        AND je.date >= '${dateFrom}'
-        AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-        ${branchFilter}
-        ${typeFilter}
-        ${searchFilter}
-    `);
     const total = Number(countResult[0]?.total ?? 0);
 
     return {
@@ -1142,7 +642,7 @@ export class AccountingReportsService {
       ppnKurangBayar,
       pph21: map.get("PPH21")?.total_tax ?? 0,
       pph23: map.get("PPH23")?.total_tax ?? 0,
-      details,
+      details: details as unknown as import("./dto/accounting-reports.dto").TaxSummaryDetailResponse[],
       total,
       totalPages: Math.ceil(total / perPage),
     };
@@ -1154,32 +654,7 @@ export class AccountingReportsService {
   ): Promise<EFakturExportResponse> {
     const { dateFrom, dateTo } = params;
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      Array<{
-        date: string;
-        invoice: string;
-        dpp: number;
-        ppn: number;
-        supplier_or_customer: string;
-        reference_type: string;
-      }>
-    >(`
-      SELECT
-        je.date::text, COALESCE(je.reference, je."entryNumber") AS invoice,
-        COALESCE(jel."taxBaseAmount", 0)::float AS dpp,
-        COALESCE(jel."taxAmount", 0)::float AS ppn,
-        COALESCE(je.description, '') AS supplier_or_customer,
-        COALESCE(je."referenceType", 'MANUAL') AS reference_type
-      FROM journal_entry_lines jel
-      JOIN journal_entries je ON je.id = jel."journalId"
-      JOIN accounts a ON a.id = jel."accountId"
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED'
-        AND jel."taxType" IN ('PPN_KELUARAN', 'PPN_MASUKAN')
-        AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'
-        AND ac."companyId" = '${companyId}'
-      ORDER BY je.date ASC
-    `);
+    const rows = await this.repo.findEFakturRows(dateFrom, dateTo, companyId);
 
     const csvLines = [
       "FK,KD_JENIS_TRANSAKSI,FG_PENGGANTI,NOMOR_FAKTUR,MASA_PAJAK,TAHUN_PAJAK,TANGGAL_FAKTUR,DPP,PPN,KETERANGAN",
@@ -1217,36 +692,13 @@ export class AccountingReportsService {
     params: AccountingAgingQueryDto,
   ): Promise<AccountingAgingReportResponse> {
     const { type, branchId, asOfDate } = params;
-    const asOf = asOfDate ? `'${asOfDate}'::date` : "CURRENT_DATE";
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND d."branchId" = '${branchId}'` : "";
 
-    const rows = await this.prisma.$queryRawUnsafe<
-      AccountingAgingDetailResponse[]
-    >(`
-      SELECT
-        d.id, d."partyName" AS party_name, d."partyType" AS party_type,
-        d."totalAmount"::float AS total_amount, d."paidAmount"::float AS paid_amount,
-        d."remainingAmount"::float AS remaining_amount,
-        d."dueDate"::text AS due_date, d."createdAt"::text AS created_at,
-        COALESCE(d."referenceType", '') AS reference_type,
-        COALESCE(d.description, '') AS description,
-        CASE
-          WHEN d."dueDate" IS NULL THEN 'NO_DUE_DATE'
-          WHEN d."dueDate" >= ${asOf} THEN 'CURRENT'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '30 days' THEN '1_30'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '60 days' THEN '31_60'
-          WHEN d."dueDate" >= ${asOf} - INTERVAL '90 days' THEN '61_90'
-          ELSE 'OVER_90'
-        END AS aging_bucket,
-        GREATEST(0, EXTRACT(DAY FROM ${asOf} - d."dueDate"))::int AS days_past_due
-      FROM debts d
-      WHERE d.type = '${type}'
-        AND d.status IN ('UNPAID', 'PARTIAL')
-        AND d."companyId" = '${companyId}'
-        ${branchFilter}
-      ORDER BY d."dueDate" ASC NULLS LAST
-    `);
+    const rows = await this.repo.findAgingDetails(
+      type,
+      companyId,
+      branchId,
+      asOfDate,
+    );
 
     const buckets = {
       current: 0,
@@ -1302,7 +754,7 @@ export class AccountingReportsService {
       type,
       asOfDate: asOfDate || toDateOnly(new Date()),
       summary: { ...buckets, total },
-      details: rows,
+      details: rows as unknown as AccountingAgingDetailResponse[],
       byParty: Array.from(byPartyMap.values()).sort(
         (a, b) => b.total - a.total,
       ),
@@ -1317,56 +769,24 @@ export class AccountingReportsService {
     params: DrillDownQueryDto,
   ): Promise<DrillDownResponse> {
     const { accountId, dateFrom, dateTo, branchId, page, perPage } = params;
-    const branchFilter =
-      branchId && branchId !== "ALL" ? `AND je."branchId" = '${branchId}'` : "";
-    const dateFilter =
-      dateFrom && dateTo
-        ? `AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'`
-        : dateFrom
-          ? `AND je.date >= '${dateFrom}'`
-          : dateTo
-            ? `AND je.date <= '${dateTo}'`
-            : "";
 
     const [rows, countResult] = await Promise.all([
-      this.prisma.$queryRawUnsafe<
-        Array<{
-          journal_id: string;
-          entry_number: string;
-          date: string;
-          description: string;
-          reference: string;
-          reference_type: string;
-          debit: number;
-          credit: number;
-        }>
-      >(`
-        SELECT je.id AS journal_id, je."entryNumber" AS entry_number, je.date::text,
-          je.description, COALESCE(je.reference, '') AS reference,
-          COALESCE(je."referenceType", 'MANUAL') AS reference_type,
-          jel.debit::float, jel.credit::float
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE jel."accountId" = '${accountId}'
-          AND je.status = 'POSTED'
-          AND ac."companyId" = '${companyId}'
-          ${dateFilter} ${branchFilter}
-        ORDER BY je.date DESC, je."createdAt" DESC
-        LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
-      `),
-      this.prisma.$queryRawUnsafe<[{ total: number }]>(`
-        SELECT COUNT(*)::int AS total
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel."journalId"
-        JOIN accounts a ON a.id = jel."accountId"
-        JOIN account_categories ac ON ac.id = a."categoryId"
-        WHERE jel."accountId" = '${accountId}'
-          AND je.status = 'POSTED'
-          AND ac."companyId" = '${companyId}'
-          ${dateFilter} ${branchFilter}
-      `),
+      this.repo.findDrillDownRows(
+        accountId,
+        companyId,
+        dateFrom,
+        dateTo,
+        branchId,
+        perPage,
+        (page - 1) * perPage,
+      ),
+      this.repo.findDrillDownCount(
+        accountId,
+        companyId,
+        dateFrom,
+        dateTo,
+        branchId,
+      ),
     ]);
 
     const total = Number(countResult[0]?.total ?? 0);
@@ -1384,46 +804,25 @@ export class AccountingReportsService {
     companyId: string,
     periodId: string,
   ): Promise<ClosingChecklistResponse> {
-    const period = await this.prisma.accountingPeriod.findFirst({
-      where: { id: periodId, companyId },
-    });
+    const period = await this.repo.findAccountingPeriod(periodId, companyId);
     if (!period) return { error: "Periode tidak ditemukan" };
 
     const dateFrom = toDateOnly(period.startDate);
     const dateTo = toDateOnly(period.endDate);
 
-    const draftCount = await this.prisma.journalEntry.count({
-      where: {
-        status: { in: ["DRAFT", "PENDING_APPROVAL"] },
-        date: { gte: period.startDate, lte: period.endDate },
-        branch: { companyId },
-      },
-    });
+    const [draftCount, tbResult, txnWithoutJournal] = await Promise.all([
+      this.repo.countDraftJournals(
+        period.startDate,
+        period.endDate,
+        companyId,
+      ),
+      this.repo.findTBCheck(dateTo, companyId),
+      this.repo.findTxnWithoutJournal(companyId, dateFrom, dateTo),
+    ]);
 
-    const tbResult = await this.prisma.$queryRawUnsafe<
-      [{ total_debit: number; total_credit: number }]
-    >(`
-      SELECT
-        COALESCE(SUM(jel.debit), 0)::float AS total_debit,
-        COALESCE(SUM(jel.credit), 0)::float AS total_credit
-      FROM journal_entry_lines jel
-      JOIN journal_entries je ON je.id = jel."journalId"
-      JOIN accounts a ON a.id = jel."accountId"
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      WHERE je.status = 'POSTED' AND je.date <= '${dateTo}' AND ac."companyId" = '${companyId}'
-    `);
     const tbDiff = Math.abs(
       (tbResult[0]?.total_debit ?? 0) - (tbResult[0]?.total_credit ?? 0),
     );
-
-    const txnWithoutJournal = await this.prisma.$queryRawUnsafe<
-      [{ count: number }]
-    >(`
-      SELECT COUNT(*)::int AS count FROM transactions t
-      WHERE t."companyId" = '${companyId}' AND t.status = 'COMPLETED'
-        AND t."createdAt" >= '${dateFrom}' AND t."createdAt" <= '${dateTo} 23:59:59'
-        AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je."referenceType" = 'TRANSACTION' AND je."referenceId" = t.id)
-    `);
 
     const checks = [
       {
@@ -1464,9 +863,7 @@ export class AccountingReportsService {
     userId: string,
     periodId: string,
   ): Promise<CreateClosingEntriesResponse> {
-    const period = await this.prisma.accountingPeriod.findFirst({
-      where: { id: periodId, companyId },
-    });
+    const period = await this.repo.findAccountingPeriod(periodId, companyId);
     if (!period) return { error: "Periode tidak ditemukan" };
     if (period.status !== "OPEN")
       return { error: "Periode harus berstatus OPEN" };
@@ -1474,35 +871,18 @@ export class AccountingReportsService {
     const dateFrom = toDateOnly(period.startDate);
     const dateTo = toDateOnly(period.endDate);
 
-    const incomeRows = await this.prisma.$queryRawUnsafe<
-      Array<{
-        account_id: string;
-        account_code: string;
-        account_name: string;
-        cat_type: string;
-        amount: number;
-      }>
-    >(`
-      SELECT a.id AS account_id, a.code AS account_code, a.name AS account_name, ac.type AS cat_type,
-        CASE
-          WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0))::float
-          WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0))::float
-        END AS amount
-      FROM accounts a
-      JOIN account_categories ac ON ac.id = a."categoryId"
-      LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
-      LEFT JOIN journal_entries je ON je.id = jel."journalId" AND je.status = 'POSTED' AND je.date >= '${dateFrom}' AND je.date <= '${dateTo}'
-      WHERE ac.type IN ('REVENUE', 'EXPENSE') AND a."isActive" = true AND ac."companyId" = '${companyId}'
-      GROUP BY a.id, a.code, a.name, ac.type
-      HAVING CASE WHEN ac.type = 'REVENUE' THEN COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0) ELSE COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0) END > 0
-    `);
+    const incomeRows = await this.repo.findIncomeClosingRows(
+      companyId,
+      dateFrom,
+      dateTo,
+    );
 
     if (incomeRows.length === 0)
       return { error: "Tidak ada revenue/expense untuk ditutup" };
 
-    const retainedEarnings = await this.prisma.account.findFirst({
-      where: { code: { startsWith: "3-1002" }, category: { companyId } },
-    });
+    const retainedEarnings = await this.repo.findRetainedEarningsAccount(
+      companyId,
+    );
     if (!retainedEarnings)
       return { error: "Akun Laba Ditahan (3-1002) tidak ditemukan" };
 
@@ -1558,11 +938,7 @@ export class AccountingReportsService {
     )
       .toString()
       .padStart(2, "0")}${today.getDate().toString().padStart(2, "0")}`;
-    const last = await this.prisma.journalEntry.findFirst({
-      where: { entryNumber: { startsWith: prefix } },
-      orderBy: { entryNumber: "desc" },
-      select: { entryNumber: true },
-    });
+    const last = await this.repo.findLastEntryNumber(prefix);
     let seq = 1;
     if (last) {
       const s = parseInt(last.entryNumber.split("-")[2] ?? "0");
@@ -1578,7 +954,7 @@ export class AccountingReportsService {
         data: {
           entryNumber,
           date: period.endDate,
-          description: `Jurnal Penutup â€” ${period.name}`,
+          description: `Jurnal Penutup — ${period.name}`,
           reference: `CLOSING-${period.name}`,
           referenceType: "CLOSING",
           branchId: null,

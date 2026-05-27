@@ -2,8 +2,8 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Groq from "groq-sdk";
 import { toDateOnly } from "@/common/utils/date";
-import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappReceiptService } from "../whatsapp-receipt/whatsapp-receipt.service";
+import { PrismaService } from "@/modules/prisma/prisma.service";
+import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 import {
   CUSTOMER_TOOLS,
   OWNER_TOOLS,
@@ -11,6 +11,7 @@ import {
   executeOwnerTool,
   type ToolContext,
 } from "./whatsapp-chatbot.tools";
+import { WhatsappChatbotRepository } from "./whatsapp-chatbot.repository";
 
 const DEFAULT_PROMPT_CUSTOMER = `Kamu adalah asisten WhatsApp ramah untuk bengkel/toko ini.
 Tugas: bantu customer dengan pertanyaan layanan, harga, produk (oli/sparepart/aksesoris), jam buka, lokasi, status booking, dan rekomendasi sederhana.
@@ -132,6 +133,7 @@ export class WhatsappChatbotService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly repo: WhatsappChatbotRepository,
     private readonly config: ConfigService,
     private readonly waReceipt: WhatsappReceiptService,
   ) {}
@@ -162,9 +164,7 @@ export class WhatsappChatbotService implements OnModuleInit {
     if (!params.content || params.content.trim().length === 0) return;
     if (!params.fromNumber) return;
 
-    const config = await this.prisma.whatsappBotConfig.findUnique({
-      where: { companyId: params.companyId },
-    });
+    const config = await this.repo.findBotConfigFull(params.companyId);
     if (!config || !config.enabled) return;
 
     // Anti-loop: throttle per nomor.
@@ -272,10 +272,7 @@ export class WhatsappChatbotService implements OnModuleInit {
     // Inject business unit ke prompt — supaya bot tahu konteks bisnis
     // tanpa user harus rewrite manual saat switch unit. Company punya
     // field businessUnit: RETAIL / BENGKEL / RESTAURANT / CAFE.
-    const company = await this.prisma.company.findUnique({
-      where: { id: params.companyId },
-      select: { businessUnit: true, name: true },
-    });
+    const company = await this.repo.findCompany(params.companyId);
     const bizContext = company
       ? `\n\n=== KONTEKS BISNIS ===\nNama bisnis: ${company.name}\nJenis usaha: ${this.businessUnitLabel(company.businessUnit)}\nGunakan istilah dan gaya bahasa yang sesuai jenis usaha ini.`
       : "";
@@ -314,7 +311,7 @@ export class WhatsappChatbotService implements OnModuleInit {
     ];
 
     const ctx: ToolContext = {
-      prisma: this.prisma,
+      repo: this.repo,
       companyId: params.companyId,
       senderPhone: params.senderPhone,
     };
@@ -476,24 +473,11 @@ export class WhatsappChatbotService implements OnModuleInit {
     fromNumber: string | null,
   ): Promise<ChatMessage[]> {
     if (!fromNumber) return [];
-    const session = await this.prisma.whatsappSession.findUnique({
-      where: { companyId },
-      select: { id: true },
-    });
+    const session = await this.repo.findSession(companyId);
     if (!session) return [];
     // Ambil 6 pesan terakhir antara session ↔ nomor ini, lalu reverse jadi
     // urutan kronologis. Skip pesan dengan content kosong (image, sticker).
-    const rows = await this.prisma.whatsappMessageLog.findMany({
-      where: {
-        sessionId: session.id,
-        OR: [{ fromNumber }, { toNumber: fromNumber }],
-        messageType: "text",
-        content: { not: null },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: { direction: true, content: true },
-    });
+    const rows = await this.repo.findRecentMessages(session.id, fromNumber);
     return rows
       .reverse()
       .filter((r) => r.content && r.content.trim().length > 0)
@@ -507,15 +491,10 @@ export class WhatsappChatbotService implements OnModuleInit {
   // ─── Config CRUD ─────────────────────────────────────────────────
 
   async getConfig(companyId: string) {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { businessUnit: true, name: true },
-    });
+    const company = await this.repo.findCompany(companyId);
     const businessUnit = company?.businessUnit ?? "RETAIL";
 
-    const c = await this.prisma.whatsappBotConfig.findUnique({
-      where: { companyId },
-    });
+    const c = await this.repo.findBotConfigFull(companyId);
     if (c) return this.toConfigResponse(c, businessUnit);
 
     // Auto-create default kalau belum ada. Knowledge di-pre-fill dengan
@@ -527,11 +506,9 @@ export class WhatsappChatbotService implements OnModuleInit {
           company.name,
         )
       : null;
-    const created = await this.prisma.whatsappBotConfig.create({
-      data: {
-        companyId,
-        knowledge,
-      },
+    const created = await this.repo.createBotConfig({
+      companyId,
+      knowledge,
     });
     return this.toConfigResponse(created, businessUnit);
   }
@@ -633,10 +610,7 @@ harga, stok, ada nggak, jam buka, antar.`
    * endpoint reset di UI — tombol "Pakai template default".
    */
   async resetKnowledgeToDefault(companyId: string) {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { businessUnit: true, name: true },
-    });
+    const company = await this.repo.findCompany(companyId);
     if (!company) {
       throw new Error("Company tidak ditemukan");
     }
@@ -644,11 +618,11 @@ harga, stok, ada nggak, jam buka, antar.`
       company.businessUnit,
       company.name,
     );
-    const updated = await this.prisma.whatsappBotConfig.upsert({
-      where: { companyId },
-      create: { companyId, knowledge },
-      update: { knowledge },
-    });
+    const updated = await this.repo.upsertBotConfig(
+      companyId,
+      { companyId, knowledge },
+      { knowledge },
+    );
     return this.toConfigResponse(updated, company.businessUnit);
   }
 
@@ -672,9 +646,19 @@ harga, stok, ada nggak, jam buka, antar.`
       return digits;
     });
 
-    const updated = await this.prisma.whatsappBotConfig.upsert({
-      where: { companyId },
-      update: {
+    const updated = await this.repo.upsertBotConfig(
+      companyId,
+      {
+        companyId,
+        enabled: dto.enabled ?? false,
+        ownerPhones: ownerPhones ?? [],
+        knowledge: dto.knowledge ?? null,
+        systemPromptCustomer: dto.systemPromptCustomer ?? null,
+        systemPromptOwner: dto.systemPromptOwner ?? null,
+        model: dto.model ?? "openai/gpt-oss-120b",
+        replyThrottleSec: dto.replyThrottleSec ?? 3,
+      },
+      {
         ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}),
         ...(ownerPhones !== undefined ? { ownerPhones } : {}),
         ...(dto.knowledge !== undefined ? { knowledge: dto.knowledge } : {}),
@@ -689,21 +673,8 @@ harga, stok, ada nggak, jam buka, antar.`
           ? { replyThrottleSec: dto.replyThrottleSec }
           : {}),
       },
-      create: {
-        companyId,
-        enabled: dto.enabled ?? false,
-        ownerPhones: ownerPhones ?? [],
-        knowledge: dto.knowledge ?? null,
-        systemPromptCustomer: dto.systemPromptCustomer ?? null,
-        systemPromptOwner: dto.systemPromptOwner ?? null,
-        model: dto.model ?? "openai/gpt-oss-120b",
-        replyThrottleSec: dto.replyThrottleSec ?? 3,
-      },
-    });
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { businessUnit: true },
-    });
+    );
+    const company = await this.repo.findCompany(companyId);
     return this.toConfigResponse(updated, company?.businessUnit ?? "RETAIL");
   }
 
@@ -712,9 +683,7 @@ harga, stok, ada nggak, jam buka, antar.`
     message: string,
     asOwner: boolean,
   ): Promise<{ reply: string | null }> {
-    const config = await this.prisma.whatsappBotConfig.findUnique({
-      where: { companyId },
-    });
+    const config = await this.repo.findBotConfigFull(companyId);
     const reply = await this.generateReply({
       companyId,
       senderPhone: null,

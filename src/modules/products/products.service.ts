@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -16,49 +16,16 @@ import type {
 import type { PaginatedResponse } from "../../common/types/response";
 import { paginate } from "../../common/utils/pagination";
 import { PrismaService } from "../prisma/prisma.service";
-
-const PRODUCT_SELECT = {
-  id: true,
-  code: true,
-  name: true,
-  categoryId: true,
-  category: { select: { id: true, name: true } },
-  brandId: true,
-  brand: { select: { id: true, name: true } },
-  supplierId: true,
-  supplier: { select: { id: true, name: true } },
-  purchasePrice: true,
-  sellingPrice: true,
-  stock: true,
-  minStock: true,
-  barcode: true,
-  unit: true,
-  itemType: true,
-  isActive: true,
-  description: true,
-  imageUrl: true,
-  defaultRackId: true,
-  defaultRack: { select: { id: true, code: true, name: true, branchId: true } },
-  createdAt: true,
-  updatedAt: true,
-  // Counts dipakai UI list utk decide apakah row punya breakdown SKU
-  // (multi-unit / multi-variant) sehingga harga/stok master di-hide & user
-  // bisa expand row utk lihat detail per SKU.
-  _count: {
-    select: {
-      units: true,
-      variants: true,
-    },
-  },
-} satisfies Prisma.ProductSelect;
-
-type RawProduct = Prisma.ProductGetPayload<{ select: typeof PRODUCT_SELECT }>;
+import { ProductsRepository, type RawProduct } from "./products.repository";
 
 const INT32_MAX = 2_147_483_647;
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly repo: ProductsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private async computeRecipeStockByProduct(
     companyId: string,
@@ -70,23 +37,7 @@ export class ProductsService {
     );
     if (uniqueProductIds.length === 0) return new Map();
 
-    const recipes = await this.prisma.recipe.findMany({
-      where: {
-        productId: { in: uniqueProductIds },
-        product: { companyId, deletedAt: null, isActive: true },
-      },
-      select: {
-        productId: true,
-        yieldQty: true,
-        ingredients: {
-          select: {
-            ingredientId: true,
-            quantity: true,
-            ingredient: { select: { stock: true } },
-          },
-        },
-      },
-    });
+    const recipes = await this.repo.findRecipes(companyId, uniqueProductIds);
     if (recipes.length === 0) return new Map();
 
     let branchStockMap: Map<string, number> | null = null;
@@ -99,14 +50,7 @@ export class ProductsService {
         ),
       );
       if (ingredientIds.length > 0) {
-        const stocks = await this.prisma.branchStock.findMany({
-          where: {
-            branchId,
-            productId: { in: ingredientIds },
-            branch: { companyId },
-          },
-          select: { productId: true, quantity: true },
-        });
+        const stocks = await this.repo.findBranchStocks(branchId, companyId, ingredientIds);
         branchStockMap = new Map(
           stocks.map((stock) => [stock.productId, stock.quantity]),
         );
@@ -172,8 +116,6 @@ export class ProductsService {
     if (brandId) where.brandId = brandId;
     if (supplierId) where.supplierId = supplierId;
     if (itemType) where.itemType = itemType;
-    // POS / cashier flow: exclude bahan baku (INGREDIENT) supaya tidak
-    // muncul di list produk yg bisa dijual.
     if (excludeIngredient) {
       where.itemType = { not: "INGREDIENT" };
     }
@@ -200,99 +142,30 @@ export class ProductsService {
     }
 
     const [rows, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        select: PRODUCT_SELECT,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      this.prisma.product.count({ where }),
+      this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
+      this.repo.count(where),
     ]);
 
     return paginate(rows.map(toProductResponse), total, page, perPage);
   }
 
   async findById(companyId: string, id: string): Promise<ProductResponse> {
-    const product = await this.prisma.product.findFirst({
-      where: { id, companyId, deletedAt: null },
-      select: PRODUCT_SELECT,
-    });
+    const product = await this.repo.findOne({ id, companyId, deletedAt: null });
     if (!product) throw new NotFoundException("Product not found");
     return toProductResponse(product);
   }
 
-  // Single-API GET: product + sub-resources untuk product form. Hindari
-  // multi-fetch race condition di frontend.
-  // `branchId` opsional — kalau di-set, branchSkus & legacy fallback
-  // di-filter ke cabang itu saja (sesuai filter sidebar di UI).
   async findDetail(companyId: string, id: string, branchId?: string) {
-    const product = await this.prisma.product.findFirst({
-      where: { id, companyId, deletedAt: null },
-      select: PRODUCT_SELECT,
-    });
+    const product = await this.repo.findOne({ id, companyId, deletedAt: null });
     if (!product) throw new NotFoundException("Product not found");
     const [units, branchSkus, tierPrices, variants, modifierGroups, branches] =
       await Promise.all([
-        this.prisma.productUnit.findMany({
-          where: { productId: id },
-          orderBy: [{ sortOrder: "asc" }, { conversionQty: "asc" }],
-          select: {
-            id: true,
-            name: true,
-            conversionQty: true,
-            sellingPrice: true,
-            purchasePrice: true,
-            barcode: true,
-            isDefault: true,
-            sortOrder: true,
-          },
-        }),
-        this.prisma.productBranchSku.findMany({
-          where: {
-            productId: id,
-            ...(branchId ? { branchId } : {}),
-          },
-          select: {
-            id: true,
-            branchId: true,
-            unitId: true,
-            variantId: true,
-            sellingPrice: true,
-            purchasePrice: true,
-            stock: true,
-            minStock: true,
-            barcode: true,
-            isActive: true,
-          },
-        }),
-        this.prisma.productTierPrice.findMany({
-          where: { productId: id },
-          orderBy: { minQty: "asc" },
-          select: { id: true, minQty: true, price: true },
-        }),
-        this.prisma.productVariant.findMany({
-          where: { productId: id },
-          include: {
-            options: {
-              select: {
-                optionId: true,
-                option: { select: { name: true } },
-              },
-            },
-          },
-        }),
-        this.prisma.productModifierGroup.findMany({
-          where: { productId: id },
-          select: { modifierGroupId: true, sortOrder: true },
-          orderBy: { sortOrder: "asc" },
-        }),
-        // Branches dipakai utk enrich branchSkus dgn branchName supaya UI
-        // expand row di /products list bisa langsung render tanpa fetch lagi.
-        this.prisma.branch.findMany({
-          where: { companyId },
-          select: { id: true, name: true },
-        }),
+        this.repo.findProductUnits(id),
+        this.repo.findBranchSkus(id, branchId),
+        this.repo.findTierPrices(id),
+        this.repo.findVariants(id),
+        this.repo.findModifierGroups(id),
+        this.repo.findBranches(companyId),
       ]);
 
     const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
@@ -304,21 +177,11 @@ export class ProductsService {
       ]),
     );
 
-    // Fallback: produk lama yg belum migrasi ke ProductBranchSku — derive
-    // synthetic SKU dari BranchProductPrice + BranchStock supaya frontend
-    // form bisa nampilkan & di-edit. Save berikutnya akan migrate ke
-    // ProductBranchSku via path normal.
     let effectiveBranchSkus: typeof branchSkus = branchSkus;
     if (branchSkus.length === 0) {
       const [legacyPrices, legacyStocks] = await Promise.all([
-        this.prisma.branchProductPrice.findMany({
-          where: { productId: id, ...(branchId ? { branchId } : {}) },
-          select: { branchId: true, sellingPrice: true, purchasePrice: true },
-        }),
-        this.prisma.branchStock.findMany({
-          where: { productId: id, ...(branchId ? { branchId } : {}) },
-          select: { branchId: true, quantity: true, minStock: true },
-        }),
+        this.repo.findLegacyPrices(id, branchId),
+        this.repo.findLegacyStocks(id, branchId),
       ]);
       const priceByBranch = new Map(
         legacyPrices.map((p) => [p.branchId, p]),
@@ -334,8 +197,6 @@ export class ProductsService {
         const pr = priceByBranch.get(branchId);
         const st = stockByBranch.get(branchId);
         return {
-          // Synthetic id (tidak persist di DB) supaya frontend bisa identify;
-          // tidak akan dipakai di save flow (matrix kirim payload tanpa id).
           id: `legacy:${branchId}`,
           branchId,
           unitId: null,
@@ -379,10 +240,7 @@ export class ProductsService {
     modifierGroupIds: string[],
   ): Promise<void> {
     if (modifierGroupIds.length > 0) {
-      const owned = await this.prisma.modifierGroup.findMany({
-        where: { id: { in: modifierGroupIds }, companyId },
-        select: { id: true },
-      });
+      const owned = await this.repo.findOwnedModifierGroups(companyId, modifierGroupIds);
       if (owned.length !== modifierGroupIds.length) {
         throw new BadRequestException(
           "One or more modifier groups invalid",
@@ -404,13 +262,9 @@ export class ProductsService {
   }
 
   private async generateProductCode(companyId: string): Promise<string> {
-    // Try a few times to avoid collisions (P2002 from unique [companyId, code]).
     for (let i = 0; i < 5; i++) {
       const candidate = `PRD-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().slice(-3)}`;
-      const exists = await this.prisma.product.findFirst({
-        where: { companyId, code: candidate },
-        select: { id: true },
-      });
+      const exists = await this.repo.findExists({ companyId, code: candidate });
       if (!exists) return candidate;
     }
     return `PRD-${Date.now().toString(36).toUpperCase()}`;
@@ -424,27 +278,24 @@ export class ProductsService {
       const code = dto.code?.trim()
         ? dto.code.trim()
         : await this.generateProductCode(companyId);
-      const created = await this.prisma.product.create({
-        data: {
-          code,
-          name: dto.name,
-          categoryId: dto.categoryId,
-          brandId: dto.brandId ?? null,
-          supplierId: dto.supplierId ?? null,
-          companyId,
-          purchasePrice: dto.purchasePrice,
-          sellingPrice: dto.sellingPrice,
-          stock: dto.stock ?? 0,
-          minStock: dto.minStock ?? 5,
-          barcode: dto.barcode ?? null,
-          unit: dto.unit ?? "pcs",
-          itemType: dto.itemType ?? "PRODUCT",
-          isActive: dto.isActive ?? true,
-          description: dto.description ?? null,
-          imageUrl: dto.imageUrl ?? null,
-          defaultRackId: dto.defaultRackId ?? null,
-        },
-        select: PRODUCT_SELECT,
+      const created = await this.repo.create({
+        code,
+        name: dto.name,
+        categoryId: dto.categoryId,
+        brandId: dto.brandId ?? null,
+        supplierId: dto.supplierId ?? null,
+        companyId,
+        purchasePrice: dto.purchasePrice,
+        sellingPrice: dto.sellingPrice,
+        stock: dto.stock ?? 0,
+        minStock: dto.minStock ?? 5,
+        barcode: dto.barcode ?? null,
+        unit: dto.unit ?? "pcs",
+        itemType: dto.itemType ?? "PRODUCT",
+        isActive: dto.isActive ?? true,
+        description: dto.description ?? null,
+        imageUrl: dto.imageUrl ?? null,
+        defaultRackId: dto.defaultRackId ?? null,
       });
       if (dto.modifierGroupIds !== undefined) {
         await this.syncProductModifierGroups(
@@ -453,9 +304,6 @@ export class ProductsService {
           dto.modifierGroupIds,
         );
       }
-      // Inline-replace sub-resources kalau dikirim (single-API-call mode).
-      // Order penting: units dulu (untuk unit IDs), lalu tier prices, lalu
-      // branchSkus (yang resolve unitName → unitId fresh).
       if (dto.productUnits !== undefined) {
         await this.replaceProductUnits(created.id, dto.productUnits);
       }
@@ -476,10 +324,7 @@ export class ProductsService {
     id: string,
     dto: UpdateProductDto,
   ): Promise<ProductResponse> {
-    const existing = await this.prisma.product.findFirst({
-      where: { id, companyId, deletedAt: null },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
     if (!existing) throw new NotFoundException("Product not found");
 
     const data: Prisma.ProductUpdateInput = {};
@@ -515,11 +360,7 @@ export class ProductsService {
     }
 
     try {
-      const updated = await this.prisma.product.update({
-        where: { id },
-        data,
-        select: PRODUCT_SELECT,
-      });
+      const updated = await this.repo.update(id, data);
       if (dto.modifierGroupIds !== undefined) {
         await this.syncProductModifierGroups(
           companyId,
@@ -527,18 +368,12 @@ export class ProductsService {
           dto.modifierGroupIds,
         );
       }
-      // Replace productUnits inline kalau dikirim. Pakai dedicated transaction
-      // supaya saat ada SKU yg ke-cascade-delete via ProductUnit FK, frontend
-      // bisa kirim branchSkus juga di payload yg sama untuk re-create.
       if (dto.productUnits !== undefined) {
         await this.replaceProductUnits(id, dto.productUnits);
       }
-      // Replace tier prices inline.
       if (dto.tierPrices !== undefined) {
         await this.replaceTierPrices(id, dto.tierPrices);
       }
-      // Replace branchSkus inline. Resolve unitName → unitId di sini setelah
-      // productUnits di-replace, supaya ID baru ke-pakai.
       if (dto.branchSkus !== undefined) {
         await this.replaceBranchSkusInline(id, dto.branchSkus);
       }
@@ -548,10 +383,6 @@ export class ProductsService {
     }
   }
 
-  // Replace productUnits: delete-all + create-from-payload (urutan diawali
-  // sortOrder dari index). FK ke ProductBranchSku CASCADE → SKU yg pakai
-  // unit ini juga hilang, jadi caller HARUS kirim branchSkus juga (atau
-  // siap state SKU kosong).
   private async replaceProductUnits(
     productId: string,
     units: NonNullable<UpdateProductDto["productUnits"]>,
@@ -591,16 +422,11 @@ export class ProductsService {
     });
   }
 
-  // Replace branchSkus: pakai unitName → unitId resolution (hindari ID stale).
-  // Sync ke BranchProductPrice + BranchStock + Product entity (legacy aggregate)
-  // dalam transaction yg sama → list & POS lihat data konsisten.
   private async replaceBranchSkusInline(
     productId: string,
     items: NonNullable<UpdateProductDto["branchSkus"]>,
   ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
-      // Lookup units fresh DI DALAM transaction (untuk antisipasi unit baru
-      // dari replaceProductUnits di transaction sebelumnya).
       const units = await tx.productUnit.findMany({
         where: { productId },
         select: { id: true, name: true, conversionQty: true },
@@ -611,8 +437,6 @@ export class ProductsService {
         unitIdByName.set(u.name, u.id);
       }
 
-      // Resolve variant per item via optionIds find-or-create.
-      // Fetch variants once, build signature → id Map to avoid N+1.
       const variantCandidates = await tx.productVariant.findMany({
         where: { productId },
         include: { options: { select: { optionId: true } } },
@@ -679,7 +503,6 @@ export class ProductsService {
         });
       }
 
-      // Validate uniqueness (branch, unit, variant) di payload.
       const seen = new Set<string>();
       for (const r of resolved) {
         const key = `${r.branchId}|${r.unitId ?? ""}|${r.variantId ?? ""}`;
@@ -691,7 +514,6 @@ export class ProductsService {
         seen.add(key);
       }
 
-      // Replace SKU: delete all existing for product, then bulk create.
       await tx.productBranchSku.deleteMany({ where: { productId } });
       if (resolved.length > 0) {
         await tx.productBranchSku.createMany({
@@ -710,10 +532,6 @@ export class ProductsService {
         });
       }
 
-      // Sync ke tabel legacy + Product entity. Stok operasional disimpan
-      // hanya sebagai saldo satuan dasar di BranchStock/Product. Cell satuan
-      // tambahan tetap menyimpan harga/barcode, tapi tidak menambah stok agar
-      // tidak double-count (contoh: 240 batang => 20 bungkus, bukan stok baru).
       const perBranch = new Map<
         string,
         { sellingPrice: number; purchasePrice: number; stock: number; minStock: number }
@@ -731,8 +549,6 @@ export class ProductsService {
           });
           continue;
         }
-        // Representative price untuk tabel legacy/list view tetap prefer
-        // satuan dasar. Kalau belum ada base cell, pakai cell pertama.
         if (isBaseCell) {
           current.sellingPrice = r.sellingPrice;
           current.purchasePrice = r.purchasePrice;
@@ -741,14 +557,6 @@ export class ProductsService {
         }
       }
 
-      // Hapus legacy untuk branch yang TIDAK ada di payload (kalau matrix
-      // user kosongkan suatu branch, harus di-clean di legacy juga).
-      //
-      // PENTING: kalau payload KOSONG (branchIdsInPayload.length === 0),
-      // SKIP delete — preserve existing. Tanpa guard ini, kalau form gagal
-      // load branchPrices (network blip, race condition) lalu user submit,
-      // semua BranchStock akan ke-wipe → trigger sync Product.stock = 0.
-      // Bug ini muncul terutama untuk produk hasil auto-create dari Shopee.
       const branchIdsInPayload = [...perBranch.keys()];
       if (branchIdsInPayload.length > 0) {
         await tx.branchProductPrice.deleteMany({
@@ -764,9 +572,6 @@ export class ProductsService {
           },
         });
       }
-      // else: payload kosong → preserve semua. Kalau user benar-benar mau
-      // remove all branches, harus pakai mekanisme lain (mis. endpoint
-      // dedicated DELETE /products/:id/branches).
 
       for (const [branchId, vals] of perBranch.entries()) {
         await tx.branchProductPrice.upsert({
@@ -798,7 +603,6 @@ export class ProductsService {
         });
       }
 
-      // Sync Product entity (global aggregate untuk list view).
       const totalStock = Math.min([...perBranch.values()].reduce(
         (sum, v) => sum + v.stock,
         0,
@@ -824,16 +628,10 @@ export class ProductsService {
     companyId: string,
     id: string,
   ): Promise<{ success: true }> {
-    const existing = await this.prisma.product.findFirst({
-      where: { id, companyId, deletedAt: null },
-      select: { id: true },
-    });
+    const existing = await this.repo.findExists({ id, companyId, deletedAt: null });
     if (!existing) throw new NotFoundException("Product not found");
 
-    await this.prisma.product.update({
-      where: { id },
-      data: { deletedAt: new Date(), isActive: false },
-    });
+    await this.repo.softDelete(id);
     return { success: true };
   }
 
@@ -841,10 +639,7 @@ export class ProductsService {
     companyId: string,
     ids: string[],
   ): Promise<{ count: number }> {
-    const { count } = await this.prisma.product.updateMany({
-      where: { id: { in: ids }, companyId, deletedAt: null },
-      data: { deletedAt: new Date(), isActive: false },
-    });
+    const count = await this.repo.bulkSoftDelete(companyId, ids);
     return { count };
   }
 
@@ -858,22 +653,7 @@ export class ProductsService {
     outOfStock: number;
   }> {
     if (branchId) {
-      const result = await this.prisma.$queryRaw<
-        [{
-          total: bigint;
-          active: bigint;
-          lowStock: bigint;
-          outOfStock: bigint;
-        }]
-      >`
-        SELECT COUNT(*)::int AS total,
-               COUNT(*) FILTER (WHERE p."isActive" = true)::int AS active,
-               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) > 0 AND COALESCE(bs.quantity, 0) <= 10)::int AS "lowStock",
-               COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) = 0)::int AS "outOfStock"
-          FROM products p
-          LEFT JOIN branch_stocks bs ON bs."productId" = p.id AND bs."branchId" = ${branchId}
-          WHERE p."companyId" = ${companyId} AND p."deletedAt" IS NULL
-      `;
+      const result = await this.repo.statsByBranch(companyId, branchId);
       const r = result[0];
       return {
         total: Number(r.total),
@@ -882,21 +662,7 @@ export class ProductsService {
         outOfStock: Number(r.outOfStock),
       };
     }
-    const result = await this.prisma.$queryRaw<
-      [{
-        total: bigint;
-        active: bigint;
-        lowStock: bigint;
-        outOfStock: bigint;
-      }]
-    >`
-      SELECT COUNT(*)::int AS total,
-             COUNT(*) FILTER (WHERE "isActive" = true)::int AS active,
-             COUNT(*) FILTER (WHERE stock > 0 AND stock <= 10)::int AS "lowStock",
-             COUNT(*) FILTER (WHERE stock = 0)::int AS "outOfStock"
-        FROM products
-        WHERE "companyId" = ${companyId} AND "deletedAt" IS NULL
-    `;
+    const result = await this.repo.statsGlobal(companyId);
     const r = result[0];
     return {
       total: Number(r.total),
@@ -906,23 +672,13 @@ export class ProductsService {
     };
   }
 
-  // Generate kode produk unik mirror dari DB trigger phase3_product_code_trigger.sql.
-  // Format: {COMPANY_SLUG_UPPER 6 char}-{4-digit sequence}, contoh: TOKO-0001.
-  // Dipakai untuk preview/auto-fill di form sebelum submit (tanpa create row).
   async generateUniqueProductCode(companyId: string): Promise<string> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { slug: true },
-    });
+    const company = await this.repo.findCompanySlug(companyId);
     const rawSlug = (company?.slug || "PRD").replace(/[^a-zA-Z0-9]/g, "");
     const slug = (rawSlug || "PRD").toUpperCase().slice(0, 6);
     const prefix = `${slug}-`;
 
-    // Ambil semua kode dengan prefix ini, parse sequence number, cari max + 1.
-    const rows = await this.prisma.product.findMany({
-      where: { companyId, code: { startsWith: prefix } },
-      select: { code: true },
-    });
+    const rows = await this.repo.findProductCodes(companyId, prefix);
     let maxSeq = 0;
     for (const r of rows) {
       const tail = r.code.slice(prefix.length);
@@ -932,13 +688,9 @@ export class ProductsService {
       }
     }
 
-    // Loop sampai dapat kode unik (handle race condition).
     for (let attempt = 0; attempt < 100; attempt++) {
       const candidate = `${prefix}${String(maxSeq + 1 + attempt).padStart(4, "0")}`;
-      const exists = await this.prisma.product.findFirst({
-        where: { companyId, code: candidate },
-        select: { id: true },
-      });
+      const exists = await this.repo.findExists({ companyId, code: candidate });
       if (!exists) return candidate;
     }
     throw new InternalServerErrorException(
@@ -946,16 +698,10 @@ export class ProductsService {
     );
   }
 
-  // Generate barcode EAN-13 unik untuk company. Format: prefix "20" (in-store
-   // / internal use range 200-299), 10 digit acak, 1 digit check digit (mod 10).
-   // Cek collision di Product.barcode + ProductUnit.barcode.
-   // Retry hingga 10× bila collision (sangat jarang dengan ruang 10^10).
   async generateUniqueBarcode(
     companyId: string,
     prefix?: string,
   ): Promise<string> {
-    // Prefix opsional dari user. Sanitasi: hanya digit, max 3 char. Default
-    // "20" = internal/private barcode range (EAN-13 manufacturer-defined).
     const cleanPrefix = (prefix ?? "20").replace(/\D/g, "").slice(0, 3) || "20";
     for (let attempt = 0; attempt < 10; attempt++) {
       const candidate = generateEan13(cleanPrefix);
@@ -972,18 +718,9 @@ export class ProductsService {
     barcode: string,
   ): Promise<boolean> {
     const [product, unit, branchSku] = await Promise.all([
-      this.prisma.product.findFirst({
-        where: { companyId, barcode },
-        select: { id: true },
-      }),
-      this.prisma.productUnit.findFirst({
-        where: { barcode, product: { companyId } },
-        select: { id: true },
-      }),
-      this.prisma.productBranchSku.findFirst({
-        where: { barcode, product: { companyId } },
-        select: { id: true },
-      }),
+      this.repo.barcodeExistsInProduct(companyId, barcode),
+      this.repo.barcodeExistsInUnit(companyId, barcode),
+      this.repo.barcodeExistsInBranchSku(companyId, barcode),
     ]);
     return Boolean(product || unit || branchSku);
   }
@@ -993,32 +730,12 @@ export class ProductsService {
     barcode: string,
     branchId?: string,
   ): Promise<unknown | null> {
-    const product = await this.prisma.product.findFirst({
-      where: {
-        companyId,
-        deletedAt: null,
-        OR: [
-          { code: barcode },
-          { units: { some: { barcode } } },
-        ],
-      },
-      include: {
-        category: { select: { name: true } },
-        units: true,
-      },
-    });
+    const product = await this.repo.findByBarcodeOrCode(companyId, barcode);
     if (!product) return null;
-    // Identifikasi satuan yang barcode-nya cocok agar frontend bisa langsung
-    // tambah ke cart dengan unit + harga yang tepat (tanpa picker satuan).
-    // Cocok untuk kasus rokok: 1 produk, banyak satuan (kardus/pack/bungkus/
-    // batang) dengan barcode masing-masing.
     const matchedUnit = product.units.find((u) => u.barcode === barcode) ?? null;
     const branchStock = branchId
       ? (
-          await this.prisma.branchStock.findFirst({
-            where: { productId: product.id, branchId },
-            select: { quantity: true },
-          })
+          await this.repo.findBranchStock(product.id, branchId)
         )?.quantity ?? 0
       : undefined;
     const recipeStock = (
@@ -1048,32 +765,12 @@ export class ProductsService {
   ): Promise<unknown[]> {
     const since = new Date();
     since.setDate(since.getDate() - 30);
-    const items = await this.prisma.transactionItem.groupBy({
-      by: ["productId"],
-      where: {
-        transaction: {
-          status: "COMPLETED",
-          createdAt: { gte: since },
-          user: { companyId },
-        },
-      },
-      _sum: { quantity: true, subtotal: true },
-      orderBy: { _sum: { quantity: "desc" } },
-      take: limit,
-    });
+    const items = await this.repo.topSellingItems(companyId, since, limit);
     if (items.length === 0) return [];
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: items.map((i) => i.productId) }, companyId },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        sellingPrice: true,
-        stock: true,
-        unit: true,
-        imageUrl: true,
-      },
-    });
+    const products = await this.repo.findProductSummaries(
+      companyId,
+      items.map((i) => i.productId),
+    );
     const map = new Map(products.map((p) => [p.id, p]));
     return items
       .map((it) => {
@@ -1092,24 +789,7 @@ export class ProductsService {
     companyId: string,
     categoryId: string,
   ): Promise<unknown[]> {
-    return this.prisma.product.findMany({
-      where: {
-        companyId,
-        categoryId,
-        isActive: true,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        sellingPrice: true,
-        stock: true,
-        unit: true,
-        imageUrl: true,
-      },
-      orderBy: { name: "asc" },
-    });
+    return this.repo.findByCategory(companyId, categoryId);
   }
 
   async posSearch(
@@ -1138,35 +818,9 @@ export class ProductsService {
     if (productIds.length === 0) return { products: [], total };
 
     const [units, branchSkus] = await Promise.all([
-      this.prisma.productUnit.findMany({
-        where: { productId: { in: productIds } },
-        select: {
-          id: true,
-          productId: true,
-          name: true,
-          conversionQty: true,
-          sellingPrice: true,
-          purchasePrice: true,
-          barcode: true,
-          sortOrder: true,
-        },
-        orderBy: [{ sortOrder: "asc" }, { conversionQty: "asc" }],
-      }),
+      this.repo.findUnitsByProducts(productIds),
       params.branchId
-        ? this.prisma.productBranchSku.findMany({
-            where: {
-              branchId: params.branchId,
-              productId: { in: productIds },
-              isActive: true,
-            },
-            select: {
-              productId: true,
-              unitId: true,
-              variantId: true,
-              sellingPrice: true,
-              purchasePrice: true,
-            },
-          })
+        ? this.repo.findActiveBranchSkus(params.branchId, productIds)
         : Promise.resolve([]),
     ]);
 
@@ -1246,15 +900,7 @@ export class ProductsService {
       sortBy?: string;
       sortDir?: "asc" | "desc";
       onlyWithStock?: boolean;
-      // POS mode: when branchId is set, only include products that were
-      // explicitly assigned to that branch (have BranchStock or BranchPrice).
-      // Tanpa flag ini, view CROSS JOIN-nya membuat semua produk company
-      // muncul di tiap branch via fallback ke stock global — yang user lihat
-      // sebagai "POS menampilkan semua produk".
       restrictToBranchAssigned?: boolean;
-      // F&B: exclude bahan baku (itemType=INGREDIENT) supaya tidak muncul
-      // di POS / browse product cashier. Bahan baku hanya dipakai sebagai
-      // ingredient di Recipe / BOM, bukan dijual langsung.
       excludeIngredient?: boolean;
       itemType?: "PRODUCT" | "SERVICE" | "INGREDIENT";
     },
@@ -1360,17 +1006,9 @@ export class ProductsService {
                     "brandId", "companyId", "baseUnit", "isActive", "imageUrl", barcode, description
            ORDER BY ${groupedOrderBy}
            LIMIT $${i} OFFSET $${i + 1}`;
-    const [countRes, rawRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<[{ total: number | bigint }]>(
-        countQuery,
-        ...values,
-      ),
-      this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
-        dataQuery,
-        ...values,
-        limit,
-        offset,
-      ),
+    const [total, rawRows] = await Promise.all([
+      this.repo.branchViewCount(countQuery, values),
+      this.repo.branchViewData(dataQuery, [...values, limit, offset]),
     ]);
 
     // Augment rows with default_rack info (raw SQL view doesn't include it).
@@ -1387,20 +1025,7 @@ export class ProductsService {
       } | null
     >();
     if (productIds.length > 0) {
-      const productsWithRack = await this.prisma.product.findMany({
-        where: { id: { in: productIds }, companyId },
-        select: {
-          id: true,
-          defaultRack: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              branchId: true,
-            },
-          },
-        },
-      });
+      const productsWithRack = await this.repo.findProductsWithRack(companyId, productIds);
       for (const p of productsWithRack) {
         rackInfoByProduct.set(p.id, p.defaultRack ?? null);
       }
@@ -1422,7 +1047,7 @@ export class ProductsService {
       };
     });
 
-    return { rows, total: Number(countRes[0]?.total ?? 0) };
+    return { rows, total };
   }
 
   async importTemplateData(companyId: string): Promise<{
@@ -1433,28 +1058,7 @@ export class ProductsService {
     productCount: number;
   }> {
     const [categories, brands, products, branches, productCount] =
-      await Promise.all([
-        this.prisma.category.findMany({
-          where: { companyId },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        }),
-        this.prisma.brand.findMany({
-          where: { companyId },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        }),
-        this.prisma.product.findMany({
-          where: { companyId },
-          select: { code: true },
-        }),
-        this.prisma.branch.findMany({
-          where: { companyId, isActive: true },
-          select: { id: true, name: true, code: true },
-          orderBy: { name: "asc" },
-        }),
-        this.prisma.product.count({ where: { companyId } }),
-      ]);
+      await this.repo.findImportTemplateData(companyId);
     return {
       categories,
       brands,
@@ -1502,17 +1106,13 @@ function toProductResponse(p: RawProduct): ProductResponse {
   };
 }
 
-// Generate 13-digit EAN-13 dengan check digit. `prefix` (1-3 digit) dipakai
-// untuk in-store identifier (mis. "20" = internal/private barcode range).
-// Sisa digit di-fill random; check digit pakai rumus EAN-13 standard.
 function generateEan13(prefix = "20"): string {
-  const targetLen = 12; // 12 digit + 1 check digit = 13
+  const targetLen = 12;
   let body = prefix.replace(/\D/g, "").slice(0, 3);
   while (body.length < targetLen) {
     body += Math.floor(Math.random() * 10).toString();
   }
   body = body.slice(0, targetLen);
-  // EAN-13 check digit: weighted sum (1,3,1,3,…), result mod 10, then 10-result%10.
   let sum = 0;
   for (let i = 0; i < body.length; i++) {
     const digit = Number(body[i]);
