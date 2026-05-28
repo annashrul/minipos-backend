@@ -9,6 +9,7 @@
   Put,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateCashierFavoriteSchema,
   ReorderCashierFavoritesSchema,
@@ -19,17 +20,21 @@ import {
 } from "./dto/cashier.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { CashierService } from "./cashier.service";
 
+@ApiTags("Cashier Favorites")
+@ApiBearerAuth()
 @Controller("cashier/favorites")
 @UseGuards(AccessGuard)
 export class CashierFavoritesController {
   constructor(private readonly cashier: CashierService) {}
 
   @Get()
+  @ApiOperation({ summary: "List cashier favorites" })
   async list(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -39,6 +44,7 @@ export class CashierFavoritesController {
   }
 
   @Get("user/:userId")
+  @ApiOperation({ summary: "List cashier favorites for user" })
   async listForUser(
     @CurrentCompany() companyId: string,
     @Param("userId") userId: string,
@@ -48,6 +54,8 @@ export class CashierFavoritesController {
   }
 
   @Post()
+  @ApiOperation({ summary: "Create cashier favorite" })
+  @ApiZodBody(CreateCashierFavoriteSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -59,6 +67,8 @@ export class CashierFavoritesController {
   }
 
   @Put("reorder")
+  @ApiOperation({ summary: "Reorder cashier favorites" })
+  @ApiZodBody(ReorderCashierFavoritesSchema)
   async reorder(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -70,6 +80,8 @@ export class CashierFavoritesController {
   }
 
   @Patch(":id")
+  @ApiOperation({ summary: "Update cashier favorite" })
+  @ApiZodBody(UpdateCashierFavoriteSchema)
   async update(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -87,6 +99,7 @@ export class CashierFavoritesController {
   }
 
   @Delete(":id")
+  @ApiOperation({ summary: "Delete cashier favorite" })
   async delete(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,

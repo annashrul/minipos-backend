@@ -1,4 +1,6 @@
 ﻿import { Body, Controller, Get, Patch, Post, Query } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { z } from "zod";
 import { type AuthUser } from "@/contracts";
 import {
@@ -22,6 +24,8 @@ import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { MeService } from "./me.service";
 import { UsersService } from "@/modules/users/users.service";
 
+@ApiTags("Me")
+@ApiBearerAuth()
 @Controller("me")
 export class MeController {
   constructor(
@@ -30,11 +34,13 @@ export class MeController {
   ) {}
 
   @Get()
+  @ApiOperation({ summary: "Get current user" })
   me(@CurrentUser() user: AuthUser) {
     return { data: user };
   }
 
   @Get("menus")
+  @ApiOperation({ summary: "Get current user menus" })
   async menus(
     @CurrentUser() user: AuthUser,
   ): Promise<{ data: MeMenusResponse }> {
@@ -46,6 +52,8 @@ export class MeController {
   }
 
   @Get("access-matrix")
+  @ApiOperation({ summary: "Get access matrix" })
+  @ApiZodQuery(MeAccessMatrixQuerySchema)
   async accessMatrix(
     @CurrentUser() user: AuthUser,
     @Query(new ZodValidationPipe(MeAccessMatrixQuerySchema))
@@ -56,6 +64,7 @@ export class MeController {
   }
 
   @Get("default-route")
+  @ApiOperation({ summary: "Get default route for current user" })
   async defaultRoute(
     @CurrentUser() user: AuthUser,
   ): Promise<{ data: { route: string } }> {
@@ -64,18 +73,22 @@ export class MeController {
   }
 
   @Get("company")
+  @ApiOperation({ summary: "Get current company" })
   async company(@CurrentCompany() companyId: string) {
     const data = await this.meService.getCompany(companyId);
     return { data };
   }
 
   @Get("company-with-limits")
+  @ApiOperation({ summary: "Get current company with usage limits" })
   async companyWithLimits(@CurrentCompany() companyId: string) {
     const data = await this.meService.getCompanyWithUsage(companyId);
     return { data };
   }
 
   @Patch("company/business-unit")
+  @ApiOperation({ summary: "Update company business unit" })
+  @ApiZodBody(UpdateBusinessUnitSchema)
   async updateBusinessUnit(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(UpdateBusinessUnitSchema))
@@ -95,6 +108,8 @@ export class MeController {
    * belum set password otorisasi, suruh ke profile.
    */
   @Post("verify-authorization")
+  @ApiOperation({ summary: "Verify authorization password" })
+  @ApiZodBody(VerifyAuthorizationSchema)
   async verifyAuthorization(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(VerifyAuthorizationSchema))

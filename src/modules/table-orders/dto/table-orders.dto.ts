@@ -75,6 +75,9 @@ export const SubmitTableOrderSchema = z.object({
   customerName: z.string().nullable().optional(),
   customerPhone: z.string().nullable().optional(),
   customerNote: z.string().nullable().optional(),
+  // Device identification — UUID dari localStorage customer device.
+  // Backend simpan di TableOrder untuk filter session.orders per device.
+  deviceId: z.string().nullable().optional(),
   items: z.array(SubmitTableOrderItemSchema).min(1),
 });
 export type SubmitTableOrderDto = z.infer<typeof SubmitTableOrderSchema>;
@@ -128,6 +131,15 @@ export type PayCashierDto = z.infer<typeof PayCashierSchema>;
 export const StartOnlinePaymentSchema = z.object({
   provider: TablePaymentProviderSchema,
   channel: z.string().nullable().optional(),
+  bankCode: z.string().nullable().optional(),
+  mobileNumber: z.string().nullable().optional(),
+  customerName: z.string().nullable().optional(),
+  // Order IDs spesifik yang mau dibayar. Kalau kosong/null = bayar semua
+  // unpaid orders di session. Dipakai untuk fitur per-order payment.
+  orderIds: z.array(z.string()).optional(),
+  // True (default) = semua order yang dicover masuk ke 1 Transaction.
+  // False = setiap order jadi Transaction terpisah (split bill).
+  mergeTransactions: z.boolean().optional(),
 });
 export type StartOnlinePaymentDto = z.infer<typeof StartOnlinePaymentSchema>;
 
@@ -157,6 +169,13 @@ export type TableOrderResponse = {
   approvedBy: string | null;
   approvedAt: string | null;
   orderQueueId: string | null;
+  // True kalau order ini sudah dibayar (id tercatat di coveredOrderIds
+  // suatu TableSessionPayment yang PAID). Dipakai kasir bell untuk filter
+  // order yang belum bayar + customer UI untuk badge "Belum Dibayar".
+  paid: boolean;
+  // Device & phone identifier — dipakai filter session.orders per-device.
+  deviceId: string | null;
+  customerPhone: string | null;
   createdAt: string;
   updatedAt: string;
   items: TableOrderItemResponse[];
@@ -197,6 +216,21 @@ export type TablePaymentResponse = {
   externalId: string | null;
   paidAt: string | null;
   createdAt: string;
+  // Gateway-specific fields (populated berdasarkan channel). Untuk MOCK
+  // sekarang semuanya kita generate inline; setelah integrasi Xendit
+  // beneran, field-field ini dipopulate dari response Xendit.
+  qrString?: string | null;
+  paymentUrl?: string | null;
+  expiresAt?: string | null;
+  actions?: {
+    desktopWebCheckoutUrl?: string | null;
+    mobileWebCheckoutUrl?: string | null;
+    mobileDeeplinkCheckoutUrl?: string | null;
+    qrCheckoutString?: string | null;
+  } | null;
+  bankCode?: string | null;
+  accountNumber?: string | null;
+  vaName?: string | null;
 };
 
 // Catalog snippet exposed to tablet (so customer can build cart)
@@ -210,6 +244,10 @@ export type PublicProductResponse = {
   imageUrl: string | null;
   description: string | null;
   unit: string;
+  // Effective stock — untuk produk recipe sudah dihitung dari min(bahan baku);
+  // untuk produk biasa = product.stock. Frontend pakai field ini untuk
+  // tampilkan badge "Habis" / "Sisa N" dan disable klik.
+  stock: number;
   hasUnits?: boolean;
   hasModifiers?: boolean;
 };
@@ -254,6 +292,25 @@ export const PublicProductsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(24),
 });
 export type PublicProductsQueryDto = z.infer<typeof PublicProductsQuerySchema>;
+
+// Query untuk filter session.orders berdasarkan device & phone. Kosong =
+// return semua orders (backward compat / "patungan" mode).
+export const PublicSessionQuerySchema = z.object({
+  deviceId: z.string().optional(),
+  phone: z.string().optional(),
+});
+export type PublicSessionQueryDto = z.infer<typeof PublicSessionQuerySchema>;
+
+/**
+ * Response untuk GET /public/table-orders/:qrToken/session.
+ * Customer di meja X bisa lihat session aktif di meja X (kalau ada) PLUS
+ * device history = orders dari meja lain (session lain) yang dibuat oleh
+ * device/phone yang sama, last 7 days, same branch.
+ */
+export type PublicSessionResponse = {
+  session: TableSessionResponse | null;
+  deviceHistory: TableOrderResponse[];
+};
 
 export type PublicProductsPageResponse = {
   products: PublicProductResponse[];

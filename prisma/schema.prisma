@@ -2807,6 +2807,14 @@ model TableOrder {
   approvedAt     DateTime?
   orderQueueId   String? // link to KDS queue once approved
   orderQueue     OrderQueue?     @relation(fields: [orderQueueId], references: [id])
+  // Device identification — UUID stored in customer's localStorage saat
+  // first visit. Dipakai backend filter session.orders supaya tiap device
+  // hanya lihat order yang dibuatnya. Nullable untuk backward-compat.
+  deviceId       String?
+  // Denormalized customerPhone per-order (instead of relying on
+  // session-level phone) supaya phone-based recovery match per-order
+  // walaupun session.customerPhone berbeda.
+  customerPhone  String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -2816,6 +2824,8 @@ model TableOrder {
   @@index([sessionId])
   @@index([tableId, status])
   @@index([createdAt])
+  @@index([deviceId])
+  @@index([customerPhone])
   @@map("table_orders")
 }
 

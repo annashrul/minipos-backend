@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateProductSchema,
   GenerateProductDescriptionSchema,
@@ -20,12 +21,15 @@ import {
   type UpdateProductDto,
 } from "./dto/products.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ProductAiService } from "./product-ai.service";
 import { ProductsService } from "./products.service";
 
+@ApiTags("Products")
+@ApiBearerAuth()
 @Controller("products")
 @UseGuards(AccessGuard)
 export class ProductsController {
@@ -36,6 +40,8 @@ export class ProductsController {
 
   @Get()
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List products" })
+  @ApiZodQuery(ListProductsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListProductsQuerySchema))
@@ -47,6 +53,7 @@ export class ProductsController {
 
   @Get("stats")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Product stats" })
   async stats(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -57,6 +64,7 @@ export class ProductsController {
 
   @Get("by-barcode")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Find product by barcode" })
   async findByBarcode(
     @CurrentCompany() companyId: string,
     @Query("barcode") barcode: string,
@@ -72,6 +80,7 @@ export class ProductsController {
    // punya "update" via migration phase22).
   @Get("generate-barcode")
   @RequireAccess("products", "generate_barcode")
+  @ApiOperation({ summary: "Generate unique barcode" })
   async generateBarcode(
     @CurrentCompany() companyId: string,
     @Query("prefix") prefix?: string,
@@ -86,6 +95,7 @@ export class ProductsController {
   // Generate kode produk unik (preview hasil DB trigger sebelum INSERT).
   @Get("generate-code")
   @RequireAccess("products", "generate_code")
+  @ApiOperation({ summary: "Generate unique product code" })
   async generateCode(@CurrentCompany() companyId: string) {
     const code = await this.products.generateUniqueProductCode(companyId);
     return { data: { code } };
@@ -93,6 +103,7 @@ export class ProductsController {
 
   @Get("top-selling")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List top-selling products" })
   async topSelling(
     @CurrentCompany() companyId: string,
     @Query("limit") limit?: string,
@@ -106,6 +117,7 @@ export class ProductsController {
 
   @Get("by-category/:categoryId")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List products by category" })
   async byCategory(
     @CurrentCompany() companyId: string,
     @Param("categoryId") categoryId: string,
@@ -116,6 +128,7 @@ export class ProductsController {
 
   @Post("pos-search")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Search products for POS" })
   async posSearch(
     @CurrentCompany() companyId: string,
     @Body()
@@ -134,6 +147,7 @@ export class ProductsController {
 
   @Get(":id")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Get product by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -147,6 +161,7 @@ export class ProductsController {
   // pakai ini untuk hindari race condition di multi-fetch flow.
   @Get(":id/detail")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Get product detail with extensions" })
   async findDetail(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -158,6 +173,7 @@ export class ProductsController {
 
   @Post("branch-view")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Branch product view" })
   async branchView(
     @CurrentCompany() companyId: string,
     @Body()
@@ -184,6 +200,7 @@ export class ProductsController {
 
   @Get("import-template-data")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Get import template reference data" })
   async importTemplateData(@CurrentCompany() companyId: string) {
     const data = await this.products.importTemplateData(companyId);
     return { data };
@@ -191,6 +208,8 @@ export class ProductsController {
 
   @Post()
   @RequireAccess("products", "create")
+  @ApiOperation({ summary: "Create product" })
+  @ApiZodBody(CreateProductSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateProductSchema)) body: CreateProductDto,
@@ -201,6 +220,8 @@ export class ProductsController {
 
   @Patch(":id")
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Update product" })
+  @ApiZodBody(UpdateProductSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -212,6 +233,7 @@ export class ProductsController {
 
   @Post("bulk-delete")
   @RequireAccess("products", "delete")
+  @ApiOperation({ summary: "Bulk delete products" })
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body() body: { ids: string[] },
@@ -222,6 +244,7 @@ export class ProductsController {
 
   @Delete(":id")
   @RequireAccess("products", "delete")
+  @ApiOperation({ summary: "Delete product" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -232,6 +255,8 @@ export class ProductsController {
 
   @Post("ai/generate-description")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Generate AI product description" })
+  @ApiZodBody(GenerateProductDescriptionSchema)
   async generateDescription(
     @Body(new ZodValidationPipe(GenerateProductDescriptionSchema))
     body: GenerateProductDescriptionDto,

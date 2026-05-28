@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateVehicleSchema,
   ListVehiclesQuerySchema,
@@ -18,11 +19,14 @@ import {
   type UpdateVehicleDto,
 } from "./dto/vehicle.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { VehiclesService } from "./vehicles.service";
 
+@ApiTags("Vehicles")
+@ApiBearerAuth()
 @Controller("vehicles")
 @UseGuards(AccessGuard)
 export class VehiclesController {
@@ -30,6 +34,8 @@ export class VehiclesController {
 
   @Get()
   @RequireAccess("vehicles", "view")
+  @ApiOperation({ summary: "List vehicles" })
+  @ApiZodQuery(ListVehiclesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListVehiclesQuerySchema))
@@ -41,6 +47,7 @@ export class VehiclesController {
 
   @Get(":id")
   @RequireAccess("vehicles", "view")
+  @ApiOperation({ summary: "Get vehicle by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -51,6 +58,7 @@ export class VehiclesController {
 
   @Get(":id/history")
   @RequireAccess("vehicles", "view")
+  @ApiOperation({ summary: "Get vehicle service history" })
   async history(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -61,6 +69,8 @@ export class VehiclesController {
 
   @Post()
   @RequireAccess("vehicles", "create")
+  @ApiOperation({ summary: "Create vehicle" })
+  @ApiZodBody(CreateVehicleSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateVehicleSchema)) body: CreateVehicleDto,
@@ -71,6 +81,8 @@ export class VehiclesController {
 
   @Patch(":id")
   @RequireAccess("vehicles", "update")
+  @ApiOperation({ summary: "Update vehicle" })
+  @ApiZodBody(UpdateVehicleSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -82,6 +94,7 @@ export class VehiclesController {
 
   @Delete(":id")
   @RequireAccess("vehicles", "delete")
+  @ApiOperation({ summary: "Delete vehicle" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

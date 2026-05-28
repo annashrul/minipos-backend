@@ -7,6 +7,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AdjustPointsSchema,
   EarnPointsSchema,
@@ -18,11 +19,14 @@ import {
   type RedeemPointsDto,
 } from "./dto/points.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { PointsService } from "./points.service";
 
+@ApiTags("Points")
+@ApiBearerAuth()
 @Controller("points")
 @UseGuards(AccessGuard)
 export class PointsController {
@@ -30,6 +34,7 @@ export class PointsController {
 
   @Get("customers/:customerId")
   @RequireAccess("points", "view")
+  @ApiOperation({ summary: "Get customer points balance" })
   async getCustomerPoints(
     @CurrentCompany() companyId: string,
     @Param("customerId") customerId: string,
@@ -40,6 +45,8 @@ export class PointsController {
 
   @Get("history")
   @RequireAccess("points", "view")
+  @ApiOperation({ summary: "List point history" })
+  @ApiZodQuery(ListPointHistoryQuerySchema)
   async listHistory(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListPointHistoryQuerySchema))
@@ -51,6 +58,8 @@ export class PointsController {
 
   @Post("earn")
   @RequireAccess("points", "earn")
+  @ApiOperation({ summary: "Earn points" })
+  @ApiZodBody(EarnPointsSchema)
   async earn(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(EarnPointsSchema)) body: EarnPointsDto,
@@ -61,6 +70,8 @@ export class PointsController {
 
   @Post("redeem")
   @RequireAccess("points", "redeem")
+  @ApiOperation({ summary: "Redeem points" })
+  @ApiZodBody(RedeemPointsSchema)
   async redeem(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(RedeemPointsSchema)) body: RedeemPointsDto,
@@ -71,6 +82,8 @@ export class PointsController {
 
   @Post("adjust")
   @RequireAccess("points", "adjust")
+  @ApiOperation({ summary: "Adjust points" })
+  @ApiZodBody(AdjustPointsSchema)
   async adjust(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(AdjustPointsSchema)) body: AdjustPointsDto,

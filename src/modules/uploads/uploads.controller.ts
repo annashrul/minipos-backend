@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Controller,
   Delete,
@@ -7,6 +7,13 @@ import {
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+  ApiBody,
+} from "@nestjs/swagger";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { UploadsService } from "./uploads.service";
 
@@ -24,12 +31,22 @@ const ALLOWED = new Set([
 ]);
 const MAX_BYTES = 5 * 1024 * 1024;
 
+@ApiTags("Uploads")
+@ApiBearerAuth()
 @Controller("uploads")
 export class UploadsController {
   constructor(private readonly service: UploadsService) {}
 
   @Post("image")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_BYTES } }))
+  @ApiOperation({ summary: "Upload image" })
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      properties: { file: { type: "string", format: "binary" } },
+    },
+  })
   async uploadImage(
     @UploadedFile() file: UploadedFilePayload | undefined,
   ) {
@@ -50,6 +67,7 @@ export class UploadsController {
   }
 
   @Delete("image/:publicId")
+  @ApiOperation({ summary: "Delete image" })
   async deleteImage(@Param("publicId") publicId: string) {
     await this.service.deleteImage(decodeURIComponent(publicId));
     return { success: true };

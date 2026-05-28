@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AssignProductsToRackSchema,
   CreateRackSchema,
@@ -28,12 +29,15 @@ import {
   type UpdateRackDto,
 } from "./dto/racks.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { RacksService } from "./racks.service";
 
+@ApiTags("Racks")
+@ApiBearerAuth()
 @Controller("racks")
 @UseGuards(AccessGuard)
 export class RacksController {
@@ -41,6 +45,8 @@ export class RacksController {
 
   @Get()
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "List racks" })
+  @ApiZodQuery(ListRacksQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListRacksQuerySchema))
@@ -52,6 +58,7 @@ export class RacksController {
 
   @Get("summary")
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "Racks summary" })
   async summary(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -62,6 +69,7 @@ export class RacksController {
 
   @Get("product/:productId")
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "Lookup racks by product" })
   async productLookup(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -77,6 +85,7 @@ export class RacksController {
 
   @Get(":id")
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "Get rack by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -87,6 +96,7 @@ export class RacksController {
 
   @Post("bulk-delete")
   @RequireAccess("racks", "delete")
+  @ApiOperation({ summary: "Bulk delete racks" })
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body() body: { ids: string[] },
@@ -97,6 +107,8 @@ export class RacksController {
 
   @Post()
   @RequireAccess("racks", "create")
+  @ApiOperation({ summary: "Create rack" })
+  @ApiZodBody(CreateRackSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateRackSchema)) body: CreateRackDto,
@@ -107,6 +119,8 @@ export class RacksController {
 
   @Patch(":id")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Update rack" })
+  @ApiZodBody(UpdateRackSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -118,6 +132,7 @@ export class RacksController {
 
   @Delete(":id")
   @RequireAccess("racks", "delete")
+  @ApiOperation({ summary: "Delete rack" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -128,6 +143,8 @@ export class RacksController {
 
   @Post(":id/stock")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Set rack stock" })
+  @ApiZodBody(SetRackStockSchema)
   async setStock(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: { id: string },
@@ -140,6 +157,8 @@ export class RacksController {
 
   @Post("transfer")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Transfer rack stock" })
+  @ApiZodBody(TransferRackStockSchema)
   async transfer(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: { id: string },
@@ -152,6 +171,8 @@ export class RacksController {
 
   @Post(":id/assign-products")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Assign products to rack" })
+  @ApiZodBody(AssignProductsToRackSchema)
   async assignProducts(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -164,6 +185,8 @@ export class RacksController {
 
   @Get("movements/list")
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "List rack movements" })
+  @ApiZodQuery(ListRackMovementsQuerySchema)
   async listMovements(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListRackMovementsQuerySchema))
@@ -175,6 +198,7 @@ export class RacksController {
 
   @Get("discrepancies/list")
   @RequireAccess("racks", "view")
+  @ApiOperation({ summary: "List rack discrepancies" })
   async listDiscrepancies(
     @CurrentCompany() companyId: string,
     @Query("status") status?: "OPEN" | "RESOLVED",
@@ -185,6 +209,8 @@ export class RacksController {
 
   @Post("discrepancies/report")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Report rack discrepancy" })
+  @ApiZodBody(ReportDiscrepancySchema)
   async reportDiscrepancy(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: { id: string },
@@ -197,6 +223,7 @@ export class RacksController {
 
   @Post("discrepancies/:id/resolve")
   @RequireAccess("racks", "update")
+  @ApiOperation({ summary: "Resolve rack discrepancy" })
   async resolveDiscrepancy(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: { id: string },

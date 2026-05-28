@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreatePromotionSchema,
   ListPromotionsQuerySchema,
@@ -20,11 +21,14 @@ import {
   type UpdatePromotionDto,
 } from "./dto/promotions.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { PromotionsService } from "./promotions.service";
 
+@ApiTags("Promotions")
+@ApiBearerAuth()
 @Controller("promotions")
 @UseGuards(AccessGuard)
 export class PromotionsController {
@@ -32,6 +36,8 @@ export class PromotionsController {
 
   @Get()
   @RequireAccess("promotions", "view")
+  @ApiOperation({ summary: "List promotions" })
+  @ApiZodQuery(ListPromotionsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListPromotionsQuerySchema))
@@ -43,6 +49,7 @@ export class PromotionsController {
 
   @Get("stats")
   @RequireAccess("promotions", "view")
+  @ApiOperation({ summary: "Promotion stats" })
   async stats(@CurrentCompany() companyId: string) {
     const data = await this.promotions.stats(companyId);
     return { data };
@@ -50,6 +57,7 @@ export class PromotionsController {
 
   @Get(":id")
   @RequireAccess("promotions", "view")
+  @ApiOperation({ summary: "Get promotion by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -60,6 +68,8 @@ export class PromotionsController {
 
   @Post()
   @RequireAccess("promotions", "create")
+  @ApiOperation({ summary: "Create promotion" })
+  @ApiZodBody(CreatePromotionSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreatePromotionSchema))
@@ -71,6 +81,8 @@ export class PromotionsController {
 
   @Patch(":id")
   @RequireAccess("promotions", "update")
+  @ApiOperation({ summary: "Update promotion" })
+  @ApiZodBody(UpdatePromotionSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -83,6 +95,8 @@ export class PromotionsController {
 
   @Patch(":id/toggle")
   @RequireAccess("promotions", "update")
+  @ApiOperation({ summary: "Toggle promotion status" })
+  @ApiZodBody(TogglePromotionSchema)
   async toggle(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -95,6 +109,7 @@ export class PromotionsController {
 
   @Delete(":id")
   @RequireAccess("promotions", "delete")
+  @ApiOperation({ summary: "Delete promotion" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

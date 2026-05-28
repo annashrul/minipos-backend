@@ -1,8 +1,11 @@
 ﻿import { Controller, Get } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RedisService } from "@/modules/redis/redis.service";
 import { Public } from "@/modules/auth/public.decorator";
 
+@ApiTags("Health")
+@ApiBearerAuth()
 @Controller("health")
 export class HealthController {
   constructor(
@@ -12,6 +15,7 @@ export class HealthController {
 
   @Public()
   @Get()
+  @ApiOperation({ summary: "Health check" })
   async check() {
     let dbOk = false;
     try {

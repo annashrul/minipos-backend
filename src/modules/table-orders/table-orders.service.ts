@@ -8,6 +8,8 @@ import type {
   PublicProductDetailResponse,
   PublicProductsPageResponse,
   PublicProductsQueryDto,
+  PublicSessionQueryDto,
+  PublicSessionResponse,
   PublicTableInfoResponseDto,
   StartOnlinePaymentDto,
   SubmitTableOrderDto,
@@ -68,8 +70,9 @@ export class TableOrdersService {
 
   getPublicActiveSession(
     qrToken: string,
-  ): Promise<TableSessionResponse | null> {
-    return this.publicService.getPublicActiveSession(qrToken);
+    query: PublicSessionQueryDto = {},
+  ): Promise<PublicSessionResponse> {
+    return this.publicService.getPublicActiveSession(qrToken, query);
   }
 
   // ────────────────────────────────────────────────────────────

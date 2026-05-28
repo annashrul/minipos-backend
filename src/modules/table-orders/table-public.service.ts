@@ -9,16 +9,19 @@ import type {
   PublicProductDetailResponse,
   PublicProductsPageResponse,
   PublicProductsQueryDto,
+  PublicSessionQueryDto,
+  PublicSessionResponse,
   PublicTableInfoResponseDto,
-  TableSessionResponse,
 } from "./dto/table-orders.dto";
-import { TableOrdersRepository } from "./table-orders.repository";
+import { ORDER_SELECT, TableOrdersRepository } from "./table-orders.repository";
 import {
   findTableByToken,
   cleanupStaleSessions,
+  toOrderResponse,
   toSessionResponse,
 } from "./table-orders.helpers";
 import { PrismaService } from "@/modules/prisma/prisma.service";
+import { ProductSearchService } from "@/modules/products/product-search.service";
 import { RealtimeService } from "@/modules/realtime/realtime.service";
 
 @Injectable()
@@ -27,6 +30,10 @@ export class TablePublicService {
     private readonly repo: TableOrdersRepository,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    // Dipakai untuk hitung recipe stock (BOM) supaya item dengan bahan
+    // baku habis otomatis tampil "Stok habis" di menu tablet — pola sama
+    // dengan POS productSearch.
+    private readonly productSearch: ProductSearchService,
   ) {}
 
   async getPublicTableInfo(
@@ -100,20 +107,34 @@ export class TablePublicService {
     const slice = hasMore ? rows.slice(0, limit) : rows;
     const nextCursor = hasMore ? slice[slice.length - 1]!.id : null;
 
+    // Hitung recipe stock untuk produk yang punya BOM. Untuk produk non-recipe
+    // fallback ke product.stock (raw stock). Branch dilewatin supaya bahan
+    // baku yang diambil = branch stock kalau ada, fallback global.
+    const recipeStockByProduct = await this.productSearch.computeRecipeStockByProduct(
+      companyId,
+      slice.map((p) => p.id),
+      table.branch.id,
+    );
+
     return {
-      products: slice.map((p) => ({
-        id: p.id,
-        name: p.name,
-        code: p.code,
-        categoryId: p.categoryId,
-        categoryName: p.category.name,
-        sellingPrice: p.sellingPrice,
-        imageUrl: p.imageUrl,
-        description: p.description,
-        unit: p.unit,
-        hasUnits: p._count.units > 0,
-        hasModifiers: p._count.modifierGroups > 0,
-      })),
+      products: slice.map((p) => {
+        const recipeStock = recipeStockByProduct.get(p.id);
+        const effectiveStock = recipeStock ?? p.stock ?? 0;
+        return {
+          id: p.id,
+          name: p.name,
+          code: p.code,
+          categoryId: p.categoryId,
+          categoryName: p.category.name,
+          sellingPrice: p.sellingPrice,
+          imageUrl: p.imageUrl,
+          description: p.description,
+          unit: p.unit,
+          stock: effectiveStock,
+          hasUnits: p._count.units > 0,
+          hasModifiers: p._count.modifierGroups > 0,
+        };
+      }),
       nextCursor,
     };
   }
@@ -132,6 +153,14 @@ export class TablePublicService {
     );
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
+    // Compute recipe stock untuk detail juga (consistent dengan getPublicProducts).
+    const recipeStockMap = await this.productSearch.computeRecipeStockByProduct(
+      table.branch.companyId,
+      [product.id],
+      table.branch.id,
+    );
+    const effectiveStock = recipeStockMap.get(product.id) ?? product.stock ?? 0;
+
     return {
       id: product.id,
       name: product.name,
@@ -142,6 +171,7 @@ export class TablePublicService {
       imageUrl: product.imageUrl,
       description: product.description,
       unit: product.unit,
+      stock: effectiveStock,
       units: product.units.map((u) => ({
         id: u.id,
         name: u.name,
@@ -171,10 +201,20 @@ export class TablePublicService {
     };
   }
 
-  /** Get the active session for a table (or null if none). */
+  /** Get the active session for a table + device's cross-table history.
+   *
+   * Response:
+   * - `session`: session aktif di meja saat ini, orders sudah di-filter
+   *   by device/phone. Bisa null kalau meja kosong.
+   * - `deviceHistory`: orders dari MEJA LAIN (session lain) di branch
+   *   yang sama, dalam 7 hari terakhir, dibuat oleh device/phone yang
+   *   sama. Customer yang pindah meja tetap bisa lihat riwayat order
+   *   sebelumnya.
+   */
   async getPublicActiveSession(
     qrToken: string,
-  ): Promise<TableSessionResponse | null> {
+    query: PublicSessionQueryDto = {},
+  ): Promise<PublicSessionResponse> {
     const table = await findTableByToken(this.repo, qrToken);
     if (table.branch) {
       await cleanupStaleSessions(
@@ -186,6 +226,42 @@ export class TablePublicService {
       );
     }
     const session = await this.repo.findActiveSession(table.id);
-    return session ? toSessionResponse(session) : null;
+    const deviceId = query.deviceId?.trim();
+    const phone = query.phone?.trim();
+
+    let sessionResp = session ? toSessionResponse(session) : null;
+    if (sessionResp && (deviceId || phone)) {
+      sessionResp.orders = (sessionResp.orders ?? []).filter((o) => {
+        const matchDevice = !!deviceId && o.deviceId === deviceId;
+        const matchPhone = !!phone && o.customerPhone === phone;
+        return matchDevice || matchPhone;
+      });
+    }
+
+    // Device history — orders dari session lain (meja lain) di branch sama,
+    // last 7 days. Hanya kalau query bawa deviceId/phone.
+    let deviceHistory: PublicSessionResponse["deviceHistory"] = [];
+    if ((deviceId || phone) && table.branch) {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const orConditions: Array<Record<string, unknown>> = [];
+      if (deviceId) orConditions.push({ deviceId });
+      if (phone) orConditions.push({ customerPhone: phone });
+      const otherOrders = await this.prisma.tableOrder.findMany({
+        where: {
+          branchId: table.branch.id,
+          // Exclude orders dari session aktif saat ini (sudah di session.orders)
+          ...(session ? { sessionId: { not: session.id } } : {}),
+          status: { notIn: ["CANCELLED", "REJECTED"] },
+          createdAt: { gte: sevenDaysAgo },
+          OR: orConditions,
+        },
+        select: ORDER_SELECT,
+        orderBy: { createdAt: "desc" },
+        take: 30,
+      });
+      deviceHistory = otherOrders.map(toOrderResponse);
+    }
+
+    return { session: sessionResp, deviceHistory };
   }
 }

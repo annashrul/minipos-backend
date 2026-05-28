@@ -7,9 +7,11 @@
   Param,
   Post,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { Public } from "@/modules/auth/public.decorator";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { BookingsService } from "@/modules/bookings/bookings.service";
@@ -92,6 +94,8 @@ const OTP_TTL_SEC = 5 * 60; // 5 menit
 const OTP_RATE_LIMIT_SEC = 30; // bisa request OTP lagi setelah 30 detik
 const VERIFIED_TOKEN_TTL_SEC = 30 * 60; // token sah 30 menit
 
+@ApiTags("Public Bookings")
+@ApiBearerAuth()
 @Controller("public/bookings")
 export class PublicBookingsController {
   constructor(
@@ -105,6 +109,7 @@ export class PublicBookingsController {
   /** GET /public/bookings/:slug/info — info company + cabang aktif. */
   @Public()
   @Get(":slug/info")
+  @ApiOperation({ summary: "Get public booking info" })
   async info(@Param("slug") slug: string) {
     const company = await this.prisma.company.findUnique({
       where: { slug },
@@ -153,6 +158,8 @@ export class PublicBookingsController {
    */
   @Public()
   @Post(":slug/lookup")
+  @ApiOperation({ summary: "Lookup customer by phone" })
+  @ApiZodBody(PublicLookupSchema)
   async lookupCustomer(
     @Param("slug") slug: string,
     @Body(new ZodValidationPipe(PublicLookupSchema))
@@ -229,6 +236,8 @@ export class PublicBookingsController {
    */
   @Public()
   @Post(":slug/otp/request")
+  @ApiOperation({ summary: "Request booking OTP" })
+  @ApiZodBody(PublicOtpRequestSchema)
   async requestOtp(
     @Param("slug") slug: string,
     @Body(new ZodValidationPipe(PublicOtpRequestSchema))
@@ -296,6 +305,8 @@ export class PublicBookingsController {
    */
   @Public()
   @Post(":slug/otp/verify")
+  @ApiOperation({ summary: "Verify booking OTP" })
+  @ApiZodBody(PublicOtpVerifySchema)
   async verifyOtp(
     @Param("slug") slug: string,
     @Body(new ZodValidationPipe(PublicOtpVerifySchema))
@@ -339,6 +350,8 @@ export class PublicBookingsController {
   /** POST /public/bookings/:slug — buat booking baru status PENDING. */
   @Public()
   @Post(":slug")
+  @ApiOperation({ summary: "Create public booking" })
+  @ApiZodBody(PublicCreateBookingSchema)
   async create(
     @Param("slug") slug: string,
     @Body(new ZodValidationPipe(PublicCreateBookingSchema))

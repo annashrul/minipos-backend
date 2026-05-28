@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateOrderQueueFromTransactionSchema,
   CreateOrderQueueSchema,
@@ -21,11 +22,14 @@ import {
   type UpdateOrderQueueStatusDto,
 } from "./dto/order-queues.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { OrderQueuesService } from "./order-queues.service";
 
+@ApiTags("Order Queues")
+@ApiBearerAuth()
 @Controller("order-queues")
 @UseGuards(AccessGuard)
 export class OrderQueuesController {
@@ -33,6 +37,8 @@ export class OrderQueuesController {
 
   @Get()
   @RequireAccess("kitchen", "view")
+  @ApiOperation({ summary: "List order queues" })
+  @ApiZodQuery(ListOrderQueuesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListOrderQueuesQuerySchema))
@@ -44,6 +50,7 @@ export class OrderQueuesController {
 
   @Get(":id")
   @RequireAccess("kitchen", "view")
+  @ApiOperation({ summary: "Get order queue by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -54,6 +61,8 @@ export class OrderQueuesController {
 
   @Post()
   @RequireAccess("kitchen", "create")
+  @ApiOperation({ summary: "Create order queue" })
+  @ApiZodBody(CreateOrderQueueSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateOrderQueueSchema))
@@ -65,6 +74,8 @@ export class OrderQueuesController {
 
   @Post("from-transaction")
   @RequireAccess("kitchen", "create")
+  @ApiOperation({ summary: "Create order queue from transaction" })
+  @ApiZodBody(CreateOrderQueueFromTransactionSchema)
   async createFromTransaction(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateOrderQueueFromTransactionSchema))
@@ -76,6 +87,8 @@ export class OrderQueuesController {
 
   @Patch(":id/status")
   @RequireAccess("kitchen", "update")
+  @ApiOperation({ summary: "Update order queue status" })
+  @ApiZodBody(UpdateOrderQueueStatusSchema)
   async updateStatus(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -88,6 +101,8 @@ export class OrderQueuesController {
 
   @Patch(":id/items/:itemId/status")
   @RequireAccess("kitchen", "update")
+  @ApiOperation({ summary: "Update order queue item status" })
+  @ApiZodBody(UpdateOrderQueueItemStatusSchema)
   async updateItemStatus(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

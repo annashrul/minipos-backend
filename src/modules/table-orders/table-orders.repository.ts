@@ -14,6 +14,8 @@ export const ORDER_SELECT = {
   approvedBy: true,
   approvedAt: true,
   orderQueueId: true,
+  deviceId: true,
+  customerPhone: true,
   createdAt: true,
   updatedAt: true,
   table: { select: { id: true, number: true, name: true } },
@@ -29,6 +31,16 @@ export const ORDER_SELECT = {
       product: { select: { code: true } },
     },
     orderBy: { id: "asc" },
+  },
+  // Sertakan PAID payments session ini supaya toOrderResponse bisa
+  // compute paid-status per order (cross-ref ke rawPayload.coveredOrderIds).
+  session: {
+    select: {
+      payments: {
+        where: { status: "PAID" },
+        select: { id: true, rawPayload: true },
+      },
+    },
   },
 } satisfies Prisma.TableOrderSelect;
 
@@ -164,7 +176,13 @@ export class TableOrdersRepository {
   async findSessionForPayment(sessionId: string, tableId: string) {
     return this.prisma.tableSession.findFirst({
       where: { id: sessionId, tableId },
-      select: { id: true, status: true, subtotal: true, branchId: true },
+      select: {
+        id: true,
+        status: true,
+        subtotal: true,
+        branchId: true,
+        tableId: true,
+      },
     });
   }
 
@@ -239,6 +257,9 @@ export class TableOrdersRepository {
         imageUrl: true,
         description: true,
         unit: true,
+        // Stok base (non-recipe). Untuk recipe-based product, akan
+        // di-override service dengan hasil computeRecipeStockByProduct.
+        stock: true,
         _count: { select: { units: true, modifierGroups: true } },
       },
       orderBy: { id: "asc" },
@@ -265,6 +286,7 @@ export class TableOrdersRepository {
         imageUrl: true,
         description: true,
         unit: true,
+        stock: true,
         units: {
           select: {
             id: true,

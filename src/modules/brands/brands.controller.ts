@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateBrandSchema,
   ListBrandsQuerySchema,
@@ -18,11 +19,14 @@ import {
   type UpdateBrandDto,
 } from "./dto/brands.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { BrandsService } from "./brands.service";
 
+@ApiTags("Brands")
+@ApiBearerAuth()
 @Controller("brands")
 @UseGuards(AccessGuard)
 export class BrandsController {
@@ -30,6 +34,8 @@ export class BrandsController {
 
   @Get()
   @RequireAccess("brands", "view")
+  @ApiOperation({ summary: "List brands" })
+  @ApiZodQuery(ListBrandsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListBrandsQuerySchema))
@@ -41,6 +47,7 @@ export class BrandsController {
 
   @Get("summary")
   @RequireAccess("brands", "view")
+  @ApiOperation({ summary: "Brand summary" })
   async summary(@CurrentCompany() companyId: string) {
     const data = await this.brands.summary(companyId);
     return { data };
@@ -48,6 +55,7 @@ export class BrandsController {
 
   @Get(":id")
   @RequireAccess("brands", "view")
+  @ApiOperation({ summary: "Get brand by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -58,6 +66,7 @@ export class BrandsController {
 
   @Post("bulk-delete")
   @RequireAccess("brands", "delete")
+  @ApiOperation({ summary: "Bulk delete brands" })
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body() body: { ids: string[] },
@@ -68,6 +77,8 @@ export class BrandsController {
 
   @Post()
   @RequireAccess("brands", "create")
+  @ApiOperation({ summary: "Create brand" })
+  @ApiZodBody(CreateBrandSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateBrandSchema)) body: CreateBrandDto,
@@ -78,6 +89,8 @@ export class BrandsController {
 
   @Patch(":id")
   @RequireAccess("brands", "update")
+  @ApiOperation({ summary: "Update brand" })
+  @ApiZodBody(UpdateBrandSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -89,6 +102,7 @@ export class BrandsController {
 
   @Delete(":id")
   @RequireAccess("brands", "delete")
+  @ApiOperation({ summary: "Delete brand" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

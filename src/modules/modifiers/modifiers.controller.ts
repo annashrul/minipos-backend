@@ -9,6 +9,7 @@
   Put,
   Query,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import {
   CreateModifierGroupSchema,
@@ -22,11 +23,14 @@ import {
 } from "./dto/modifiers.dto";
 import { ModifiersService } from "./modifiers.service";
 
+@ApiTags("Modifiers")
+@ApiBearerAuth()
 @Controller("modifiers")
 export class ModifiersController {
   constructor(private readonly service: ModifiersService) {}
 
   @Get()
+  @ApiOperation({ summary: "List modifier groups" })
   async list(
     @CurrentCompany() companyId: string,
     @Query() query: Record<string, unknown>,
@@ -38,18 +42,21 @@ export class ModifiersController {
   }
 
   @Get("summary")
+  @ApiOperation({ summary: "Modifier groups summary" })
   async summary(@CurrentCompany() companyId: string) {
     const data = await this.service.summary(companyId);
     return { data };
   }
 
   @Get(":id")
+  @ApiOperation({ summary: "Get modifier group by ID" })
   async findOne(@CurrentCompany() companyId: string, @Param("id") id: string) {
     const data = await this.service.findById(companyId, id);
     return { data };
   }
 
   @Post()
+  @ApiOperation({ summary: "Create modifier group" })
   async create(@CurrentCompany() companyId: string, @Body() body: unknown) {
     const dto: CreateModifierGroupDto = CreateModifierGroupSchema.parse(body);
     const data = await this.service.create(companyId, dto);
@@ -57,6 +64,7 @@ export class ModifiersController {
   }
 
   @Patch(":id")
+  @ApiOperation({ summary: "Update modifier group" })
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -68,6 +76,7 @@ export class ModifiersController {
   }
 
   @Delete(":id")
+  @ApiOperation({ summary: "Delete modifier group" })
   async remove(@CurrentCompany() companyId: string, @Param("id") id: string) {
     const data = await this.service.remove(companyId, id);
     return { data };
@@ -75,6 +84,7 @@ export class ModifiersController {
 
   // Product attachments
   @Get("products/:productId")
+  @ApiOperation({ summary: "List modifier groups for product" })
   async listForProduct(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -84,6 +94,7 @@ export class ModifiersController {
   }
 
   @Put("products/attach")
+  @ApiOperation({ summary: "Attach modifier groups to product" })
   async attachToProduct(
     @CurrentCompany() companyId: string,
     @Body() body: unknown,

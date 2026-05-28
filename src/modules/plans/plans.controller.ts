@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   ListPlanAccessQuerySchema,
   PlanCheckQuerySchema,
@@ -21,10 +22,13 @@ import {
   type UpdatePlanAccessDto,
 } from "./dto/plans.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { PlansService } from "./plans.service";
 
+@ApiTags("Plans")
+@ApiBearerAuth()
 @Controller("plans")
 @UseGuards(AccessGuard)
 export class PlansController {
@@ -32,6 +36,8 @@ export class PlansController {
 
   @Get("menu-access")
   @RequireAccess("plans", "view")
+  @ApiOperation({ summary: "List plan menu access" })
+  @ApiZodQuery(ListPlanAccessQuerySchema)
   async listMenuAccess(
     @Query(new ZodValidationPipe(ListPlanAccessQuerySchema))
     query: ListPlanAccessQueryDto,
@@ -42,6 +48,8 @@ export class PlansController {
 
   @Put("menu-access")
   @RequireAccess("plans", "update")
+  @ApiOperation({ summary: "Set plan menu access" })
+  @ApiZodBody(SetPlanMenuAccessSchema)
   async setMenuAccess(
     @Body(new ZodValidationPipe(SetPlanMenuAccessSchema))
     body: SetPlanMenuAccessDto,
@@ -52,6 +60,8 @@ export class PlansController {
 
   @Patch("menu-access/:id")
   @RequireAccess("plans", "update")
+  @ApiOperation({ summary: "Update plan menu access" })
+  @ApiZodBody(UpdatePlanAccessSchema)
   async updateMenuAccess(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(UpdatePlanAccessSchema))
@@ -63,6 +73,8 @@ export class PlansController {
 
   @Get("action-access")
   @RequireAccess("plans", "view")
+  @ApiOperation({ summary: "List plan action access" })
+  @ApiZodQuery(ListPlanAccessQuerySchema)
   async listActionAccess(
     @Query(new ZodValidationPipe(ListPlanAccessQuerySchema))
     query: ListPlanAccessQueryDto,
@@ -73,6 +85,8 @@ export class PlansController {
 
   @Put("action-access")
   @RequireAccess("plans", "update")
+  @ApiOperation({ summary: "Set plan action access" })
+  @ApiZodBody(SetPlanActionAccessSchema)
   async setActionAccess(
     @Body(new ZodValidationPipe(SetPlanActionAccessSchema))
     body: SetPlanActionAccessDto,
@@ -83,6 +97,8 @@ export class PlansController {
 
   @Patch("action-access/:id")
   @RequireAccess("plans", "update")
+  @ApiOperation({ summary: "Update plan action access" })
+  @ApiZodBody(UpdatePlanAccessSchema)
   async updateActionAccess(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(UpdatePlanAccessSchema))
@@ -93,6 +109,8 @@ export class PlansController {
   }
 
   @Get("check")
+  @ApiOperation({ summary: "Check plan access" })
+  @ApiZodQuery(PlanCheckQuerySchema)
   async check(
     @Query(new ZodValidationPipe(PlanCheckQuerySchema))
     query: PlanCheckQueryDto,
@@ -103,6 +121,7 @@ export class PlansController {
 
   @Get("comparison")
   @RequireAccess("plans", "view")
+  @ApiOperation({ summary: "Plan comparison" })
   async comparison() {
     const data = await this.plans.comparison();
     return { data };

@@ -9,17 +9,21 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import type { AuthUser } from "@/contracts";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { MarketplaceGrabService } from "./marketplace-grab.service";
 
+@ApiTags("Marketplace Grab")
+@ApiBearerAuth()
 @Controller("marketplace/grab")
 export class MarketplaceGrabController {
   constructor(private readonly service: MarketplaceGrabService) {}
 
   @Get("accounts")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List Grab accounts" })
   async list(@CurrentUser() user: AuthUser) {
     if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     const accounts = await this.service.listAccounts(user.companyId);
@@ -28,6 +32,7 @@ export class MarketplaceGrabController {
 
   @Post("accounts")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Create Grab account" })
   async create(
     @CurrentUser() user: AuthUser,
     @Body()
@@ -45,6 +50,7 @@ export class MarketplaceGrabController {
 
   @Delete("accounts/:id")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Delete Grab account" })
   async remove(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -56,6 +62,7 @@ export class MarketplaceGrabController {
 
   @Post("accounts/:id/sync")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Sync Grab account data" })
   async sync(
     @Param("id") id: string,
     @Body() body: { dateFrom?: string; dateTo?: string },
@@ -66,6 +73,7 @@ export class MarketplaceGrabController {
 
   @Get("daily-reports")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List Grab daily reports" })
   async dailyReports(
     @CurrentUser() user: AuthUser,
     @Query("accountId") accountId?: string,
@@ -85,6 +93,7 @@ export class MarketplaceGrabController {
 
   @Get("orders")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List Grab orders" })
   async orders(
     @CurrentUser() user: AuthUser,
     @Query("accountId") accountId?: string,

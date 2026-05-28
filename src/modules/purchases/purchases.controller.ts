@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   ClosePurchaseSchema,
   CreatePurchaseSchema,
@@ -27,12 +28,15 @@ import {
 } from "./dto/purchases.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { PurchasesService } from "./purchases.service";
 
+@ApiTags("Purchases")
+@ApiBearerAuth()
 @Controller("purchases")
 @UseGuards(AccessGuard)
 export class PurchasesController {
@@ -40,6 +44,8 @@ export class PurchasesController {
 
   @Get()
   @RequireAccess("purchases", "view")
+  @ApiOperation({ summary: "List purchases" })
+  @ApiZodQuery(ListPurchasesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListPurchasesQuerySchema))
@@ -51,6 +57,8 @@ export class PurchasesController {
 
   @Get("summary")
   @RequireAccess("purchases", "view")
+  @ApiOperation({ summary: "Purchases summary" })
+  @ApiZodQuery(ListPurchasesQuerySchema)
   async summary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListPurchasesQuerySchema))
@@ -64,6 +72,8 @@ export class PurchasesController {
   // status PO + receiving + completion). Akses guard pakai purchase-report.
   @Get("transaction-log")
   @RequireAccess("purchase-report", "view")
+  @ApiOperation({ summary: "List purchase transaction log" })
+  @ApiZodQuery(ListPurchaseTransactionLogQuerySchema)
   async transactionLog(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListPurchaseTransactionLogQuerySchema))
@@ -75,6 +85,7 @@ export class PurchasesController {
 
   @Get(":id")
   @RequireAccess("purchases", "view")
+  @ApiOperation({ summary: "Get purchase by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -85,6 +96,8 @@ export class PurchasesController {
 
   @Post()
   @RequireAccess("purchases", "create")
+  @ApiOperation({ summary: "Create purchase" })
+  @ApiZodBody(CreatePurchaseSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -96,6 +109,8 @@ export class PurchasesController {
 
   @Patch(":id")
   @RequireAccess("purchases", "update")
+  @ApiOperation({ summary: "Update purchase" })
+  @ApiZodBody(UpdatePurchaseSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -107,6 +122,8 @@ export class PurchasesController {
 
   @Patch(":id/status")
   @RequireAccess("purchases", "update")
+  @ApiOperation({ summary: "Update purchase status" })
+  @ApiZodBody(UpdatePurchaseStatusSchema)
   async updateStatus(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -125,6 +142,8 @@ export class PurchasesController {
 
   @Post(":id/receive")
   @RequireAccess("purchases", "receive")
+  @ApiOperation({ summary: "Receive purchase items" })
+  @ApiZodBody(ReceivePurchaseSchema)
   async receive(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -137,6 +156,8 @@ export class PurchasesController {
 
   @Post(":id/close")
   @RequireAccess("purchases", "receive")
+  @ApiOperation({ summary: "Close purchase" })
+  @ApiZodBody(ClosePurchaseSchema)
   async close(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -149,6 +170,7 @@ export class PurchasesController {
 
   @Delete(":id")
   @RequireAccess("purchases", "delete")
+  @ApiOperation({ summary: "Delete purchase" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

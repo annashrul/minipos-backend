@@ -6,6 +6,7 @@
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { Public } from "@/modules/auth/public.decorator";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { XenditEwalletService } from "./xendit-ewallet.service";
@@ -45,6 +46,8 @@ type XenditWebhookBody = {
   [k: string]: unknown;
 };
 
+@ApiTags("Payments Xendit Webhook")
+@ApiBearerAuth()
 @Controller("payments/xendit")
 export class XenditWebhookController {
   private readonly logger = new Logger(XenditWebhookController.name);
@@ -61,6 +64,7 @@ export class XenditWebhookController {
   @UseGuards(XenditWebhookGuard)
   @HttpCode(200)
   @Post("webhook")
+  @ApiOperation({ summary: "Xendit webhook callback" })
   async webhook(@Body() body: XenditWebhookBody): Promise<{ ok: true }> {
     // Determine event type. Xendit `qr.payment` / `qr.payment.succeeded` events
     // have `data.qr_code.reference_id` (or `data.reference_id`). Invoices use

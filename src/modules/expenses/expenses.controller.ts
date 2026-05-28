@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { type AuthUser } from "@/contracts";
 import {
   CreateExpenseSchema,
@@ -19,12 +20,15 @@ import {
   type UpdateExpenseDto,
 } from "./dto/expenses.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ExpensesService } from "./expenses.service";
 
+@ApiTags("Expenses")
+@ApiBearerAuth()
 @Controller("expenses")
 @UseGuards(AccessGuard)
 export class ExpensesController {
@@ -32,6 +36,8 @@ export class ExpensesController {
 
   @Get()
   @RequireAccess("expenses", "view")
+  @ApiOperation({ summary: "List expenses" })
+  @ApiZodQuery(ListExpensesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListExpensesQuerySchema))
@@ -43,6 +49,8 @@ export class ExpensesController {
 
   @Get("summary")
   @RequireAccess("expenses", "view")
+  @ApiOperation({ summary: "Expenses summary" })
+  @ApiZodQuery(ListExpensesQuerySchema)
   async summary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListExpensesQuerySchema))
@@ -54,6 +62,7 @@ export class ExpensesController {
 
   @Get("stats")
   @RequireAccess("expenses", "view")
+  @ApiOperation({ summary: "Expenses stats" })
   async stats(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -64,6 +73,7 @@ export class ExpensesController {
 
   @Get(":id")
   @RequireAccess("expenses", "view")
+  @ApiOperation({ summary: "Get expense by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -74,6 +84,8 @@ export class ExpensesController {
 
   @Post()
   @RequireAccess("expenses", "create")
+  @ApiOperation({ summary: "Create expense" })
+  @ApiZodBody(CreateExpenseSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -85,6 +97,8 @@ export class ExpensesController {
 
   @Patch(":id")
   @RequireAccess("expenses", "update")
+  @ApiOperation({ summary: "Update expense" })
+  @ApiZodBody(UpdateExpenseSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -96,6 +110,7 @@ export class ExpensesController {
 
   @Delete(":id")
   @RequireAccess("expenses", "delete")
+  @ApiOperation({ summary: "Delete expense" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

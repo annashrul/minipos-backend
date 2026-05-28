@@ -9,6 +9,7 @@
   Req,
   UnauthorizedException,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import type { RawBodyRequest } from "@nestjs/common";
 import type { Request } from "express";
 import { PrismaService } from "@/modules/prisma/prisma.service";
@@ -27,6 +28,8 @@ import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 //   POST /api/whatsapp/webhook/inbound
 //   POST /api/whatsapp/webhook/session
 @Public()
+@ApiTags("WhatsApp Webhook")
+@ApiBearerAuth()
 @Controller("whatsapp/webhook")
 export class WhatsappWebhookController {
   private readonly logger = new Logger(WhatsappWebhookController.name);
@@ -38,6 +41,7 @@ export class WhatsappWebhookController {
 
   @Post("inbound")
   @HttpCode(200)
+  @ApiOperation({ summary: "WhatsApp inbound webhook" })
   async inbound(
     @Req() req: RawBodyRequest<Request>,
     @Headers("x-wa-tenant-id") tenantId: string | undefined,
@@ -51,6 +55,7 @@ export class WhatsappWebhookController {
 
   @Post("session")
   @HttpCode(200)
+  @ApiOperation({ summary: "WhatsApp session webhook" })
   async session(
     @Req() req: RawBodyRequest<Request>,
     @Headers("x-wa-tenant-id") tenantId: string | undefined,

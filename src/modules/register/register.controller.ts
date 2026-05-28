@@ -1,4 +1,5 @@
 ﻿import { Body, Controller, Post } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   ForgotPasswordSchema,
   RegisterCompanySchema,
@@ -12,15 +13,20 @@ import {
   type VerifyPhoneOtpDto,
 } from "./dto/register.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { Public } from "@/modules/auth/public.decorator";
 import { RegisterService } from "./register.service";
 
+@ApiTags("Register")
+@ApiBearerAuth()
 @Controller("register")
 export class RegisterController {
   constructor(private readonly register: RegisterService) {}
 
   @Public()
   @Post("company")
+  @ApiOperation({ summary: "Register company" })
+  @ApiZodBody(RegisterCompanySchema)
   async registerCompany(
     @Body(new ZodValidationPipe(RegisterCompanySchema))
     body: RegisterCompanyDto,
@@ -31,6 +37,8 @@ export class RegisterController {
 
   @Public()
   @Post("verify-phone")
+  @ApiOperation({ summary: "Verify phone OTP" })
+  @ApiZodBody(VerifyPhoneOtpSchema)
   async verifyPhoneOtp(
     @Body(new ZodValidationPipe(VerifyPhoneOtpSchema))
     body: VerifyPhoneOtpDto,
@@ -41,6 +49,8 @@ export class RegisterController {
 
   @Public()
   @Post("resend-otp")
+  @ApiOperation({ summary: "Resend phone OTP" })
+  @ApiZodBody(ResendPhoneOtpSchema)
   async resendPhoneOtp(
     @Body(new ZodValidationPipe(ResendPhoneOtpSchema))
     body: ResendPhoneOtpDto,
@@ -52,6 +62,7 @@ export class RegisterController {
   /** Helper untuk login page: lookup phone by email, lalu kirim OTP. */
   @Public()
   @Post("resend-otp-by-email")
+  @ApiOperation({ summary: "Resend OTP by email lookup" })
   async resendOtpByEmail(@Body() body: { email?: string }) {
     const data = await this.register.resendOtpByEmail(body?.email ?? "");
     return { data };
@@ -59,6 +70,8 @@ export class RegisterController {
 
   @Public()
   @Post("forgot-password")
+  @ApiOperation({ summary: "Forgot password (request reset email)" })
+  @ApiZodBody(ForgotPasswordSchema)
   async forgotPassword(
     @Body(new ZodValidationPipe(ForgotPasswordSchema))
     body: ForgotPasswordDto,
@@ -69,6 +82,8 @@ export class RegisterController {
 
   @Public()
   @Post("reset-password")
+  @ApiOperation({ summary: "Reset password" })
+  @ApiZodBody(ResetPasswordSchema)
   async resetPassword(
     @Body(new ZodValidationPipe(ResetPasswordSchema))
     body: ResetPasswordDto,

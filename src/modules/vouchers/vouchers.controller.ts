@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   GenerateVouchersSchema,
   ListVouchersQuerySchema,
@@ -17,11 +18,14 @@ import {
   type RedeemVoucherDto,
 } from "./dto/vouchers.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { VouchersService } from "./vouchers.service";
 
+@ApiTags("Vouchers")
+@ApiBearerAuth()
 @Controller("vouchers")
 @UseGuards(AccessGuard)
 export class VouchersController {
@@ -29,6 +33,8 @@ export class VouchersController {
 
   @Get()
   @RequireAccess("vouchers", "view")
+  @ApiOperation({ summary: "List vouchers" })
+  @ApiZodQuery(ListVouchersQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListVouchersQuerySchema))
@@ -40,6 +46,7 @@ export class VouchersController {
 
   @Get("by-code/:code")
   @RequireAccess("vouchers", "view")
+  @ApiOperation({ summary: "Get voucher by code" })
   async findByCode(
     @CurrentCompany() companyId: string,
     @Param("code") code: string,
@@ -50,6 +57,7 @@ export class VouchersController {
 
   @Get(":id")
   @RequireAccess("vouchers", "view")
+  @ApiOperation({ summary: "Get voucher by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -60,6 +68,8 @@ export class VouchersController {
 
   @Post("generate")
   @RequireAccess("vouchers", "generate")
+  @ApiOperation({ summary: "Generate vouchers" })
+  @ApiZodBody(GenerateVouchersSchema)
   async generate(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(GenerateVouchersSchema))
@@ -71,6 +81,8 @@ export class VouchersController {
 
   @Post(":id/redeem")
   @RequireAccess("vouchers", "redeem")
+  @ApiOperation({ summary: "Redeem voucher" })
+  @ApiZodBody(RedeemVoucherSchema)
   async redeem(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -83,6 +95,7 @@ export class VouchersController {
 
   @Delete(":id")
   @RequireAccess("vouchers", "delete")
+  @ApiOperation({ summary: "Delete voucher" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

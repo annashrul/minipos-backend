@@ -7,6 +7,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AdjustStockSchema,
   ListBranchStockQuerySchema,
@@ -19,12 +20,15 @@ import {
 } from "./dto/stock.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { StockService } from "./stock.service";
 
+@ApiTags("Stock")
+@ApiBearerAuth()
 @Controller("stock")
 @UseGuards(AccessGuard)
 export class StockController {
@@ -32,6 +36,8 @@ export class StockController {
 
   @Get("movements")
   @RequireAccess("stock", "view")
+  @ApiOperation({ summary: "List stock movements" })
+  @ApiZodQuery(ListStockMovementsQuerySchema)
   async listMovements(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListStockMovementsQuerySchema))
@@ -43,6 +49,7 @@ export class StockController {
 
   @Get("movements/summary")
   @RequireAccess("stock", "view")
+  @ApiOperation({ summary: "Stock movements summary" })
   async movementSummary(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -53,6 +60,8 @@ export class StockController {
 
   @Get("branch")
   @RequireAccess("stock", "view")
+  @ApiOperation({ summary: "List stock by branch" })
+  @ApiZodQuery(ListBranchStockQuerySchema)
   async listBranchStock(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListBranchStockQuerySchema))
@@ -64,6 +73,8 @@ export class StockController {
 
   @Post("adjust")
   @RequireAccess("stock", "update")
+  @ApiOperation({ summary: "Adjust stock" })
+  @ApiZodBody(AdjustStockSchema)
   async adjust(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -75,6 +86,7 @@ export class StockController {
 
   @Get("by-product/:productId")
   @RequireAccess("stock", "view")
+  @ApiOperation({ summary: "Get stock by product" })
   async byProduct(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -85,6 +97,8 @@ export class StockController {
 
   @Get("card")
   @RequireAccess("stock", "view")
+  @ApiOperation({ summary: "Get stock card" })
+  @ApiZodQuery(StockCardQuerySchema)
   async stockCard(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(StockCardQuerySchema)) query: StockCardQueryDto,

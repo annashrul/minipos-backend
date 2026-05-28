@@ -7,9 +7,11 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { z } from "zod";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AuthService } from "./auth.service";
 import { CurrentUser } from "./current-user.decorator";
 import { Public } from "./public.decorator";
@@ -36,6 +38,8 @@ const checkAccessSchema = z.object({
   action: z.string().min(1).default("view"),
 });
 
+@ApiTags("Auth")
+@ApiBearerAuth()
 @Controller("auth")
 @UseGuards(AccessGuard)
 export class AuthController {
@@ -43,6 +47,8 @@ export class AuthController {
 
   @Public()
   @Post("login")
+  @ApiOperation({ summary: "Login" })
+  @ApiZodBody(loginSchema)
   async login(@Body(new ZodValidationPipe(loginSchema)) body: z.infer<typeof loginSchema>) {
     const result = await this.auth.login(body.email, body.password);
     return { data: result };
@@ -50,6 +56,8 @@ export class AuthController {
 
   @Public()
   @Post("login-with-token")
+  @ApiOperation({ summary: "Login with token" })
+  @ApiZodBody(loginWithTokenSchema)
   async loginWithToken(
     @Body(new ZodValidationPipe(loginWithTokenSchema))
     body: z.infer<typeof loginWithTokenSchema>,
@@ -59,6 +67,8 @@ export class AuthController {
   }
 
   @Get("check-access")
+  @ApiOperation({ summary: "Check access permission" })
+  @ApiZodQuery(checkAccessSchema)
   async checkAccess(
     @CurrentUser() user: AuthUser,
     @Query(new ZodValidationPipe(checkAccessSchema)) q: z.infer<typeof checkAccessSchema>,
@@ -69,6 +79,8 @@ export class AuthController {
 
   @Public()
   @Post("dev-token")
+  @ApiOperation({ summary: "Generate development token" })
+  @ApiZodBody(devTokenSchema)
   devToken(
     @Body(new ZodValidationPipe(devTokenSchema)) body: z.infer<typeof devTokenSchema>,
   ) {

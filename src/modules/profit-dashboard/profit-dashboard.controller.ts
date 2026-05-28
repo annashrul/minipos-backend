@@ -1,4 +1,5 @@
 ﻿import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   MarginDistributionQuerySchema,
   ProfitByBranchQuerySchema,
@@ -14,11 +15,14 @@ import {
   type ProfitTrendQueryDto,
 } from "./dto/profit-dashboard.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompanyOrNull } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ProfitDashboardService } from "./profit-dashboard.service";
 
+@ApiTags("Profit Dashboard")
+@ApiBearerAuth()
 @Controller("profit-dashboard")
 @UseGuards(AccessGuard)
 export class ProfitDashboardController {
@@ -26,6 +30,8 @@ export class ProfitDashboardController {
 
   @Get("overview")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Profit overview" })
+  @ApiZodQuery(ProfitOverviewQuerySchema)
   async overview(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(ProfitOverviewQuerySchema))
@@ -41,6 +47,8 @@ export class ProfitDashboardController {
 
   @Get("by-category")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Profit by category" })
+  @ApiZodQuery(ProfitByCategoryQuerySchema)
   async byCategory(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(ProfitByCategoryQuerySchema))
@@ -56,6 +64,8 @@ export class ProfitDashboardController {
 
   @Get("by-product")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Profit by product" })
+  @ApiZodQuery(ProfitByProductQuerySchema)
   async byProduct(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(ProfitByProductQuerySchema))
@@ -73,6 +83,8 @@ export class ProfitDashboardController {
 
   @Get("by-branch")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Profit by branch" })
+  @ApiZodQuery(ProfitByBranchQuerySchema)
   async byBranch(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(ProfitByBranchQuerySchema))
@@ -84,6 +96,8 @@ export class ProfitDashboardController {
 
   @Get("trend")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Profit trend" })
+  @ApiZodQuery(ProfitTrendQuerySchema)
   async trend(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(ProfitTrendQuerySchema))
@@ -99,6 +113,8 @@ export class ProfitDashboardController {
 
   @Get("margin-distribution")
   @RequireAccess("profit-dashboard", "view")
+  @ApiOperation({ summary: "Margin distribution" })
+  @ApiZodQuery(MarginDistributionQuerySchema)
   async marginDistribution(
     @CurrentCompanyOrNull() companyId: string | null,
     @Query(new ZodValidationPipe(MarginDistributionQuerySchema))

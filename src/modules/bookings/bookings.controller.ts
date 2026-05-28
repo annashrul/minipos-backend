@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateBookingSchema,
   ListBookingsQuerySchema,
@@ -21,12 +22,15 @@ import {
 } from "./dto/bookings.dto";
 import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { BookingsService } from "./bookings.service";
 
+@ApiTags("Bookings")
+@ApiBearerAuth()
 @Controller("bookings")
 @UseGuards(AccessGuard)
 export class BookingsController {
@@ -34,6 +38,8 @@ export class BookingsController {
 
   @Get()
   @RequireAccess("bookings", "view")
+  @ApiOperation({ summary: "List bookings" })
+  @ApiZodQuery(ListBookingsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListBookingsQuerySchema))
@@ -45,6 +51,7 @@ export class BookingsController {
 
   @Get("stats")
   @RequireAccess("bookings", "view")
+  @ApiOperation({ summary: "Booking statistics" })
   async stats(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -65,6 +72,7 @@ export class BookingsController {
 
   @Get(":id")
   @RequireAccess("bookings", "view")
+  @ApiOperation({ summary: "Get booking by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -75,6 +83,8 @@ export class BookingsController {
 
   @Post()
   @RequireAccess("bookings", "create")
+  @ApiOperation({ summary: "Create booking" })
+  @ApiZodBody(CreateBookingSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -86,6 +96,8 @@ export class BookingsController {
 
   @Patch(":id")
   @RequireAccess("bookings", "update")
+  @ApiOperation({ summary: "Update booking" })
+  @ApiZodBody(UpdateBookingSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -97,6 +109,8 @@ export class BookingsController {
 
   @Patch(":id/transition")
   @RequireAccess("bookings", "update")
+  @ApiOperation({ summary: "Transition booking status" })
+  @ApiZodBody(TransitionBookingStatusSchema)
   async transition(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -109,6 +123,7 @@ export class BookingsController {
 
   @Delete(":id")
   @RequireAccess("bookings", "delete")
+  @ApiOperation({ summary: "Delete booking" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

@@ -10,6 +10,7 @@
   Res,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import type { Response } from "express";
 import type { AuthUser } from "@/contracts";
 import { AccessGuard } from "@/modules/auth/access.guard";
@@ -17,6 +18,8 @@ import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { Public } from "@/modules/auth/public.decorator";
 import { MarketplaceShopeeService } from "./marketplace-shopee.service";
 
+@ApiTags("Marketplace Shopee")
+@ApiBearerAuth()
 @Controller("marketplace/shopee")
 export class MarketplaceShopeeController {
   constructor(private readonly service: MarketplaceShopeeService) {}
@@ -28,6 +31,7 @@ export class MarketplaceShopeeController {
    */
   @Get("authorize-url")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Get Shopee OAuth authorize URL" })
   authorize(@CurrentUser() user: AuthUser) {
     if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     // Pass companyId di state supaya callback (yang Public) tau owner-nya.
@@ -48,6 +52,7 @@ export class MarketplaceShopeeController {
    */
   @Get("callback")
   @Public()
+  @ApiOperation({ summary: "Shopee OAuth callback" })
   async callback(
     @Query("code") code: string,
     @Query("shop_id") shopId: string,
@@ -96,6 +101,7 @@ export class MarketplaceShopeeController {
 
   @Get("accounts")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List Shopee accounts" })
   async listAccounts(@CurrentUser() user: AuthUser) {
     if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.listAccounts(user.companyId) };
@@ -103,6 +109,7 @@ export class MarketplaceShopeeController {
 
   @Delete("accounts/:id")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Disconnect Shopee account" })
   async disconnect(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -114,6 +121,7 @@ export class MarketplaceShopeeController {
 
   @Post("accounts/:id/products")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Fetch Shopee account products" })
   async fetchProducts(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -132,6 +140,7 @@ export class MarketplaceShopeeController {
    */
   @Post("connect-via-browser")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Connect Shopee via Playwright browser" })
   async connectViaBrowser(@CurrentUser() user: AuthUser) {
     if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     try {
@@ -163,6 +172,7 @@ export class MarketplaceShopeeController {
    */
   @Post("connect-via-cookie")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Connect Shopee via cookie session" })
   async connectViaCookie(
     @CurrentUser() user: AuthUser,
     @Body() body: { cookie?: string; userAgent?: string },
@@ -184,6 +194,7 @@ export class MarketplaceShopeeController {
    */
   @Post("accounts/:id/verify")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Verify Shopee account connection" })
   async verifyConnection(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -201,6 +212,7 @@ export class MarketplaceShopeeController {
    */
   @Post("accounts/:id/scraping-tokens")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Set Shopee scraping tokens" })
   async setScrapingTokens(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -233,6 +245,7 @@ export class MarketplaceShopeeController {
    */
   @Get("accounts/:id/items")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List cached Shopee items" })
   async listItems(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -246,6 +259,7 @@ export class MarketplaceShopeeController {
    */
   @Post("items/:itemId/link")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Link Shopee item to product" })
   async linkItem(
     @CurrentUser() user: AuthUser,
     @Param("itemId") itemId: string,
@@ -260,6 +274,7 @@ export class MarketplaceShopeeController {
 
   @Post("items/:itemId/unlink")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Unlink Shopee item from product" })
   async unlinkItem(
     @CurrentUser() user: AuthUser,
     @Param("itemId") itemId: string,
@@ -275,6 +290,7 @@ export class MarketplaceShopeeController {
    */
   @Post("items/:itemId/push-stock")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Push stock to Shopee item" })
   async pushStock(
     @CurrentUser() user: AuthUser,
     @Param("itemId") itemId: string,
@@ -298,6 +314,7 @@ export class MarketplaceShopeeController {
    */
   @Get("linked-product-ids")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "List Shopee linked product IDs" })
   async getLinkedProductIds(@CurrentUser() user: AuthUser) {
     if (!user.companyId) throw new BadRequestException("Tidak ada perusahaan");
     return { data: await this.service.getLinkedProductIds(user.companyId) };
@@ -309,6 +326,7 @@ export class MarketplaceShopeeController {
    */
   @Post("products/:productId/quick-update-stock")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Quick update branch stock and push to Shopee" })
   async quickUpdateStock(
     @CurrentUser() user: AuthUser,
     @Param("productId") productId: string,
@@ -334,6 +352,7 @@ export class MarketplaceShopeeController {
    */
   @Get("products/:productId/link-status")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Get product Shopee link status" })
   async getProductLinkStatus(
     @CurrentUser() user: AuthUser,
     @Param("productId") productId: string,
@@ -350,6 +369,7 @@ export class MarketplaceShopeeController {
    */
   @Post("products/:productId/push-stock-from-branch")
   @UseGuards(AccessGuard)
+  @ApiOperation({ summary: "Push product branch stock to Shopee" })
   async pushStockFromBranch(
     @CurrentUser() user: AuthUser,
     @Param("productId") productId: string,

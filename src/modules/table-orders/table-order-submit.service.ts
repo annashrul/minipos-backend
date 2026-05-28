@@ -201,11 +201,10 @@ export class TableOrderSubmitService {
             customerPhone: true,
           },
         });
-      } else if (session.status === "AWAITING_PAYMENT") {
-        throw new BadRequestException(
-          "Sesi sedang menunggu pembayaran — tidak bisa tambah order",
-        );
       } else {
+        // NOTE: Flow baru — customer boleh tambah order kapan saja walaupun
+        // batch sebelumnya sudah dibayar (multiple checkout per session).
+        // Status AWAITING_PAYMENT tidak lagi blok submit.
         // Backfill customer info if previously empty
         if (
           (!session.customerName && dto.customerName) ||
@@ -221,23 +220,131 @@ export class TableOrderSubmitService {
         }
       }
 
-      const order = await tx.tableOrder.create({
-        data: {
+      // Cari order PENDING_APPROVAL yang BELUM dibayar di session ini
+      // milik DEVICE yang sama. Kalau ada → merge items ke order tsb
+      // (instead of create baru), supaya customer ga punya 2 card
+      // transaksi yang sama-sama unpaid. Per-device match supaya orders
+      // dari device lain (mis. teman seorang patungan) ga ke-merge.
+      // Order yang sudah ke-cover PAID payment di-skip (mereka kunci).
+      const existingPending = await tx.tableOrder.findMany({
+        where: {
           sessionId: session.id,
-          tableId: table.id,
-          branchId: table.branch!.id,
           status: "PENDING_APPROVAL",
-          total,
-          customerNote: dto.customerNote ?? null,
-          items: { create: itemsData },
+          ...(dto.deviceId ? { deviceId: dto.deviceId } : {}),
         },
-        select: ORDER_SELECT,
+        select: {
+          id: true,
+          total: true,
+          customerNote: true,
+          createdAt: true,
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              productName: true,
+              qty: true,
+              unitPrice: true,
+              subtotal: true,
+              note: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
       });
+      const paidPayments = await tx.tableSessionPayment.findMany({
+        where: { sessionId: session.id, status: "PAID" },
+        select: { rawPayload: true },
+      });
+      const coveredOrderIds = new Set<string>();
+      for (const p of paidPayments) {
+        const raw = p.rawPayload as Record<string, unknown> | null;
+        const ids = raw?.["coveredOrderIds"];
+        if (Array.isArray(ids)) {
+          for (const id of ids) if (typeof id === "string") coveredOrderIds.add(id);
+        }
+      }
+      // Ambil unpaid pending paling baru (kalau ada >1 unpaid, merge ke
+      // yang terakhir dibuat — paling natural buat customer).
+      const targetExisting = existingPending.find((o) => !coveredOrderIds.has(o.id));
 
-      await tx.tableSession.update({
-        where: { id: session.id },
-        data: { subtotal: { increment: total } },
-      });
+      let order;
+      if (targetExisting) {
+        // ── MERGE PATH ─────────────────────────────────────────────
+        // Dedupe items by productId + productName + unitPrice + note.
+        // Match → increment qty + subtotal. Beda → tambah row baru.
+        let totalDelta = 0;
+        for (const newItem of itemsData) {
+          const match = targetExisting.items.find(
+            (e) =>
+              e.productId === newItem.productId &&
+              e.productName === newItem.productName &&
+              e.unitPrice === newItem.unitPrice &&
+              (e.note ?? "") === (newItem.note ?? ""),
+          );
+          if (match) {
+            const newQty = match.qty + newItem.qty;
+            const newSubtotal = newQty * newItem.unitPrice;
+            const delta = newSubtotal - match.subtotal;
+            await tx.tableOrderItem.update({
+              where: { id: match.id },
+              data: { qty: newQty, subtotal: newSubtotal },
+            });
+            totalDelta += delta;
+          } else {
+            await tx.tableOrderItem.create({
+              data: {
+                orderId: targetExisting.id,
+                productId: newItem.productId,
+                productName: newItem.productName,
+                qty: newItem.qty,
+                unitPrice: newItem.unitPrice,
+                subtotal: newItem.subtotal,
+                note: newItem.note,
+              },
+            });
+            totalDelta += newItem.subtotal;
+          }
+        }
+        // Update order total + customerNote (gabung note kalau ada baru)
+        const mergedNote = dto.customerNote
+          ? targetExisting.customerNote
+            ? `${targetExisting.customerNote}\n${dto.customerNote}`
+            : dto.customerNote
+          : targetExisting.customerNote;
+        order = await tx.tableOrder.update({
+          where: { id: targetExisting.id },
+          data: {
+            total: { increment: totalDelta },
+            customerNote: mergedNote,
+            updatedAt: new Date(),
+          },
+          select: ORDER_SELECT,
+        });
+        await tx.tableSession.update({
+          where: { id: session.id },
+          data: { subtotal: { increment: totalDelta } },
+        });
+      } else {
+        // ── CREATE NEW PATH ───────────────────────────────────────
+        order = await tx.tableOrder.create({
+          data: {
+            sessionId: session.id,
+            tableId: table.id,
+            branchId: table.branch!.id,
+            status: "PENDING_APPROVAL",
+            total,
+            customerNote: dto.customerNote ?? null,
+            deviceId: dto.deviceId ?? null,
+            customerPhone: dto.customerPhone ?? null,
+            items: { create: itemsData },
+          },
+          select: ORDER_SELECT,
+        });
+        await tx.tableSession.update({
+          where: { id: session.id },
+          data: { subtotal: { increment: total } },
+        });
+      }
 
       // Mark table OCCUPIED
       if (table.status === "AVAILABLE") {

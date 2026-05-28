@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateBundleSchema,
   ListBundlesQuerySchema,
@@ -18,11 +19,14 @@ import {
   type UpdateBundleDto,
 } from "./dto/bundles.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { BundlesService } from "./bundles.service";
 
+@ApiTags("Bundles")
+@ApiBearerAuth()
 @Controller("bundles")
 @UseGuards(AccessGuard)
 export class BundlesController {
@@ -30,6 +34,8 @@ export class BundlesController {
 
   @Get()
   @RequireAccess("bundles", "view")
+  @ApiOperation({ summary: "List bundles" })
+  @ApiZodQuery(ListBundlesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListBundlesQuerySchema))
@@ -41,6 +47,7 @@ export class BundlesController {
 
   @Get(":id")
   @RequireAccess("bundles", "view")
+  @ApiOperation({ summary: "Get bundle by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -51,6 +58,8 @@ export class BundlesController {
 
   @Post()
   @RequireAccess("bundles", "create")
+  @ApiOperation({ summary: "Create bundle" })
+  @ApiZodBody(CreateBundleSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateBundleSchema)) body: CreateBundleDto,
@@ -61,6 +70,8 @@ export class BundlesController {
 
   @Patch(":id")
   @RequireAccess("bundles", "update")
+  @ApiOperation({ summary: "Update bundle" })
+  @ApiZodBody(UpdateBundleSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -72,6 +83,7 @@ export class BundlesController {
 
   @Post("bulk-delete")
   @RequireAccess("bundles", "delete")
+  @ApiOperation({ summary: "Bulk delete bundles" })
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body() body: { ids: string[] },
@@ -82,6 +94,7 @@ export class BundlesController {
 
   @Delete(":id")
   @RequireAccess("bundles", "delete")
+  @ApiOperation({ summary: "Delete bundle" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

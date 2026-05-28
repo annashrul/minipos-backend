@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   BulkDeleteGoodsReceiptsSchema,
   GoodsReceiptStatsQuerySchema,
@@ -17,11 +18,14 @@ import {
   type ListGoodsReceiptsQueryDto,
 } from "./dto/goods-receipts.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { GoodsReceiptsService } from "./goods-receipts.service";
 
+@ApiTags("Goods Receipts")
+@ApiBearerAuth()
 @Controller("goods-receipts")
 @UseGuards(AccessGuard)
 export class GoodsReceiptsController {
@@ -29,6 +33,8 @@ export class GoodsReceiptsController {
 
   @Get()
   @RequireAccess("goods-receipts", "view")
+  @ApiOperation({ summary: "List goods receipts" })
+  @ApiZodQuery(ListGoodsReceiptsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListGoodsReceiptsQuerySchema))
@@ -40,6 +46,8 @@ export class GoodsReceiptsController {
 
   @Get("stats")
   @RequireAccess("goods-receipts", "view")
+  @ApiOperation({ summary: "Goods receipts stats" })
+  @ApiZodQuery(GoodsReceiptStatsQuerySchema)
   async stats(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(GoodsReceiptStatsQuerySchema))
@@ -51,6 +59,7 @@ export class GoodsReceiptsController {
 
   @Get("by-po/:poId")
   @RequireAccess("goods-receipts", "view")
+  @ApiOperation({ summary: "Get goods receipts by purchase order" })
   async byPo(
     @CurrentCompany() companyId: string,
     @Param("poId") poId: string,
@@ -61,6 +70,7 @@ export class GoodsReceiptsController {
 
   @Get(":id")
   @RequireAccess("goods-receipts", "view")
+  @ApiOperation({ summary: "Get goods receipt by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -71,6 +81,8 @@ export class GoodsReceiptsController {
 
   @Post("bulk-delete")
   @RequireAccess("goods-receipts", "delete")
+  @ApiOperation({ summary: "Bulk delete goods receipts" })
+  @ApiZodBody(BulkDeleteGoodsReceiptsSchema)
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(BulkDeleteGoodsReceiptsSchema))
@@ -82,6 +94,7 @@ export class GoodsReceiptsController {
 
   @Delete(":id")
   @RequireAccess("goods-receipts", "delete")
+  @ApiOperation({ summary: "Delete goods receipt" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

@@ -1,4 +1,5 @@
 ﻿import { Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   WhatsAppBaileysConnectBodySchema,
   WhatsAppBaileysSendReceiptBodySchema,
@@ -13,6 +14,7 @@ import {
 } from "./dto/whatsapp-receipt.dto";
 import { z } from "zod";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { WhatsappCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { WhatsappReceiptService } from "./whatsapp-receipt.service";
@@ -27,6 +29,8 @@ const WaServiceSetupBodySchema = z.object({
 });
 type WaServiceSetupBodyDto = z.infer<typeof WaServiceSetupBodySchema>;
 
+@ApiTags("WhatsApp Receipt")
+@ApiBearerAuth()
 @Controller("whatsapp-receipt")
 export class WhatsappReceiptController {
   constructor(private readonly receipt: WhatsappReceiptService) {}
@@ -34,6 +38,7 @@ export class WhatsappReceiptController {
   // ─── Setup wa-service credentials (per company) ────────────────
   @Get("setup")
   @RequireAccess("whatsapp-bot", "view")
+  @ApiOperation({ summary: "Get wa-service setup status" })
   async getSetup(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.getSetupStatus(companyId);
     return { data };
@@ -41,6 +46,8 @@ export class WhatsappReceiptController {
 
   @Post("setup")
   @RequireAccess("whatsapp-bot", "update")
+  @ApiOperation({ summary: "Configure wa-service credentials" })
+  @ApiZodBody(WaServiceSetupBodySchema)
   async setup(
     @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WaServiceSetupBodySchema))
@@ -52,18 +59,22 @@ export class WhatsappReceiptController {
 
   @Delete("setup")
   @RequireAccess("whatsapp-bot", "update")
+  @ApiOperation({ summary: "Clear wa-service credentials" })
   async clearSetup(@WhatsappCompany() companyId: string) {
     await this.receipt.clearCredentials(companyId);
     return { data: { ok: true } };
   }
 
   @Get("baileys/session")
+  @ApiOperation({ summary: "Get Baileys session status" })
   async session(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.getSession(companyId);
     return { data };
   }
 
   @Post("baileys/connect")
+  @ApiOperation({ summary: "Connect Baileys session" })
+  @ApiZodBody(WhatsAppBaileysConnectBodySchema)
   async connect(
     @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysConnectBodySchema))
@@ -77,18 +88,22 @@ export class WhatsappReceiptController {
   }
 
   @Post("baileys/disconnect")
+  @ApiOperation({ summary: "Disconnect Baileys session" })
   async disconnect(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.disconnect(companyId);
     return { data };
   }
 
   @Post("baileys/logout")
+  @ApiOperation({ summary: "Logout Baileys session" })
   async logout(@WhatsappCompany() companyId: string) {
     const data = await this.receipt.logout(companyId);
     return { data };
   }
 
   @Post("baileys/send-text")
+  @ApiOperation({ summary: "Send WhatsApp text message" })
+  @ApiZodBody(WhatsAppBaileysSendTextBodySchema)
   async sendText(
     @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysSendTextBodySchema))
@@ -104,6 +119,8 @@ export class WhatsappReceiptController {
 
   @Post("baileys/send-receipt")
   @RequireAccess("transactions", "send_whatsapp")
+  @ApiOperation({ summary: "Send WhatsApp transaction receipt" })
+  @ApiZodBody(WhatsAppBaileysSendReceiptBodySchema)
   async sendReceipt(
     @WhatsappCompany() companyId: string,
     @Body(new ZodValidationPipe(WhatsAppBaileysSendReceiptBodySchema))
@@ -118,6 +135,7 @@ export class WhatsappReceiptController {
   }
 
   @Get("text/:transactionId")
+  @ApiOperation({ summary: "Generate receipt text for transaction" })
   async text(
     @WhatsappCompany() companyId: string,
     @Param(new ZodValidationPipe(WhatsAppReceiptTextParamsSchema))
@@ -131,6 +149,8 @@ export class WhatsappReceiptController {
   }
 
   @Get("link")
+  @ApiOperation({ summary: "Generate WhatsApp receipt link" })
+  @ApiZodQuery(WhatsAppReceiptLinkQuerySchema)
   async link(
     @WhatsappCompany() companyId: string,
     @Query(new ZodValidationPipe(WhatsAppReceiptLinkQuerySchema))
@@ -145,6 +165,7 @@ export class WhatsappReceiptController {
   }
 
   @Get("messages")
+  @ApiOperation({ summary: "List WhatsApp messages" })
   async messages(
     @WhatsappCompany() companyId: string,
     @Query("limit") limitRaw?: string,

@@ -9,7 +9,9 @@ export class ProductSearchService {
     private readonly prisma: PrismaService,
   ) {}
 
-  private async computeRecipeStockByProduct(
+  // Public agar bisa dipakai dari module lain (table-orders public menu)
+  // tanpa duplikasi logic BOM expansion.
+  async computeRecipeStockByProduct(
     companyId: string,
     productIds: string[],
     branchId?: string,

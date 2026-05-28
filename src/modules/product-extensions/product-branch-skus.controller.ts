@@ -7,16 +7,20 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   ReplaceProductBranchSkusSchema,
   type ReplaceProductBranchSkusDto,
 } from "./dto/product-branch-skus.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ProductExtensionsService } from "./product-extensions.service";
 
+@ApiTags("Product Branch SKUs")
+@ApiBearerAuth()
 @Controller("products/:productId/branch-skus")
 @UseGuards(AccessGuard)
 export class ProductBranchSkusController {
@@ -24,6 +28,7 @@ export class ProductBranchSkusController {
 
   @Get()
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List product branch SKUs" })
   async list(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -34,6 +39,8 @@ export class ProductBranchSkusController {
 
   @Put()
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Replace product branch SKUs" })
+  @ApiZodBody(ReplaceProductBranchSkusSchema)
   async replace(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -52,6 +59,7 @@ export class ProductBranchSkusController {
   // Query: ?branchId=X&unitId=Y&variantId=Z (unitId/variantId optional).
   @Get("lookup")
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Lookup branch SKU by unit/variant" })
   async lookup(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,

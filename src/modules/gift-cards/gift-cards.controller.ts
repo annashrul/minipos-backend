@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { type AuthUser } from "@/contracts";
 import {
   CreateGiftCardSchema,
@@ -23,12 +24,15 @@ import {
   type UpdateGiftCardDto,
 } from "./dto/gift-cards.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { GiftCardsService } from "./gift-cards.service";
 
+@ApiTags("Gift Cards")
+@ApiBearerAuth()
 @Controller("gift-cards")
 @UseGuards(AccessGuard)
 export class GiftCardsController {
@@ -36,6 +40,8 @@ export class GiftCardsController {
 
   @Get()
   @RequireAccess("gift-cards", "view")
+  @ApiOperation({ summary: "List gift cards" })
+  @ApiZodQuery(ListGiftCardsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListGiftCardsQuerySchema))
@@ -47,6 +53,7 @@ export class GiftCardsController {
 
   @Get("stats")
   @RequireAccess("gift-cards", "view")
+  @ApiOperation({ summary: "Gift card stats" })
   async stats(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -57,6 +64,7 @@ export class GiftCardsController {
 
   @Get("by-code/:code")
   @RequireAccess("gift-cards", "view")
+  @ApiOperation({ summary: "Get gift card by code" })
   async findByCode(
     @CurrentCompany() companyId: string,
     @Param("code") code: string,
@@ -67,6 +75,7 @@ export class GiftCardsController {
 
   @Get(":id")
   @RequireAccess("gift-cards", "view")
+  @ApiOperation({ summary: "Get gift card by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -77,6 +86,8 @@ export class GiftCardsController {
 
   @Post()
   @RequireAccess("gift-cards", "create")
+  @ApiOperation({ summary: "Create gift card" })
+  @ApiZodBody(CreateGiftCardSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -89,6 +100,8 @@ export class GiftCardsController {
 
   @Post(":id/topup")
   @RequireAccess("gift-cards", "topup")
+  @ApiOperation({ summary: "Top up gift card" })
+  @ApiZodBody(TopupGiftCardSchema)
   async topup(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -101,6 +114,8 @@ export class GiftCardsController {
 
   @Post(":id/redeem")
   @RequireAccess("gift-cards", "redeem")
+  @ApiOperation({ summary: "Redeem gift card" })
+  @ApiZodBody(RedeemGiftCardSchema)
   async redeem(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -113,6 +128,8 @@ export class GiftCardsController {
 
   @Patch(":id")
   @RequireAccess("gift-cards", "update")
+  @ApiOperation({ summary: "Update gift card" })
+  @ApiZodBody(UpdateGiftCardSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -125,6 +142,7 @@ export class GiftCardsController {
 
   @Delete(":id")
   @RequireAccess("gift-cards", "delete")
+  @ApiOperation({ summary: "Delete gift card" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

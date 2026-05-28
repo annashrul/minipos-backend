@@ -15,6 +15,6 @@ import { ProductsService } from "./products.service";
     ProductsRepository,
     ProductAiService,
   ],
-  exports: [ProductsService],
+  exports: [ProductsService, ProductSearchService],
 })
 export class ProductsModule {}

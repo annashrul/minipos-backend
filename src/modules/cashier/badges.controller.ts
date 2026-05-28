@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AutoAwardBadgesSchema,
   CreateCashierBadgeSchema,
@@ -18,12 +19,15 @@ import {
 } from "./dto/cashier.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { CashierService } from "./cashier.service";
 
+@ApiTags("Cashier Badges")
+@ApiBearerAuth()
 @Controller("cashier/badges")
 @UseGuards(AccessGuard)
 export class CashierBadgesController {
@@ -31,6 +35,8 @@ export class CashierBadgesController {
 
   @Get()
   @RequireAccess("cashier-badges", "view")
+  @ApiOperation({ summary: "List cashier badges" })
+  @ApiZodQuery(ListCashierBadgesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -44,6 +50,8 @@ export class CashierBadgesController {
 
   @Post()
   @RequireAccess("cashier-badges", "create")
+  @ApiOperation({ summary: "Create cashier badge" })
+  @ApiZodBody(CreateCashierBadgeSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateCashierBadgeSchema))
@@ -55,6 +63,7 @@ export class CashierBadgesController {
 
   @Delete(":id")
   @RequireAccess("cashier-badges", "delete")
+  @ApiOperation({ summary: "Delete cashier badge" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -65,6 +74,8 @@ export class CashierBadgesController {
 
   @Post("auto-award")
   @RequireAccess("cashier-badges", "award")
+  @ApiOperation({ summary: "Auto-award eligible badges" })
+  @ApiZodBody(AutoAwardBadgesSchema)
   async autoAward(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(AutoAwardBadgesSchema))

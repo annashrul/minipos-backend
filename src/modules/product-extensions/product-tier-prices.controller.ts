@@ -9,6 +9,7 @@
   Put,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateTierPriceSchema,
   ReplaceTierPricesSchema,
@@ -18,11 +19,14 @@ import {
   type UpdateTierPriceDto,
 } from "./dto/product-extensions.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ProductExtensionsService } from "./product-extensions.service";
 
+@ApiTags("Product Tier Prices")
+@ApiBearerAuth()
 @Controller("products/:productId/tier-prices")
 @UseGuards(AccessGuard)
 export class ProductTierPricesController {
@@ -30,6 +34,7 @@ export class ProductTierPricesController {
 
   @Get()
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List product tier prices" })
   async list(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -40,6 +45,8 @@ export class ProductTierPricesController {
 
   @Post()
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Create product tier price" })
+  @ApiZodBody(CreateTierPriceSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -56,6 +63,8 @@ export class ProductTierPricesController {
 
   @Patch(":tierId")
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Update product tier price" })
+  @ApiZodBody(UpdateTierPriceSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -74,6 +83,7 @@ export class ProductTierPricesController {
 
   @Delete(":tierId")
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Delete product tier price" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -89,6 +99,8 @@ export class ProductTierPricesController {
 
   @Put()
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Replace product tier prices" })
+  @ApiZodBody(ReplaceTierPricesSchema)
   async replace(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,

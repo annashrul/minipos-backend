@@ -6,8 +6,10 @@
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { z } from "zod";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
@@ -87,6 +89,8 @@ const CreateVaSchema = z.object({
   description: z.string().optional(),
 });
 
+@ApiTags("Payments")
+@ApiBearerAuth()
 @Controller("payments")
 @UseGuards(AccessGuard)
 export class PaymentsController {
@@ -100,6 +104,8 @@ export class PaymentsController {
   /** Create Xendit invoice. Frontend redirect customer ke `paymentUrl`. */
   @Post("xendit/invoices")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Create Xendit invoice" })
+  @ApiZodBody(CreateInvoiceSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateInvoiceSchema))
@@ -125,6 +131,7 @@ export class PaymentsController {
   /** Polling status — frontend bisa pakai sambil menunggu webhook. */
   @Get("xendit/invoices/:id")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Get Xendit invoice status" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -136,6 +143,7 @@ export class PaymentsController {
   /** Force-sync dari Xendit (kalau webhook belum sampai). */
   @Post("xendit/invoices/:id/sync")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Force-sync Xendit invoice from provider" })
   async sync(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -147,6 +155,8 @@ export class PaymentsController {
   /** Create dynamic QR (QRIS) — UI pakai qr_string untuk render QR sendiri. */
   @Post("xendit/qr-codes")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Create Xendit QRIS code" })
+  @ApiZodBody(CreateQrSchema)
   async createQr(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateQrSchema))
@@ -174,6 +184,7 @@ export class PaymentsController {
   /** Polling status QR. */
   @Get("xendit/qr-codes/:id")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Get Xendit QRIS status" })
   async findQr(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -197,6 +208,8 @@ export class PaymentsController {
   /** Create E-Wallet charge — UI sendiri pilih channel (OVO/DANA/dll). */
   @Post("xendit/ewallet-charges")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Create Xendit e-wallet charge" })
+  @ApiZodBody(CreateEwalletSchema)
   async createEwallet(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateEwalletSchema))
@@ -232,6 +245,7 @@ export class PaymentsController {
   /** Polling status E-Wallet. */
   @Get("xendit/ewallet-charges/:id")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Get Xendit e-wallet status" })
   async findEwallet(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -260,6 +274,8 @@ export class PaymentsController {
   /** Create Closed Virtual Account (Bank Transfer). */
   @Post("xendit/virtual-accounts")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Create Xendit virtual account" })
+  @ApiZodBody(CreateVaSchema)
   async createVa(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateVaSchema))
@@ -291,6 +307,7 @@ export class PaymentsController {
   /** Polling status VA. */
   @Get("xendit/virtual-accounts/:id")
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Get Xendit virtual account status" })
   async findVa(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

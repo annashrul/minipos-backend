@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateTableSchema,
   ListTablesQuerySchema,
@@ -22,11 +23,14 @@ import {
   type UpdateTableStatusDto,
 } from "./dto/tables.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { TablesService } from "./tables.service";
 
+@ApiTags("Tables")
+@ApiBearerAuth()
 @Controller("tables")
 @UseGuards(AccessGuard)
 export class TablesController {
@@ -34,6 +38,8 @@ export class TablesController {
 
   @Get()
   @RequireAccess("tables", "view")
+  @ApiOperation({ summary: "List tables" })
+  @ApiZodQuery(ListTablesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListTablesQuerySchema))
@@ -45,6 +51,8 @@ export class TablesController {
 
   @Get("summary")
   @RequireAccess("tables", "view")
+  @ApiOperation({ summary: "Table summary" })
+  @ApiZodQuery(TableSummaryQuerySchema)
   async summary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(TableSummaryQuerySchema))
@@ -56,6 +64,7 @@ export class TablesController {
 
   @Get(":id")
   @RequireAccess("tables", "view")
+  @ApiOperation({ summary: "Get table by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -66,6 +75,8 @@ export class TablesController {
 
   @Post()
   @RequireAccess("tables", "create")
+  @ApiOperation({ summary: "Create table" })
+  @ApiZodBody(CreateTableSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateTableSchema)) body: CreateTableDto,
@@ -76,6 +87,8 @@ export class TablesController {
 
   @Patch(":id")
   @RequireAccess("tables", "update")
+  @ApiOperation({ summary: "Update table" })
+  @ApiZodBody(UpdateTableSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -87,6 +100,8 @@ export class TablesController {
 
   @Patch(":id/status")
   @RequireAccess("tables", "update")
+  @ApiOperation({ summary: "Update table status" })
+  @ApiZodBody(UpdateTableStatusSchema)
   async updateStatus(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -99,6 +114,7 @@ export class TablesController {
 
   @Delete(":id")
   @RequireAccess("tables", "delete")
+  @ApiOperation({ summary: "Delete table" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -109,6 +125,7 @@ export class TablesController {
 
   @Post(":id/qr-token")
   @RequireAccess("tables", "update")
+  @ApiOperation({ summary: "Generate table QR token" })
   async generateQrToken(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

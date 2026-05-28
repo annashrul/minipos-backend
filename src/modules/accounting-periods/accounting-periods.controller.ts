@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateAccountingPeriodSchema,
   ListAccountingPeriodsQuerySchema,
@@ -19,12 +20,15 @@ import {
 } from "./dto/accounting-periods.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { AccountingPeriodsService } from "./accounting-periods.service";
 
+@ApiTags("Accounting Periods")
+@ApiBearerAuth()
 @Controller("accounting-periods")
 @UseGuards(AccessGuard)
 export class AccountingPeriodsController {
@@ -32,6 +36,8 @@ export class AccountingPeriodsController {
 
   @Get()
   @RequireAccess("accounting-periods", "view")
+  @ApiOperation({ summary: "List accounting periods" })
+  @ApiZodQuery(ListAccountingPeriodsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListAccountingPeriodsQuerySchema))
@@ -43,6 +49,7 @@ export class AccountingPeriodsController {
 
   @Get("current")
   @RequireAccess("accounting-periods", "view")
+  @ApiOperation({ summary: "Get current accounting period" })
   async current(@CurrentCompany() companyId: string) {
     const data = await this.periods.findCurrent(companyId);
     return { data };
@@ -50,6 +57,7 @@ export class AccountingPeriodsController {
 
   @Get(":id")
   @RequireAccess("accounting-periods", "view")
+  @ApiOperation({ summary: "Get accounting period by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -60,6 +68,8 @@ export class AccountingPeriodsController {
 
   @Post()
   @RequireAccess("accounting-periods", "create")
+  @ApiOperation({ summary: "Create accounting period" })
+  @ApiZodBody(CreateAccountingPeriodSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateAccountingPeriodSchema))
@@ -71,6 +81,8 @@ export class AccountingPeriodsController {
 
   @Patch(":id")
   @RequireAccess("accounting-periods", "update")
+  @ApiOperation({ summary: "Update accounting period" })
+  @ApiZodBody(UpdateAccountingPeriodSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -83,6 +95,7 @@ export class AccountingPeriodsController {
 
   @Post(":id/close")
   @RequireAccess("accounting-periods", "close")
+  @ApiOperation({ summary: "Close accounting period" })
   async close(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -94,6 +107,7 @@ export class AccountingPeriodsController {
 
   @Post(":id/reopen")
   @RequireAccess("accounting-periods", "reopen")
+  @ApiOperation({ summary: "Reopen accounting period" })
   async reopen(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -104,6 +118,7 @@ export class AccountingPeriodsController {
 
   @Post(":id/lock")
   @RequireAccess("accounting-periods", "lock")
+  @ApiOperation({ summary: "Lock accounting period" })
   async lock(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -114,6 +129,7 @@ export class AccountingPeriodsController {
 
   @Delete(":id")
   @RequireAccess("accounting-periods", "delete")
+  @ApiOperation({ summary: "Delete accounting period" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

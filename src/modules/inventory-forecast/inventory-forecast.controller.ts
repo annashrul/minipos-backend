@@ -1,4 +1,5 @@
 ﻿import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AutoReorderQuerySchema,
   ForecastSummaryQuerySchema,
@@ -10,11 +11,14 @@ import {
   type ProductSalesTrendQueryDto,
 } from "./dto/inventory-forecast.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { InventoryForecastService } from "./inventory-forecast.service";
 
+@ApiTags("Inventory Forecast")
+@ApiBearerAuth()
 @Controller("inventory-forecast")
 @UseGuards(AccessGuard)
 export class InventoryForecastController {
@@ -22,6 +26,8 @@ export class InventoryForecastController {
 
   @Get("products")
   @RequireAccess("inventory-forecast", "view")
+  @ApiOperation({ summary: "Get inventory forecast for products" })
+  @ApiZodQuery(InventoryForecastQuerySchema)
   async products(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(InventoryForecastQuerySchema))
@@ -33,6 +39,8 @@ export class InventoryForecastController {
 
   @Get("summary")
   @RequireAccess("inventory-forecast", "view")
+  @ApiOperation({ summary: "Get forecast summary" })
+  @ApiZodQuery(ForecastSummaryQuerySchema)
   async summary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ForecastSummaryQuerySchema))
@@ -44,6 +52,8 @@ export class InventoryForecastController {
 
   @Get("sales-trend")
   @RequireAccess("inventory-forecast", "view")
+  @ApiOperation({ summary: "Get product sales trend" })
+  @ApiZodQuery(ProductSalesTrendQuerySchema)
   async salesTrend(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ProductSalesTrendQuerySchema))
@@ -55,6 +65,8 @@ export class InventoryForecastController {
 
   @Get("reorder-suggestions")
   @RequireAccess("inventory-forecast", "view")
+  @ApiOperation({ summary: "Generate auto reorder suggestions" })
+  @ApiZodQuery(AutoReorderQuerySchema)
   async reorderSuggestions(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AutoReorderQuerySchema))
@@ -66,6 +78,8 @@ export class InventoryForecastController {
 
   @Get("stockout-risk")
   @RequireAccess("inventory-forecast", "view")
+  @ApiOperation({ summary: "List products at stockout risk" })
+  @ApiZodQuery(InventoryForecastQuerySchema)
   async stockoutRisk(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(InventoryForecastQuerySchema))

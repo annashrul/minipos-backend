@@ -122,6 +122,15 @@ export async function cleanupStaleSessions(
 // Response mappers
 // ──────────────────────────────────────────────────────────────
 export function toOrderResponse(o: RawOrder): TableOrderResponse {
+  // Order dianggap PAID kalau id-nya tercatat di salah satu
+  // rawPayload.coveredOrderIds dari payment PAID di session ini.
+  // Backend yang nge-set coveredOrderIds saat payment go PAID.
+  const paidPayments = o.session?.payments ?? [];
+  const paid = paidPayments.some((p) => {
+    const raw = p.rawPayload as Record<string, unknown> | null;
+    const ids = raw?.["coveredOrderIds"];
+    return Array.isArray(ids) && ids.includes(o.id);
+  });
   return {
     id: o.id,
     sessionId: o.sessionId,
@@ -134,6 +143,9 @@ export function toOrderResponse(o: RawOrder): TableOrderResponse {
     approvedBy: o.approvedBy,
     approvedAt: o.approvedAt ? o.approvedAt.toISOString() : null,
     orderQueueId: o.orderQueueId,
+    paid,
+    deviceId: o.deviceId,
+    customerPhone: o.customerPhone,
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
     table: o.table

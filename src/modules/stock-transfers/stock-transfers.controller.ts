@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateStockTransferSchema,
   ListStockTransfersQuerySchema,
@@ -19,12 +20,15 @@ import {
 } from "./dto/stock-transfers.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { StockTransfersService } from "./stock-transfers.service";
 
+@ApiTags("Stock Transfers")
+@ApiBearerAuth()
 @Controller("stock-transfers")
 @UseGuards(AccessGuard)
 export class StockTransfersController {
@@ -32,6 +36,8 @@ export class StockTransfersController {
 
   @Get()
   @RequireAccess("stock-transfers", "view")
+  @ApiOperation({ summary: "List stock transfers" })
+  @ApiZodQuery(ListStockTransfersQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListStockTransfersQuerySchema))
@@ -43,6 +49,7 @@ export class StockTransfersController {
 
   @Get("summary")
   @RequireAccess("stock-transfers", "view")
+  @ApiOperation({ summary: "Stock transfers summary" })
   async summary(
     @CurrentCompany() companyId: string,
     @Query("branchId") branchId?: string,
@@ -53,6 +60,7 @@ export class StockTransfersController {
 
   @Get(":id")
   @RequireAccess("stock-transfers", "view")
+  @ApiOperation({ summary: "Get stock transfer by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -63,6 +71,8 @@ export class StockTransfersController {
 
   @Post()
   @RequireAccess("stock-transfers", "create")
+  @ApiOperation({ summary: "Create stock transfer" })
+  @ApiZodBody(CreateStockTransferSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -75,6 +85,7 @@ export class StockTransfersController {
 
   @Post(":id/send")
   @RequireAccess("stock-transfers", "send")
+  @ApiOperation({ summary: "Send stock transfer" })
   async send(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -86,6 +97,8 @@ export class StockTransfersController {
 
   @Post(":id/receive")
   @RequireAccess("stock-transfers", "receive")
+  @ApiOperation({ summary: "Receive stock transfer" })
+  @ApiZodBody(ReceiveStockTransferSchema)
   async receive(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -99,6 +112,7 @@ export class StockTransfersController {
 
   @Patch(":id/cancel")
   @RequireAccess("stock-transfers", "cancel")
+  @ApiOperation({ summary: "Cancel stock transfer" })
   async cancel(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -110,6 +124,7 @@ export class StockTransfersController {
 
   @Delete(":id")
   @RequireAccess("stock-transfers", "delete")
+  @ApiOperation({ summary: "Delete stock transfer" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

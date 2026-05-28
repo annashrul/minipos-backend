@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateReturnSchema,
   ListReturnsQuerySchema,
@@ -23,12 +24,15 @@ import {
 } from "./dto/returns.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ReturnsService } from "./returns.service";
 
+@ApiTags("Returns")
+@ApiBearerAuth()
 @Controller("returns")
 @UseGuards(AccessGuard)
 export class ReturnsController {
@@ -36,6 +40,8 @@ export class ReturnsController {
 
   @Get()
   @RequireAccess("returns", "view")
+  @ApiOperation({ summary: "List returns" })
+  @ApiZodQuery(ListReturnsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListReturnsQuerySchema))
@@ -47,6 +53,8 @@ export class ReturnsController {
 
   @Get("summary")
   @RequireAccess("returns", "view")
+  @ApiOperation({ summary: "Returns summary" })
+  @ApiZodQuery(ListReturnsQuerySchema)
   async summary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListReturnsQuerySchema))
@@ -58,6 +66,8 @@ export class ReturnsController {
 
   @Get("transactions/search")
   @RequireAccess("returns", "create")
+  @ApiOperation({ summary: "Search transaction eligible for return" })
+  @ApiZodQuery(SearchReturnTransactionQuerySchema)
   async searchTransaction(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(SearchReturnTransactionQuerySchema))
@@ -72,6 +82,8 @@ export class ReturnsController {
 
   @Get("products/search")
   @RequireAccess("returns", "create")
+  @ApiOperation({ summary: "Search products for exchange" })
+  @ApiZodQuery(SearchExchangeProductsQuerySchema)
   async searchProducts(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(SearchExchangeProductsQuerySchema))
@@ -86,6 +98,7 @@ export class ReturnsController {
 
   @Get(":id")
   @RequireAccess("returns", "view")
+  @ApiOperation({ summary: "Get return by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -96,6 +109,8 @@ export class ReturnsController {
 
   @Post()
   @RequireAccess("returns", "create")
+  @ApiOperation({ summary: "Create return" })
+  @ApiZodBody(CreateReturnSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -107,6 +122,7 @@ export class ReturnsController {
 
   @Patch(":id/approve")
   @RequireAccess("returns", "approve")
+  @ApiOperation({ summary: "Approve return" })
   async approve(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -118,6 +134,8 @@ export class ReturnsController {
 
   @Patch(":id/reject")
   @RequireAccess("returns", "reject")
+  @ApiOperation({ summary: "Reject return" })
+  @ApiZodBody(RejectReturnSchema)
   async reject(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -130,6 +148,7 @@ export class ReturnsController {
 
   @Post(":id/complete")
   @RequireAccess("returns", "complete")
+  @ApiOperation({ summary: "Complete return" })
   async complete(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -141,6 +160,7 @@ export class ReturnsController {
 
   @Delete(":id")
   @RequireAccess("returns", "delete")
+  @ApiOperation({ summary: "Delete return" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { type AuthUser } from "@/contracts";
 import {
   CreateSalesTargetSchema,
@@ -25,12 +26,15 @@ import {
   type UpdateSalesTargetDto,
 } from "./dto/sales-targets.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { SalesTargetsService } from "./sales-targets.service";
 
+@ApiTags("Sales Targets")
+@ApiBearerAuth()
 @Controller("sales-targets")
 @UseGuards(AccessGuard)
 export class SalesTargetsController {
@@ -38,6 +42,8 @@ export class SalesTargetsController {
 
   @Get()
   @RequireAccess("sales-targets", "view")
+  @ApiOperation({ summary: "List sales targets" })
+  @ApiZodQuery(ListSalesTargetsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListSalesTargetsQuerySchema))
@@ -49,6 +55,7 @@ export class SalesTargetsController {
 
   @Get("current")
   @RequireAccess("sales-targets", "view")
+  @ApiOperation({ summary: "Current sales targets" })
   async current(@CurrentCompany() companyId: string) {
     const data = await this.salesTargets.current(companyId);
     return { data };
@@ -57,6 +64,8 @@ export class SalesTargetsController {
   // Ranking user berdasarkan revenue dalam periode (default MONTHLY).
   @Get("leaderboard")
   @RequireAccess("sales-targets", "view")
+  @ApiOperation({ summary: "Sales leaderboard" })
+  @ApiZodQuery(LeaderboardQuerySchema)
   async leaderboard(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(LeaderboardQuerySchema))
@@ -69,6 +78,8 @@ export class SalesTargetsController {
   // List CashierBadge (sales/manager facing â€” terpisah dari /cashier/badges).
   @Get("badges")
   @RequireAccess("sales-targets", "view")
+  @ApiOperation({ summary: "List sales badges" })
+  @ApiZodQuery(GetSalesBadgesQuerySchema)
   async listBadges(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(GetSalesBadgesQuerySchema))
@@ -81,6 +92,8 @@ export class SalesTargetsController {
   // Auto-evaluasi & award badges untuk periode (cron-like).
   @Post("evaluate-badges")
   @RequireAccess("sales-targets", "create")
+  @ApiOperation({ summary: "Evaluate and award sales badges" })
+  @ApiZodBody(EvaluateBadgesSchema)
   async evaluateBadges(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(EvaluateBadgesSchema))
@@ -95,6 +108,7 @@ export class SalesTargetsController {
 
   @Get(":id")
   @RequireAccess("sales-targets", "view")
+  @ApiOperation({ summary: "Get sales target by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -105,6 +119,8 @@ export class SalesTargetsController {
 
   @Post()
   @RequireAccess("sales-targets", "create")
+  @ApiOperation({ summary: "Create sales target" })
+  @ApiZodBody(CreateSalesTargetSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -117,6 +133,8 @@ export class SalesTargetsController {
 
   @Patch(":id")
   @RequireAccess("sales-targets", "update")
+  @ApiOperation({ summary: "Update sales target" })
+  @ApiZodBody(UpdateSalesTargetSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -129,6 +147,7 @@ export class SalesTargetsController {
 
   @Post(":id/recompute")
   @RequireAccess("sales-targets", "update")
+  @ApiOperation({ summary: "Recompute sales target progress" })
   async recompute(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -139,6 +158,7 @@ export class SalesTargetsController {
 
   @Delete(":id")
   @RequireAccess("sales-targets", "delete")
+  @ApiOperation({ summary: "Delete sales target" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

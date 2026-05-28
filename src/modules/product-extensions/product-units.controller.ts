@@ -8,6 +8,7 @@
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateProductUnitSchema,
   UpdateProductUnitSchema,
@@ -15,11 +16,14 @@ import {
   type UpdateProductUnitDto,
 } from "./dto/product-extensions.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ProductExtensionsService } from "./product-extensions.service";
 
+@ApiTags("Product Units")
+@ApiBearerAuth()
 @Controller("products/:productId/units")
 @UseGuards(AccessGuard)
 export class ProductUnitsController {
@@ -27,6 +31,7 @@ export class ProductUnitsController {
 
   @Get()
   @RequireAccess("products", "view")
+  @ApiOperation({ summary: "List product units" })
   async list(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -37,6 +42,8 @@ export class ProductUnitsController {
 
   @Post()
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Create product unit" })
+  @ApiZodBody(CreateProductUnitSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -49,6 +56,8 @@ export class ProductUnitsController {
 
   @Patch(":unitId")
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Update product unit" })
+  @ApiZodBody(UpdateProductUnitSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,
@@ -67,6 +76,7 @@ export class ProductUnitsController {
 
   @Delete(":unitId")
   @RequireAccess("products", "update")
+  @ApiOperation({ summary: "Delete product unit" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("productId") productId: string,

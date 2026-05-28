@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CheckoutSchema,
   ListTransactionsQuerySchema,
@@ -22,12 +23,15 @@ import {
 } from "./dto/transactions.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { TransactionsService } from "./transactions.service";
 
+@ApiTags("Transactions")
+@ApiBearerAuth()
 @Controller("transactions")
 @UseGuards(AccessGuard)
 export class TransactionsController {
@@ -35,6 +39,8 @@ export class TransactionsController {
 
   @Get()
   @RequireAccess("transactions", "view")
+  @ApiOperation({ summary: "List transactions" })
+  @ApiZodQuery(ListTransactionsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListTransactionsQuerySchema))
@@ -46,6 +52,8 @@ export class TransactionsController {
 
   @Get("stats")
   @RequireAccess("transactions", "view")
+  @ApiOperation({ summary: "Transaction stats" })
+  @ApiZodQuery(TransactionStatsQuerySchema)
   async stats(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(TransactionStatsQuerySchema))
@@ -57,6 +65,7 @@ export class TransactionsController {
 
   @Get(":id")
   @RequireAccess("transactions", "view")
+  @ApiOperation({ summary: "Get transaction by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -67,6 +76,8 @@ export class TransactionsController {
 
   @Post()
   @RequireAccess("pos", "create")
+  @ApiOperation({ summary: "Checkout (create transaction)" })
+  @ApiZodBody(CheckoutSchema)
   async checkout(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -78,6 +89,8 @@ export class TransactionsController {
 
   @Post(":id/void")
   @RequireAccess("transactions", "void")
+  @ApiOperation({ summary: "Void transaction" })
+  @ApiZodBody(VoidTransactionSchema)
   async void(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -96,6 +109,7 @@ export class TransactionsController {
 
   @Post(":id/duplicate")
   @RequireAccess("transactions", "duplicate")
+  @ApiOperation({ summary: "Duplicate transaction" })
   async duplicate(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -107,6 +121,8 @@ export class TransactionsController {
 
   @Post("draft")
   @RequireAccess("pos", "save_draft")
+  @ApiOperation({ summary: "Create draft transaction" })
+  @ApiZodBody(CheckoutSchema)
   async createDraft(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -118,6 +134,7 @@ export class TransactionsController {
 
   @Delete("draft/:id")
   @RequireAccess("pos", "save_draft")
+  @ApiOperation({ summary: "Delete draft transaction" })
   async deleteDraft(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -128,6 +145,8 @@ export class TransactionsController {
 
   @Post(":id/refund")
   @RequireAccess("transactions", "refund")
+  @ApiOperation({ summary: "Refund transaction" })
+  @ApiZodBody(RefundTransactionSchema)
   async refund(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,

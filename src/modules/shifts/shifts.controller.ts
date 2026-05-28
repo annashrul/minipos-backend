@@ -8,6 +8,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { type AuthUser } from "@/contracts";
 import {
   CashMovementSchema,
@@ -20,12 +21,15 @@ import {
   type OpenShiftDto,
 } from "./dto/shifts.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ShiftsService } from "./shifts.service";
 
+@ApiTags("Shifts")
+@ApiBearerAuth()
 @Controller("shifts")
 @UseGuards(AccessGuard)
 export class ShiftsController {
@@ -33,6 +37,8 @@ export class ShiftsController {
 
   @Get()
   @RequireAccess("shifts", "view")
+  @ApiOperation({ summary: "List shifts" })
+  @ApiZodQuery(ListShiftsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListShiftsQuerySchema))
@@ -43,6 +49,7 @@ export class ShiftsController {
   }
 
   @Get("current")
+  @ApiOperation({ summary: "Get current open shift for user" })
   async current(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -53,6 +60,7 @@ export class ShiftsController {
 
   @Get(":id")
   @RequireAccess("shifts", "view")
+  @ApiOperation({ summary: "Get shift by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -62,6 +70,8 @@ export class ShiftsController {
   }
 
   @Post("open")
+  @ApiOperation({ summary: "Open shift" })
+  @ApiZodBody(OpenShiftSchema)
   async open(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -72,6 +82,8 @@ export class ShiftsController {
   }
 
   @Patch(":id/close")
+  @ApiOperation({ summary: "Close shift" })
+  @ApiZodBody(CloseShiftSchema)
   async close(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -83,6 +95,8 @@ export class ShiftsController {
   }
 
   @Post(":id/cash-movements")
+  @ApiOperation({ summary: "Add cash movement to shift" })
+  @ApiZodBody(CashMovementSchema)
   async addMovement(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,

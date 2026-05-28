@@ -1,4 +1,5 @@
 ﻿import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CashierPerformanceLeaderboardQuerySchema,
   CashierPerformanceQuerySchema,
@@ -7,12 +8,15 @@ import {
 } from "./dto/cashier.dto";
 import type { AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { CashierService } from "./cashier.service";
 
+@ApiTags("Cashier Performance")
+@ApiBearerAuth()
 @Controller("cashier/performance")
 @UseGuards(AccessGuard)
 export class CashierPerformanceController {
@@ -20,6 +24,8 @@ export class CashierPerformanceController {
 
   @Get()
   @RequireAccess("cashier-performance", "view")
+  @ApiOperation({ summary: "List cashier performance" })
+  @ApiZodQuery(CashierPerformanceQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(CashierPerformanceQuerySchema))
@@ -31,6 +37,8 @@ export class CashierPerformanceController {
 
   @Get("leaderboard")
   @RequireAccess("cashier-performance", "view")
+  @ApiOperation({ summary: "Cashier performance leaderboard" })
+  @ApiZodQuery(CashierPerformanceLeaderboardQuerySchema)
   async leaderboard(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(CashierPerformanceLeaderboardQuerySchema))
@@ -41,6 +49,7 @@ export class CashierPerformanceController {
   }
 
   @Get("me")
+  @ApiOperation({ summary: "Get my cashier performance" })
   async me(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,

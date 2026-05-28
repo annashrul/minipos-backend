@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateSupplierSchema,
   ListSuppliersQuerySchema,
@@ -18,11 +19,14 @@ import {
   type UpdateSupplierDto,
 } from "./dto/suppliers.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { SuppliersService } from "./suppliers.service";
 
+@ApiTags("Suppliers")
+@ApiBearerAuth()
 @Controller("suppliers")
 @UseGuards(AccessGuard)
 export class SuppliersController {
@@ -30,6 +34,8 @@ export class SuppliersController {
 
   @Get()
   @RequireAccess("suppliers", "view")
+  @ApiOperation({ summary: "List suppliers" })
+  @ApiZodQuery(ListSuppliersQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListSuppliersQuerySchema))
@@ -41,6 +47,7 @@ export class SuppliersController {
 
   @Get("summary")
   @RequireAccess("suppliers", "view")
+  @ApiOperation({ summary: "Suppliers summary" })
   async summary(@CurrentCompany() companyId: string) {
     const data = await this.suppliers.summary(companyId);
     return { data };
@@ -48,6 +55,7 @@ export class SuppliersController {
 
   @Get(":id")
   @RequireAccess("suppliers", "view")
+  @ApiOperation({ summary: "Get supplier by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -58,6 +66,7 @@ export class SuppliersController {
 
   @Post("bulk-delete")
   @RequireAccess("suppliers", "delete")
+  @ApiOperation({ summary: "Bulk delete suppliers" })
   async bulkDelete(
     @CurrentCompany() companyId: string,
     @Body() body: { ids: string[] },
@@ -68,6 +77,8 @@ export class SuppliersController {
 
   @Post()
   @RequireAccess("suppliers", "create")
+  @ApiOperation({ summary: "Create supplier" })
+  @ApiZodBody(CreateSupplierSchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateSupplierSchema)) body: CreateSupplierDto,
@@ -78,6 +89,8 @@ export class SuppliersController {
 
   @Patch(":id")
   @RequireAccess("suppliers", "update")
+  @ApiOperation({ summary: "Update supplier" })
+  @ApiZodBody(UpdateSupplierSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -89,6 +102,7 @@ export class SuppliersController {
 
   @Delete(":id")
   @RequireAccess("suppliers", "delete")
+  @ApiOperation({ summary: "Delete supplier" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

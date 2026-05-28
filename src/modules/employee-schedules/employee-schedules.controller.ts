@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { type AuthUser } from "@/contracts";
 import {
   BulkCreateEmployeeSchedulesSchema,
@@ -23,12 +24,15 @@ import {
   type UpdateScheduleStatusDto,
 } from "./dto/employee-schedules.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { CurrentUser } from "@/modules/auth/current-user.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { EmployeeSchedulesService } from "./employee-schedules.service";
 
+@ApiTags("Employee Schedules")
+@ApiBearerAuth()
 @Controller("employee-schedules")
 @UseGuards(AccessGuard)
 export class EmployeeSchedulesController {
@@ -36,6 +40,8 @@ export class EmployeeSchedulesController {
 
   @Get()
   @RequireAccess("employee-schedules", "view")
+  @ApiOperation({ summary: "List employee schedules" })
+  @ApiZodQuery(ListEmployeeSchedulesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListEmployeeSchedulesQuerySchema))
@@ -47,6 +53,7 @@ export class EmployeeSchedulesController {
 
   @Get("by-date/:date")
   @RequireAccess("employee-schedules", "view")
+  @ApiOperation({ summary: "Get employee schedules by date" })
   async byDate(
     @CurrentCompany() companyId: string,
     @Param("date") date: string,
@@ -58,6 +65,7 @@ export class EmployeeSchedulesController {
 
   @Get(":id")
   @RequireAccess("employee-schedules", "view")
+  @ApiOperation({ summary: "Get employee schedule by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -68,6 +76,8 @@ export class EmployeeSchedulesController {
 
   @Post()
   @RequireAccess("employee-schedules", "create")
+  @ApiOperation({ summary: "Create employee schedule" })
+  @ApiZodBody(CreateEmployeeScheduleSchema)
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -80,6 +90,8 @@ export class EmployeeSchedulesController {
 
   @Post("bulk")
   @RequireAccess("employee-schedules", "create")
+  @ApiOperation({ summary: "Bulk create employee schedules" })
+  @ApiZodBody(BulkCreateEmployeeSchedulesSchema)
   async bulk(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: AuthUser,
@@ -92,6 +104,8 @@ export class EmployeeSchedulesController {
 
   @Patch(":id")
   @RequireAccess("employee-schedules", "update")
+  @ApiOperation({ summary: "Update employee schedule" })
+  @ApiZodBody(UpdateEmployeeScheduleSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -104,6 +118,8 @@ export class EmployeeSchedulesController {
 
   @Patch(":id/status")
   @RequireAccess("employee-schedules", "update")
+  @ApiOperation({ summary: "Update employee schedule status" })
+  @ApiZodBody(UpdateScheduleStatusSchema)
   async updateStatus(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -116,6 +132,7 @@ export class EmployeeSchedulesController {
 
   @Delete(":id")
   @RequireAccess("employee-schedules", "delete")
+  @ApiOperation({ summary: "Delete employee schedule" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

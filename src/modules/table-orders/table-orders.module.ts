@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ProductsModule } from "@/modules/products/products.module";
 import { RealtimeModule } from "@/modules/realtime/realtime.module";
 import {
   PublicTableOrdersController,
@@ -12,7 +13,7 @@ import { TableOrderKasirService } from "./table-order-kasir.service";
 import { TableOrderSubmitService } from "./table-order-submit.service";
 
 @Module({
-  imports: [RealtimeModule],
+  imports: [RealtimeModule, ProductsModule],
   controllers: [
     PublicTableOrdersController,
     TableOrdersController,

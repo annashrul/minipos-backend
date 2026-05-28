@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   ListClosingReportsQuerySchema,
   RecloseShiftSchema,
@@ -18,11 +19,14 @@ import {
   type UpdateClosingReportDto,
 } from "./dto/closing-reports.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { ClosingReportsService } from "./closing-reports.service";
 
+@ApiTags("Closing Reports")
+@ApiBearerAuth()
 @Controller("closing-reports")
 @UseGuards(AccessGuard)
 export class ClosingReportsController {
@@ -30,6 +34,8 @@ export class ClosingReportsController {
 
   @Get()
   @RequireAccess("closing-reports", "view")
+  @ApiOperation({ summary: "List closing reports" })
+  @ApiZodQuery(ListClosingReportsQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListClosingReportsQuerySchema))
@@ -41,6 +47,7 @@ export class ClosingReportsController {
 
   @Get("by-shift/:shiftId")
   @RequireAccess("closing-reports", "view")
+  @ApiOperation({ summary: "Get closing report by shift ID" })
   async findByShift(
     @CurrentCompany() companyId: string,
     @Param("shiftId") shiftId: string,
@@ -51,6 +58,7 @@ export class ClosingReportsController {
 
   @Get(":id")
   @RequireAccess("closing-reports", "view")
+  @ApiOperation({ summary: "Get closing report by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -61,6 +69,7 @@ export class ClosingReportsController {
 
   @Post("from-shift/:shiftId")
   @RequireAccess("closing-reports", "create")
+  @ApiOperation({ summary: "Create closing report from shift" })
   async createFromShift(
     @CurrentCompany() companyId: string,
     @Param("shiftId") shiftId: string,
@@ -71,6 +80,8 @@ export class ClosingReportsController {
 
   @Post(":shiftId/reclose")
   @RequireAccess("closing-reports", "reclosing")
+  @ApiOperation({ summary: "Reclose shift" })
+  @ApiZodBody(RecloseShiftSchema)
   async reclose(
     @CurrentCompany() companyId: string,
     @Param("shiftId") shiftId: string,
@@ -86,6 +97,8 @@ export class ClosingReportsController {
 
   @Patch(":id")
   @RequireAccess("closing-reports", "update")
+  @ApiOperation({ summary: "Update closing report" })
+  @ApiZodBody(UpdateClosingReportSchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -98,6 +111,7 @@ export class ClosingReportsController {
 
   @Delete(":id")
   @RequireAccess("closing-reports", "delete")
+  @ApiOperation({ summary: "Delete closing report" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,

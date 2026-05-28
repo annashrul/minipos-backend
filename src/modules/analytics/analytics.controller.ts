@@ -7,6 +7,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   AnalyticsBranchQuerySchema,
   CalculateAutoPromoSchema,
@@ -20,11 +21,14 @@ import {
   type ValidateVoucherDto,
 } from "./dto/analytics.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { AnalyticsService } from "./analytics.service";
 
+@ApiTags("Analytics")
+@ApiBearerAuth()
 @Controller("analytics")
 @UseGuards(AccessGuard)
 export class AnalyticsController {
@@ -36,6 +40,8 @@ export class AnalyticsController {
 
   @Get("margin/products")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Product margin analysis" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async marginProducts(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -47,6 +53,8 @@ export class AnalyticsController {
 
   @Get("margin/categories")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Category margin analysis" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async marginCategories(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -61,6 +69,8 @@ export class AnalyticsController {
 
   @Get("dead-stock")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Dead stock analysis" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async deadStock(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -72,6 +82,8 @@ export class AnalyticsController {
 
   @Get("slow-moving")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Slow-moving stock analysis" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async slowMoving(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -83,6 +95,8 @@ export class AnalyticsController {
 
   @Get("peak-hours")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Peak hours analysis" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async peakHours(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -94,6 +108,8 @@ export class AnalyticsController {
 
   @Get("reorder-alerts")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Reorder alerts" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async reorderAlerts(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -108,6 +124,8 @@ export class AnalyticsController {
 
   @Get("reorder-recommendations")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Reorder recommendations" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async reorderRecommendations(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -126,6 +144,8 @@ export class AnalyticsController {
 
   @Get("void-abuse")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Void abuse detection" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async voidAbuse(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -140,6 +160,8 @@ export class AnalyticsController {
 
   @Get("unusual-discounts")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Unusual discounts detection" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async unusualDiscounts(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -158,6 +180,8 @@ export class AnalyticsController {
 
   @Get("profit/daily")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Daily profit analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async dailyProfit(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -169,6 +193,8 @@ export class AnalyticsController {
 
   @Get("profit/shifts")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Shift profit analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async shiftProfit(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -184,6 +210,8 @@ export class AnalyticsController {
 
   @Get("suppliers/ranking")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Supplier ranking" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async supplierRanking(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -198,6 +226,8 @@ export class AnalyticsController {
 
   @Get("suppliers/debt")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Supplier debt analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async supplierDebt(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -216,6 +246,8 @@ export class AnalyticsController {
 
   @Get("promo-effectiveness")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Promo effectiveness analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async promoEffectiveness(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -234,6 +266,8 @@ export class AnalyticsController {
 
   @Get("cashier-performance")
   @RequireAccess("analytics", "view")
+  @ApiOperation({ summary: "Cashier performance analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async cashierPerformance(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -252,6 +286,8 @@ export class AnalyticsController {
 
   @Get("repeat-customers")
   @RequireAccess("customer-intelligence", "view")
+  @ApiOperation({ summary: "Repeat customers analytics" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async repeatCustomers(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -266,6 +302,8 @@ export class AnalyticsController {
 
   @Get("customer-favorites/:customerId")
   @RequireAccess("customer-intelligence", "view")
+  @ApiOperation({ summary: "Customer favorite products" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async customerFavorites(
     @Param("customerId") customerId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -280,6 +318,8 @@ export class AnalyticsController {
 
   @Get("shopping-frequency")
   @RequireAccess("customer-intelligence", "view")
+  @ApiOperation({ summary: "Customer shopping frequency" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async shoppingFrequency(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -294,6 +334,8 @@ export class AnalyticsController {
 
   @Get("loyalty-summary")
   @RequireAccess("customer-intelligence", "view")
+  @ApiOperation({ summary: "Customer loyalty summary" })
+  @ApiZodQuery(AnalyticsBranchQuerySchema)
   async loyaltySummary(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(AnalyticsBranchQuerySchema))
@@ -311,12 +353,15 @@ export class AnalyticsController {
   // -----------------------------------
 
   @Get("promo-engine/active")
+  @ApiOperation({ summary: "List active promotions" })
   async activePromotions(@CurrentCompany() companyId: string) {
     const data = await this.analytics.getActivePromotions(companyId);
     return { data };
   }
 
   @Post("promo-engine/auto")
+  @ApiOperation({ summary: "Calculate auto-applied promo" })
+  @ApiZodBody(CalculateAutoPromoSchema)
   async calculateAutoPromo(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CalculateAutoPromoSchema))
@@ -327,6 +372,8 @@ export class AnalyticsController {
   }
 
   @Post("promo-engine/voucher")
+  @ApiOperation({ summary: "Validate voucher code" })
+  @ApiZodBody(ValidateVoucherSchema)
   async validateVoucher(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(ValidateVoucherSchema))
@@ -337,6 +384,8 @@ export class AnalyticsController {
   }
 
   @Get("promo-engine/customer-by-phone")
+  @ApiOperation({ summary: "Find customer by phone" })
+  @ApiZodQuery(FindCustomerByPhoneQuerySchema)
   async findCustomerByPhone(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(FindCustomerByPhoneQuerySchema))
@@ -350,6 +399,8 @@ export class AnalyticsController {
   }
 
   @Post("promo-engine/tebus-murah")
+  @ApiOperation({ summary: "Get tebus-murah options" })
+  @ApiZodBody(TebusMurahOptionsSchema)
   async tebusMurahOptions(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(TebusMurahOptionsSchema))

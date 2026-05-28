@@ -9,6 +9,7 @@
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
   CreateAccountCategorySchema,
   ListAccountCategoriesQuerySchema,
@@ -18,11 +19,14 @@ import {
   type UpdateAccountCategoryDto,
 } from "../dto/accounting.dto";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
+import { ApiZodBody, ApiZodQuery } from "@/common/swagger/zod-swagger";
 import { AccessGuard } from "@/modules/auth/access.guard";
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";
 import { RequireAccess } from "@/modules/auth/require-access.decorator";
 import { AccountCategoriesService } from "./account-categories.service";
 
+@ApiTags("Account Categories")
+@ApiBearerAuth()
 @Controller("account-categories")
 @UseGuards(AccessGuard)
 export class AccountCategoriesController {
@@ -32,6 +36,7 @@ export class AccountCategoriesController {
 
   @Post("seed-default-coa")
   @RequireAccess("accounting", "create")
+  @ApiOperation({ summary: "Seed default chart of accounts" })
   async seedDefaultCoa(@CurrentCompany() companyId: string) {
     const data = await this.categories.seedDefaultCoa(companyId);
     return { data };
@@ -39,6 +44,7 @@ export class AccountCategoriesController {
 
   @Post("backfill-journals")
   @RequireAccess("accounting", "create")
+  @ApiOperation({ summary: "Backfill journals from historical transactions" })
   async backfillJournals(@CurrentCompany() companyId: string) {
     const data = await this.categories.backfillJournals(companyId);
     return { data };
@@ -46,6 +52,8 @@ export class AccountCategoriesController {
 
   @Get()
   @RequireAccess("accounting", "view")
+  @ApiOperation({ summary: "List account categories" })
+  @ApiZodQuery(ListAccountCategoriesQuerySchema)
   async list(
     @CurrentCompany() companyId: string,
     @Query(new ZodValidationPipe(ListAccountCategoriesQuerySchema))
@@ -57,6 +65,7 @@ export class AccountCategoriesController {
 
   @Get(":id")
   @RequireAccess("accounting", "view")
+  @ApiOperation({ summary: "Get account category by ID" })
   async findOne(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -67,6 +76,8 @@ export class AccountCategoriesController {
 
   @Post()
   @RequireAccess("accounting", "create")
+  @ApiOperation({ summary: "Create account category" })
+  @ApiZodBody(CreateAccountCategorySchema)
   async create(
     @CurrentCompany() companyId: string,
     @Body(new ZodValidationPipe(CreateAccountCategorySchema))
@@ -78,6 +89,8 @@ export class AccountCategoriesController {
 
   @Patch(":id")
   @RequireAccess("accounting", "update")
+  @ApiOperation({ summary: "Update account category" })
+  @ApiZodBody(UpdateAccountCategorySchema)
   async update(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
@@ -90,6 +103,7 @@ export class AccountCategoriesController {
 
   @Delete(":id")
   @RequireAccess("accounting", "delete")
+  @ApiOperation({ summary: "Delete account category" })
   async delete(
     @CurrentCompany() companyId: string,
     @Param("id") id: string,
