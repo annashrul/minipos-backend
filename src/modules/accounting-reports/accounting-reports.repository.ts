@@ -981,7 +981,7 @@ export class AccountingReportsRepository {
         END AS aging_bucket,
         GREATEST(0, EXTRACT(DAY FROM ${asOfPlaceholder}::date - d."dueDate"))::int AS days_past_due
       FROM debts d
-      WHERE d.type = ${typePlaceholder}
+      WHERE d.type = ${typePlaceholder}::"DebtType"
         AND d.status IN ('UNPAID', 'PARTIAL')
         AND d."companyId" = ${companyPlaceholder}
         ${branch.condition}
