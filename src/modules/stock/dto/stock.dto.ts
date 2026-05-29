@@ -31,6 +31,8 @@ export const ListStockMovementsQuerySchema = z.object({
   // halaman Stok Adjustment, "transaction" untuk POS sales).
   refType: z.string().optional(),
   reference: z.string().optional(),
+  // Search di product.name / product.code / movement.note. Case-insensitive.
+  search: z.string().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   page: z.coerce.number().int().min(1).default(1),

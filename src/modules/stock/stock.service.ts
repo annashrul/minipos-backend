@@ -47,7 +47,7 @@ export class StockService {
     companyId: string,
     query: ListStockMovementsQueryDto,
   ): Promise<PaginatedResponse<StockMovementResponse>> {
-    const { productId, branchId, type, refType, reference, from, to, page, perPage } =
+    const { productId, branchId, type, refType, reference, search, from, to, page, perPage } =
       query;
 
     const where: Prisma.StockMovementWhereInput = {
@@ -62,6 +62,16 @@ export class StockService {
     if (refType) where.refType = refType;
     if (reference) {
       where.reference = { contains: reference, mode: "insensitive" };
+    }
+    if (search) {
+      // Match di product.name, product.code, atau movement.note.
+      // Pakai OR di level movement, semua product clause tetap di-scope ke
+      // companyId supaya tidak bocor antar tenant.
+      where.OR = [
+        { product: { companyId, name: { contains: search, mode: "insensitive" } } },
+        { product: { companyId, code: { contains: search, mode: "insensitive" } } },
+        { note: { contains: search, mode: "insensitive" } },
+      ];
     }
     if (from || to) {
       where.createdAt = {};

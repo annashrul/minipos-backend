@@ -32,8 +32,10 @@ import { ProductExtensionsService } from "./product-extensions.service";
 export class ProductTierPricesController {
   constructor(private readonly service: ProductExtensionsService) {}
 
+  // TIDAK pakai @RequireAccess — POS perlu fetch tier prices untuk
+  // menghitung harga grosir/diskon volume saat kasir tambah item. Semua
+  // role yg authenticated berhak baca (sama alasannya dengan pos-search).
   @Get()
-  @RequireAccess("products", "view")
   @ApiOperation({ summary: "List product tier prices" })
   async list(
     @CurrentCompany() companyId: string,

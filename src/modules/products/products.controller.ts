@@ -137,8 +137,10 @@ export class ProductsController {
     return { data };
   }
 
+  // POS product search — TIDAK pakai @RequireAccess karena dipakai oleh
+  // semua role kasir untuk transaksi. Role yang sudah lolos AccessGuard
+  // (authenticated + scoped ke company) berhak baca katalog produk.
   @Post("pos-search")
-  @RequireAccess("products", "view")
   @ApiOperation({ summary: "Search products for POS" })
   async posSearch(
     @CurrentCompany() companyId: string,
@@ -170,8 +172,10 @@ export class ProductsController {
   // Single-API GET untuk product form: return product + units + variants +
   // branchSkus + tierPrices + modifierGroupIds dalam satu response. Frontend
   // pakai ini untuk hindari race condition di multi-fetch flow.
+  // TIDAK pakai @RequireAccess — dipakai juga oleh POS multi-unit dialog &
+  // barcode flow; semua role yg authenticated berhak baca katalog produk
+  // (sama alasannya dengan pos-search).
   @Get(":id/detail")
-  @RequireAccess("products", "view")
   @ApiOperation({ summary: "Get product detail with extensions" })
   async findDetail(
     @CurrentCompany() companyId: string,
