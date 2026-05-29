@@ -542,21 +542,15 @@ export class WhatsappChatbotService implements OnModuleInit {
       case "BENGKEL":
         return (
           header +
-          `=== HARGA LAYANAN (estimasi) ===
-- Ganti oli mesin motor: Rp 75.000
-- Ganti oli mesin mobil: Rp 250.000
-- Tune up motor: Rp 150.000
-- Tune up mobil: Rp 350.000
-- Ganti kampas rem: Rp 100.000
-- Spooring: Rp 100.000
-- Balancing: Rp 75.000
-- Servis AC mobil: Rp 150.000
+          `=== LAYANAN & HARGA ===
+Daftar layanan/jasa & harga diambil OTOMATIS dari sistem (master) secara live — jangan tulis harga manual di sini.
 
-=== KATALOG OLI MESIN (rekomendasi umum) ===
-- Mobil city car (Ayla, Brio, Calya): 5W-30 atau 10W-30 sintetik (Pertamina Fastron, Shell Helix, Castrol Magnatec)
-- Motor matic <125cc: 10W-30 (Yamalube, AHM, Federal)
+=== PANDUAN OLI (saran tipe umum, BUKAN daftar harga/stok) ===
+- Mobil city car (Ayla, Brio, Calya): 5W-30 atau 10W-30 sintetik
+- Motor matic <125cc: 10W-30
 - Motor sport >150cc: 10W-40 sintetik
-- Mobil diesel: oli khusus diesel (Shell Rimula, Pertamina Meditran)
+- Mobil diesel: oli khusus diesel
+Catatan: ini saran tipe oli umum; ketersediaan & harga produk dicek lewat sistem.
 
 === KATA KUNCI POPULER ===
 oli mesin, kampas rem, aki, busi, filter udara, ban, spooring, balancing, AC, tune up.`
@@ -564,18 +558,14 @@ oli mesin, kampas rem, aki, busi, filter udara, ban, spooring, balancing, AC, tu
       case "RESTAURANT":
         return (
           header +
-          `=== MENU UNGGULAN ===
-- Ayam Bakar Madu — Rp 35.000
-- Sop Buntut — Rp 65.000
-- Nasi Goreng Spesial — Rp 28.000
-- Gurame Asam Manis — Rp 75.000
-- Es Teh / Es Jeruk — Rp 8.000
+          `=== MENU & HARGA ===
+Menu dan harga diambil OTOMATIS dari sistem (master produk) secara live. Jangan tulis menu/harga manual di sini.
 
 === LAYANAN ===
 - Dine-in
 - Take away
 - Delivery (GoFood / GrabFood / ShopeeFood)
-- Reservasi meja untuk grup ≥ 6 orang
+- Reservasi meja untuk grup >= 6 orang
 
 === RESERVASI ===
 Customer bisa reservasi via WhatsApp ini. Sebut: nama, jumlah orang, tanggal & jam, request khusus.
@@ -588,11 +578,8 @@ menu, harga, reservasi, take away, delivery, paket keluarga, halal, vegetarian.`
           header +
           `Suasana: cozy, ada outdoor seating, free WiFi, ramah laptop warriors.
 
-=== MENU UNGGULAN ===
-- Kopi: Espresso (Rp 18.000), Americano (Rp 22.000), Latte (Rp 28.000), Kopi Susu Aren (Rp 25.000)
-- Non-Kopi: Chocolate (Rp 28.000), Matcha Latte (Rp 30.000), Lemon Tea (Rp 20.000)
-- Snack: Croissant (Rp 25.000), Pisang Goreng (Rp 18.000), Kentang Goreng (Rp 25.000)
-- Dessert: Tiramisu, Cheesecake, Brownies — Rp 35.000
+=== MENU & HARGA ===
+Menu dan harga diambil OTOMATIS dari sistem (master produk) secara live. Jangan tulis menu/harga manual di sini.
 
 === LAYANAN ===
 - Dine-in dengan free WiFi & outlet di tiap meja
@@ -756,38 +743,124 @@ const INLINE_FN_RE_LOOSE =
 
 type ParsedInlineCall = { id: string; name: string; args: string };
 
+// Set nama tool yang valid — dipakai untuk mengenali tool-call JSON polos
+// yang bocor ke content (mis. gpt-oss kadang emit {"name":"...","arguments":{}}).
+const KNOWN_TOOL_NAMES = new Set(
+  [...OWNER_TOOLS, ...CUSTOMER_TOOLS]
+    .map((t) => t.function?.name)
+    .filter((n): n is string => typeof n === "string"),
+);
+
+// Ekstrak objek JSON balanced `{...}` top-level dari teks (brace-aware,
+// string-aware) — regex tidak cukup karena args punya nested braces.
+function extractBalancedJsonObjects(text: string): string[] {
+  const objs: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          objs.push(text.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+  }
+  return objs;
+}
+
 function parseInlineToolCalls(content: string): ParsedInlineCall[] {
   if (!content) return [];
-  if (!content.includes("<function") && !content.includes("<function_call"))
-    return [];
-
   const out: ParsedInlineCall[] = [];
-  let m: RegExpExecArray | null;
-  INLINE_FN_RE_LOOSE.lastIndex = 0;
-  while ((m = INLINE_FN_RE_LOOSE.exec(content)) !== null) {
-    const name = m[1];
-    const rawBody = (m[2] ?? "").trim();
-    // Body bisa diawali "=" atau ">" sisa dari malformed open tag.
-    // Cari JSON object pertama di dalamnya.
-    const jsonMatch = rawBody.match(/\{[\s\S]*\}/);
-    const args = jsonMatch ? jsonMatch[0] : "{}";
-    if (name) {
-      out.push({
-        id: `inline_${out.length}_${Date.now()}`,
-        name,
-        args,
-      });
+
+  // Format-1: markup <function=NAME>{...}</function> (Llama family).
+  if (content.includes("<function")) {
+    let m: RegExpExecArray | null;
+    INLINE_FN_RE_LOOSE.lastIndex = 0;
+    while ((m = INLINE_FN_RE_LOOSE.exec(content)) !== null) {
+      const name = m[1];
+      const rawBody = (m[2] ?? "").trim();
+      const jsonMatch = rawBody.match(/\{[\s\S]*\}/);
+      const args = jsonMatch ? jsonMatch[0] : "{}";
+      if (name) {
+        out.push({ id: `inline_${out.length}_${Date.now()}`, name, args });
+      }
+    }
+  }
+
+  // Format-2: JSON polos {"name":"tool","arguments":{...}} — gpt-oss-120b
+  // kadang emit tool call sebagai teks JSON, bukan structured tool_calls.
+  // Tanpa ini, JSON mentah ikut terkirim ke customer & tool tak dieksekusi.
+  if (
+    out.length === 0 &&
+    content.includes('"name"') &&
+    content.includes('"arguments"')
+  ) {
+    for (const obj of extractBalancedJsonObjects(content)) {
+      try {
+        const parsed = JSON.parse(obj) as {
+          name?: unknown;
+          arguments?: unknown;
+        };
+        if (
+          typeof parsed.name === "string" &&
+          KNOWN_TOOL_NAMES.has(parsed.name)
+        ) {
+          const args =
+            parsed.arguments && typeof parsed.arguments === "object"
+              ? JSON.stringify(parsed.arguments)
+              : "{}";
+          out.push({
+            id: `inline_${out.length}_${Date.now()}`,
+            name: parsed.name,
+            args,
+          });
+        }
+      } catch {
+        /* bukan JSON valid — skip */
+      }
     }
   }
   return out;
 }
 
 function stripInlineToolMarkup(text: string): string {
-  // Strip semua variasi tag <function...>...</function> / <function/>
-  return text
+  // Strip variasi tag <function...>...</function> / <function/>.
+  let out = text
     .replace(INLINE_FN_RE_LOOSE, "")
-    .replace(/<\/?\s*function[^>]*\/?>/gi, "")
-    .trim();
+    .replace(/<\/?\s*function[^>]*\/?>/gi, "");
+  // Buang objek JSON tool-call yang bocor ke teks final (defense in depth).
+  if (out.includes('"name"') && out.includes('"arguments"')) {
+    for (const obj of extractBalancedJsonObjects(out)) {
+      try {
+        const parsed = JSON.parse(obj) as { name?: unknown };
+        if (
+          typeof parsed.name === "string" &&
+          KNOWN_TOOL_NAMES.has(parsed.name)
+        ) {
+          out = out.replace(obj, "");
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return out.trim();
 }
 
 /**
