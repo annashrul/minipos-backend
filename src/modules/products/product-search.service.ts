@@ -215,6 +215,11 @@ export class ProductSearchService {
       onlyWithStock?: boolean;
       restrictToBranchAssigned?: boolean;
       excludeIngredient?: boolean;
+      // Exclude PRODUCT items yang punya Recipe — dipakai di product picker
+      // inventory (PO, stock-transfer, stock-adjustment). Logikanya: kalau
+      // menu sudah punya resep, stoknya derived dari ingredient — tidak
+      // boleh di-adjust / di-transfer / di-purchase langsung.
+      excludeRecipeProducts?: boolean;
       itemType?: "PRODUCT" | "SERVICE" | "INGREDIENT";
     },
   ): Promise<{ rows: unknown[]; total: number }> {
@@ -232,6 +237,7 @@ export class ProductSearchService {
       onlyWithStock = false,
       restrictToBranchAssigned = false,
       excludeIngredient = false,
+      excludeRecipeProducts = false,
       itemType,
     } = params;
     const conditions: string[] = ['"companyId" = $1'];
@@ -272,6 +278,9 @@ export class ProductSearchService {
       conditions.push(
         `"productId" NOT IN (SELECT id FROM products WHERE "itemType" = 'INGREDIENT')`,
       );
+    }
+    if (excludeRecipeProducts) {
+      conditions.push(`"productId" NOT IN (SELECT "productId" FROM recipes)`);
     }
     if (itemType) {
       conditions.push(

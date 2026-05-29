@@ -191,6 +191,7 @@ export class ProductsController {
       onlyWithStock?: boolean;
       restrictToBranchAssigned?: boolean;
       excludeIngredient?: boolean;
+      excludeRecipeProducts?: boolean;
       itemType?: "PRODUCT" | "SERVICE" | "INGREDIENT";
     },
   ) {
