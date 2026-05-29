@@ -229,6 +229,34 @@ export type RawCategory = {
   _count: { products: number };
 };
 
+export type RawTableInfo = {
+  number: number;
+  name: string | null;
+  capacity: number;
+  status: string;
+  section: string | null;
+};
+
+export type RawActiveTableSession = {
+  status: string;
+  customerName: string | null;
+  subtotal: number;
+  openedAt: Date;
+  table: { number: number; name: string | null; section: string | null };
+};
+
+export type RawPromotionInfo = {
+  name: string;
+  type: string;
+  value: number;
+  minPurchase: number | null;
+  maxDiscount: number | null;
+  description: string | null;
+  voucherCode: string | null;
+  startDate: Date;
+  endDate: Date;
+};
+
 // ─── Repository ──────────────────────────────────────────────────────
 
 @Injectable()
@@ -874,6 +902,112 @@ export class WhatsappChatbotRepository {
       },
       take: 50,
       orderBy: { name: "asc" },
+    });
+  }
+
+  // Daftar menu/produk aktif TANPA perlu kata kunci — untuk pertanyaan
+  // "menu apa saja / ada apa aja". Sumber kebenaran = master produk (live).
+  browseMenuProducts(
+    companyId: string,
+    category?: string,
+  ): Promise<RawProductSearch[]> {
+    return this.prisma.product.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        itemType: "PRODUCT",
+        ...(category
+          ? {
+              category: {
+                name: { contains: category, mode: "insensitive" as const },
+              },
+            }
+          : {}),
+      },
+      select: {
+        name: true,
+        sellingPrice: true,
+        stock: true,
+        unit: true,
+        description: true,
+        category: { select: { name: true } },
+        brand: { select: { name: true } },
+      },
+      take: 60,
+      orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
+    });
+  }
+
+  // ─── Meja (restoran/cafe) ────────────────────────────────────────
+  findTables(
+    companyId: string,
+    opts: { section?: string; minCapacity?: number; status?: string } = {},
+  ): Promise<RawTableInfo[]> {
+    return this.prisma.restaurantTable.findMany({
+      where: {
+        branch: { companyId },
+        isActive: true,
+        ...(opts.section
+          ? { section: { contains: opts.section, mode: "insensitive" } }
+          : {}),
+        ...(opts.minCapacity ? { capacity: { gte: opts.minCapacity } } : {}),
+        ...(opts.status ? { status: opts.status } : {}),
+      },
+      select: {
+        number: true,
+        name: true,
+        capacity: true,
+        status: true,
+        section: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
+      take: 200,
+    });
+  }
+
+  findActiveTableSessions(
+    companyId: string,
+  ): Promise<RawActiveTableSession[]> {
+    return this.prisma.tableSession.findMany({
+      where: {
+        branch: { companyId },
+        status: { in: ["OPEN", "AWAITING_PAYMENT"] },
+      },
+      select: {
+        status: true,
+        customerName: true,
+        subtotal: true,
+        openedAt: true,
+        table: { select: { number: true, name: true, section: true } },
+      },
+      orderBy: { openedAt: "asc" },
+      take: 100,
+    });
+  }
+
+  // ─── Promo aktif ─────────────────────────────────────────────────
+  findActivePromotions(companyId: string): Promise<RawPromotionInfo[]> {
+    const now = new Date();
+    return this.prisma.promotion.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        startDate: { lte: now },
+        endDate: { gte: now },
+      },
+      select: {
+        name: true,
+        type: true,
+        value: true,
+        minPurchase: true,
+        maxDiscount: true,
+        description: true,
+        voucherCode: true,
+        startDate: true,
+        endDate: true,
+      },
+      orderBy: { endDate: "asc" },
+      take: 20,
     });
   }
 }

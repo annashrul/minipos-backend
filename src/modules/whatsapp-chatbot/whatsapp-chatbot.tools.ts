@@ -371,6 +371,15 @@ export const OWNER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_tables_status",
+      description:
+        "Status meja restoran/cafe: jumlah per status (AVAILABLE/OCCUPIED/RESERVED/CLEANING) dan daftar meja yang sedang terisi beserta nama pelanggan, lama duduk, dan tagihan berjalan. Pakai untuk 'meja mana yang terisi?', 'berapa meja kosong?', 'omset meja yang lagi jalan'.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 export const CUSTOMER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
@@ -430,6 +439,54 @@ export const CUSTOMER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
       name: "list_categories",
       description:
         "Daftar kategori produk yang dijual toko. Pakai saat customer bertanya 'jual apa saja?' atau ingin tahu jenis-jenis produk yang tersedia.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browse_menu",
+      description:
+        "Daftar menu/produk yang tersedia LANGSUNG dari master (nama + harga + ketersediaan), TANPA perlu kata kunci. WAJIB pakai ini untuk pertanyaan 'menu apa saja?', 'ada makanan/minuman apa?', 'daftar harga', 'rekomendasi menu'. JANGAN mengarang nama menu atau harga — selalu ambil dari sini. Bisa difilter per kategori.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            description:
+              "Filter nama kategori (opsional, mis. 'makanan', 'minuman').",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_table_availability",
+      description:
+        "Cek ketersediaan meja (untuk restoran/cafe) — jumlah meja kosong/tersedia, total kapasitas, dan per area/section. Pakai untuk 'ada meja kosong?', 'masih ada tempat?', 'meja untuk 6 orang ada?'. Tidak membocorkan data pelanggan yang sedang duduk.",
+      parameters: {
+        type: "object",
+        properties: {
+          section: {
+            type: "string",
+            description: "Filter area (mis. 'Indoor', 'Outdoor', 'VIP').",
+          },
+          minCapacity: {
+            type: "number",
+            description: "Minimal kapasitas kursi yang dibutuhkan (mis. 6).",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_promotions",
+      description:
+        "Daftar promo/diskon yang sedang aktif beserta syarat & masa berlakunya. Pakai untuk 'ada promo apa?', 'lagi ada diskon?', 'voucher apa yang berlaku?'.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -1132,6 +1189,41 @@ export async function executeOwnerTool(
         })),
       };
     }
+
+    case "get_tables_status": {
+      const [tables, sessions] = await Promise.all([
+        repo.findTables(companyId, {}),
+        repo.findActiveTableSessions(companyId),
+      ]);
+      if (tables.length === 0) {
+        return { configured: false, message: "Belum ada data meja." };
+      }
+      const statusCount = new Map<string, number>();
+      for (const t of tables) {
+        statusCount.set(t.status, (statusCount.get(t.status) ?? 0) + 1);
+      }
+      const now = Date.now();
+      const occupied = sessions.map((s) => ({
+        table: s.table.name || `Meja ${s.table.number}`,
+        section: s.table.section ?? null,
+        customer: s.customerName ?? "—",
+        durationMinutes: Math.max(
+          0,
+          Math.round((now - s.openedAt.getTime()) / 60000),
+        ),
+        runningBill: fmtRp(s.subtotal),
+        status: s.status,
+      }));
+      return {
+        totalTables: tables.length,
+        byStatus: Array.from(statusCount.entries()).map(([status, count]) => ({
+          status,
+          count,
+        })),
+        activeSessions: occupied.length,
+        occupied,
+      };
+    }
   }
   return { error: `Tool ${name} tidak dikenal` };
 }
@@ -1244,8 +1336,114 @@ export async function executeCustomerTool(
         })),
       };
     }
+
+    case "browse_menu": {
+      const category =
+        typeof args.category === "string" ? args.category.trim() : "";
+      const products = await repo.browseMenuProducts(
+        companyId,
+        category || undefined,
+      );
+      if (products.length === 0) {
+        return {
+          count: 0,
+          items: [],
+          instruction:
+            "Menu/produk tidak ada di master. Sampaikan menu belum tersedia & sarankan hubungi admin. DILARANG mengarang nama menu atau harga.",
+        };
+      }
+      return {
+        count: products.length,
+        // PENTING: harga & nama ini dari master (live) — jawab APA ADANYA.
+        items: products.map((p) => ({
+          name: p.name,
+          category: p.category?.name ?? null,
+          price: fmtRp(p.sellingPrice),
+          availability: p.stock > 0 ? "tersedia" : "habis",
+          description: p.description ?? null,
+        })),
+      };
+    }
+
+    case "check_table_availability": {
+      const section =
+        typeof args.section === "string" ? args.section.trim() : "";
+      const minCapacity =
+        Number(args.minCapacity) > 0 ? Number(args.minCapacity) : undefined;
+      const tables = await repo.findTables(companyId, {
+        ...(section ? { section } : {}),
+        ...(minCapacity ? { minCapacity } : {}),
+      });
+      if (tables.length === 0) {
+        return {
+          configured: false,
+          message:
+            "Belum ada data meja yang cocok. Sarankan customer hubungi admin untuk reservasi/info tempat.",
+        };
+      }
+      const available = tables.filter((t) => t.status === "AVAILABLE");
+      const bySection = new Map<
+        string,
+        { available: number; total: number; seats: number }
+      >();
+      for (const t of tables) {
+        const key = t.section || "Umum";
+        const e = bySection.get(key) ?? { available: 0, total: 0, seats: 0 };
+        e.total += 1;
+        if (t.status === "AVAILABLE") {
+          e.available += 1;
+          e.seats += t.capacity;
+        }
+        bySection.set(key, e);
+      }
+      return {
+        totalTables: tables.length,
+        availableTables: available.length,
+        availableSeats: available.reduce((s, t) => s + t.capacity, 0),
+        ...(minCapacity ? { filterMinCapacity: minCapacity } : {}),
+        bySection: Array.from(bySection.entries()).map(([sec, v]) => ({
+          section: sec,
+          available: v.available,
+          total: v.total,
+          availableSeats: v.seats,
+        })),
+      };
+    }
+
+    case "list_promotions": {
+      const promos = await repo.findActivePromotions(companyId);
+      return {
+        count: promos.length,
+        items: promos.map((p) => ({
+          name: p.name,
+          benefit: describePromo(p),
+          minPurchase: p.minPurchase ? fmtRp(p.minPurchase) : null,
+          voucherCode: p.voucherCode ?? null,
+          validUntil: toDateOnly(p.endDate),
+          description: p.description ?? null,
+        })),
+      };
+    }
   }
   return { error: `Tool ${name} tidak dikenal` };
+}
+
+function describePromo(p: {
+  type: string;
+  value: number;
+  maxDiscount: number | null;
+}): string {
+  const t = (p.type || "").toUpperCase();
+  if (t.includes("PERCENT")) {
+    return (
+      `Diskon ${p.value}%` +
+      (p.maxDiscount ? ` (maks ${fmtRp(p.maxDiscount)})` : "")
+    );
+  }
+  if (t.includes("BUY") || t.includes("BXGY") || t.includes("GET")) {
+    return "Beli sekian gratis sekian (lihat detail/syarat)";
+  }
+  return `Potongan ${fmtRp(p.value)}`;
 }
 
 function phoneVariants(phone: string): string[] {
