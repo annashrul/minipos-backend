@@ -437,12 +437,18 @@ export class ProductsRepository {
         active: bigint;
         lowStock: bigint;
         outOfStock: bigint;
+        menuCount: bigint;
+        ingredientCount: bigint;
+        serviceCount: bigint;
       }]
     >`
       SELECT COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE p."isActive" = true)::int AS active,
              COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) > 0 AND COALESCE(bs.quantity, 0) <= 10)::int AS "lowStock",
-             COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) = 0)::int AS "outOfStock"
+             COUNT(*) FILTER (WHERE COALESCE(bs.quantity, 0) = 0)::int AS "outOfStock",
+             COUNT(*) FILTER (WHERE p."itemType" = 'PRODUCT')::int AS "menuCount",
+             COUNT(*) FILTER (WHERE p."itemType" = 'INGREDIENT')::int AS "ingredientCount",
+             COUNT(*) FILTER (WHERE p."itemType" = 'SERVICE')::int AS "serviceCount"
         FROM products p
         LEFT JOIN branch_stocks bs ON bs."productId" = p.id AND bs."branchId" = ${branchId}
         WHERE p."companyId" = ${companyId} AND p."deletedAt" IS NULL
@@ -456,12 +462,18 @@ export class ProductsRepository {
         active: bigint;
         lowStock: bigint;
         outOfStock: bigint;
+        menuCount: bigint;
+        ingredientCount: bigint;
+        serviceCount: bigint;
       }]
     >`
       SELECT COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE "isActive" = true)::int AS active,
              COUNT(*) FILTER (WHERE stock > 0 AND stock <= 10)::int AS "lowStock",
-             COUNT(*) FILTER (WHERE stock = 0)::int AS "outOfStock"
+             COUNT(*) FILTER (WHERE stock = 0)::int AS "outOfStock",
+             COUNT(*) FILTER (WHERE "itemType" = 'PRODUCT')::int AS "menuCount",
+             COUNT(*) FILTER (WHERE "itemType" = 'INGREDIENT')::int AS "ingredientCount",
+             COUNT(*) FILTER (WHERE "itemType" = 'SERVICE')::int AS "serviceCount"
         FROM products
         WHERE "companyId" = ${companyId} AND "deletedAt" IS NULL
     `;

@@ -216,24 +216,22 @@ export class ProductsService {
     active: number;
     lowStock: number;
     outOfStock: number;
+    menuCount: number;
+    ingredientCount: number;
+    serviceCount: number;
   }> {
-    if (branchId) {
-      const result = await this.repo.statsByBranch(companyId, branchId);
-      const r = result[0];
-      return {
-        total: Number(r.total),
-        active: Number(r.active),
-        lowStock: Number(r.lowStock),
-        outOfStock: Number(r.outOfStock),
-      };
-    }
-    const result = await this.repo.statsGlobal(companyId);
+    const result = branchId
+      ? await this.repo.statsByBranch(companyId, branchId)
+      : await this.repo.statsGlobal(companyId);
     const r = result[0];
     return {
       total: Number(r.total),
       active: Number(r.active),
       lowStock: Number(r.lowStock),
       outOfStock: Number(r.outOfStock),
+      menuCount: Number(r.menuCount),
+      ingredientCount: Number(r.ingredientCount),
+      serviceCount: Number(r.serviceCount),
     };
   }
 
