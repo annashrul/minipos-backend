@@ -162,18 +162,24 @@ export class WhatsappChatbotService implements OnModuleInit {
     if (params.fromMe) return;
     if (params.isGroup) return;
     if (!params.content || params.content.trim().length === 0) return;
-    if (!params.fromNumber) return;
+
+    // fromNumber bisa null untuk kontak LID (privasi WA — pengirim belum
+    // simpan nomor bisnis). Pakai remoteJid sebagai identitas/throttle key
+    // supaya bot tetap membalas; balasan dikirim ke remoteJid (lihat
+    // sendTextToJid yang mendukung @lid).
+    const senderKey = params.fromNumber ?? params.remoteJid;
+    if (!senderKey) return;
 
     const config = await this.repo.findBotConfigFull(params.companyId);
     if (!config || !config.enabled) return;
 
-    // Anti-loop: throttle per nomor.
+    // Anti-loop: throttle per pengirim.
     const now = Date.now();
-    const last = this.lastReplyAt.get(params.fromNumber) ?? 0;
+    const last = this.lastReplyAt.get(senderKey) ?? 0;
     if (now - last < config.replyThrottleSec * 1000) return;
-    this.lastReplyAt.set(params.fromNumber, now);
+    this.lastReplyAt.set(senderKey, now);
 
-    const role = this.detectRole(config.ownerPhones, params.fromNumber);
+    const role = this.detectRole(config.ownerPhones, params.fromNumber ?? "");
     const reply = await this.generateReply({
       companyId: params.companyId,
       senderPhone: params.fromNumber,

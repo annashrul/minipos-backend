@@ -66,19 +66,56 @@ export class WhatsappMessageService {
     }
   }
 
-  // Untuk kompatibilitas dengan chatbot yang kirim balasan pakai remoteJid
-  // (mendukung @lid). Kita extract bagian sebelum '@' lalu treat sebagai
-  // phone. Catatan: untuk @lid (LID anonymous, contact belum tersimpan di
-  // pengirim), delivery via wa-service masih best-effort sama seperti dulu.
+  // Balas ke remoteJid inbound. Untuk JID mentah (termasuk `@lid` — kontak
+  // yang belum tersimpan di pengirim), teruskan JID UTUH ke wa-service
+  // supaya Baileys mengirim ke alamat yang benar. Untuk nomor biasa,
+  // fallback ke sendText.
   async sendTextToJid(
     companyId: string,
     jidOrPhone: string,
     message: string,
   ): Promise<{ success: true; messageId?: string }> {
-    const cleaned = jidOrPhone.includes("@")
-      ? jidOrPhone.split("@")[0]?.split(":")[0] ?? jidOrPhone
-      : jidOrPhone;
-    return this.sendText(companyId, cleaned, message);
+    if (!jidOrPhone.includes("@")) {
+      return this.sendText(companyId, jidOrPhone, message);
+    }
+    const creds = await this.ensureTenantCredentials(companyId);
+    const session = await this.ensureLocalSession(companyId);
+    try {
+      const result = await this.wa.sendTextToJid(
+        creds.apiKey,
+        jidOrPhone,
+        message,
+      );
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: jidOrPhone,
+          messageType: "text",
+          content: message,
+          status: result.status || "SENT",
+          providerMessageId: result.providerMessageId,
+        },
+      });
+      return { success: true, messageId: result.messageId };
+    } catch (err) {
+      const msg = (err as Error).message;
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: jidOrPhone,
+          messageType: "text",
+          content: message,
+          status: "FAILED",
+          errorMessage: msg.slice(0, 500),
+        },
+      });
+      if (/belum aktif|tidak ditemukan|404/i.test(msg)) {
+        throw new NotFoundException(msg);
+      }
+      throw new BadRequestException(msg);
+    }
   }
 
   // ─── Message log query (lokal — wa-service tidak simpan history) ──

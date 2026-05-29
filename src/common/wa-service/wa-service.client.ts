@@ -127,4 +127,19 @@ export class WaServiceClient {
       { phone, message },
     );
   }
+
+  // Kirim ke JID mentah (mendukung `<id>@lid` untuk kontak yang belum
+  // tersimpan). Dipakai chatbot untuk balas pesan inbound via remoteJid.
+  async sendTextToJid(
+    apiKey: string,
+    jid: string,
+    message: string,
+  ): Promise<WaServiceSendTextResult> {
+    return this.request(
+      "POST",
+      "/api/messages/send-text-jid",
+      this.tenantHeaders(apiKey),
+      { jid, message },
+    );
+  }
 }
