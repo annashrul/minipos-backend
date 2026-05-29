@@ -2,6 +2,29 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 
+// Kata umum yang dibuang saat tokenisasi query pencarian produk — supaya
+// kalimat seperti "saya mau pesan mie goreng kampung bumbunya pedas" tetap
+// cocok ke produk lewat token "mie","goreng","kampung".
+const SEARCH_STOPWORDS = new Set([
+  "saya", "aku", "mau", "ingin", "pesan", "mesan", "order", "tolong", "minta",
+  "beli", "ada", "punya", "yang", "dengan", "pakai", "buat", "untuk", "nya",
+  "dong", "kak", "bang", "bumbu", "bumbunya", "rasa", "rasanya", "level",
+  "porsi", "dan", "atau", "apakah", "apa", "aja", "saja", "menu", "harga",
+  "berapa", "tersedia", "ada?",
+]);
+
+function tokenizeQuery(query: string): string[] {
+  return Array.from(
+    new Set(
+      (query || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length >= 3 && !SEARCH_STOPWORDS.has(t)),
+    ),
+  );
+}
+
 // ─── SELECT constants ────────────────────────────────────────────────
 
 const COMPANY_BASIC_SELECT = {
@@ -856,21 +879,32 @@ export class WhatsappChatbotRepository {
     });
   }
 
-  searchProductsCatalog(
+  async searchProductsCatalog(
     companyId: string,
     query: string,
     category?: string,
   ): Promise<RawProductSearch[]> {
-    return this.prisma.product.findMany({
+    const tokens = tokenizeQuery(query);
+    // Cocokkan per-token (OR) supaya "mie goreng kampung" tetap menemukan
+    // "Mie Goreng Jawa" & "Nasi Goreng Kampung" — lalu di-ranking by overlap.
+    const orConds: Prisma.ProductWhereInput[] =
+      tokens.length > 0
+        ? tokens.flatMap((t) => [
+            { name: { contains: t, mode: "insensitive" as const } },
+            { description: { contains: t, mode: "insensitive" as const } },
+          ])
+        : [
+            { name: { contains: query, mode: "insensitive" as const } },
+            { description: { contains: query, mode: "insensitive" as const } },
+            { barcode: { contains: query, mode: "insensitive" as const } },
+          ];
+
+    const rows = await this.prisma.product.findMany({
       where: {
         companyId,
         isActive: true,
         itemType: "PRODUCT",
-        OR: [
-          { name: { contains: query, mode: "insensitive" } },
-          { description: { contains: query, mode: "insensitive" } },
-          { barcode: { contains: query, mode: "insensitive" } },
-        ],
+        OR: orConds,
         ...(category
           ? {
               category: {
@@ -888,9 +922,28 @@ export class WhatsappChatbotRepository {
         category: { select: { name: true } },
         brand: { select: { name: true } },
       },
-      take: 15,
-      orderBy: [{ stock: "desc" }, { name: "asc" }],
+      take: 30,
     });
+
+    if (tokens.length === 0) {
+      return rows
+        .sort((a, b) => b.stock - a.stock || a.name.localeCompare(b.name))
+        .slice(0, 15);
+    }
+
+    // Ranking: token cocok di nama bobotnya lebih besar daripada di deskripsi.
+    const scored = rows.map((p) => {
+      const name = p.name.toLowerCase();
+      const desc = (p.description ?? "").toLowerCase();
+      let score = 0;
+      for (const t of tokens) {
+        if (name.includes(t)) score += 2;
+        else if (desc.includes(t)) score += 1;
+      }
+      return { p, score };
+    });
+    scored.sort((a, b) => b.score - a.score || b.p.stock - a.p.stock);
+    return scored.slice(0, 12).map((s) => s.p);
   }
 
   findCategories(companyId: string): Promise<RawCategory[]> {
