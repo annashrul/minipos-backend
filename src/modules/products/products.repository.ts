@@ -479,6 +479,105 @@ export class ProductsRepository {
     `;
   }
 
+  // ── PO suggestions: produk yang stoknya <= minStock ──
+  // Logic:
+  //   - Pakai branch stock kalau branchId di-pass, kalau tidak pakai product.stock global
+  //   - Exclude SERVICE (PO untuk jasa tidak relevan)
+  //   - Exclude PRODUCT yang punya Recipe (stoknya derived dari ingredient)
+  //   - lastPurchasePrice: ambil dari PurchaseOrderItem terakhir (kalau ada)
+  //   - Order by gap (minStock - currentStock) DESC supaya yang paling kritis di atas
+  async findPoSuggestions(companyId: string, branchId?: string) {
+    if (branchId) {
+      return this.prisma.$queryRaw<
+        Array<{
+          id: string;
+          code: string;
+          name: string;
+          supplierId: string | null;
+          supplierName: string | null;
+          currentStock: number;
+          minStock: number;
+          purchasePrice: number;
+          lastPurchasePrice: number | null;
+          unit: string;
+        }>
+      >`
+        SELECT p.id,
+               p.code,
+               p.name,
+               p."supplierId",
+               s.name AS "supplierName",
+               COALESCE(bs.quantity, 0)::int AS "currentStock",
+               p."minStock"::int AS "minStock",
+               p."purchasePrice"::float8 AS "purchasePrice",
+               (
+                 SELECT poi."unitPrice"::float8
+                   FROM purchase_order_items poi
+                   JOIN purchase_orders po ON po.id = poi."purchaseOrderId"
+                  WHERE poi."productId" = p.id AND po."companyId" = ${companyId}
+                  ORDER BY po."createdAt" DESC
+                  LIMIT 1
+               ) AS "lastPurchasePrice",
+               p.unit
+          FROM products p
+          LEFT JOIN branch_stocks bs ON bs."productId" = p.id AND bs."branchId" = ${branchId}
+          LEFT JOIN suppliers s ON s.id = p."supplierId"
+         WHERE p."companyId" = ${companyId}
+           AND p."deletedAt" IS NULL
+           AND p."isActive" = true
+           AND p."itemType" IN ('PRODUCT', 'INGREDIENT')
+           AND p."minStock" > 0
+           AND COALESCE(bs.quantity, 0) <= p."minStock"
+           AND p.id NOT IN (SELECT "productId" FROM recipes)
+         ORDER BY (p."minStock" - COALESCE(bs.quantity, 0)) DESC, p.name ASC
+         LIMIT 100
+      `;
+    }
+    return this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        code: string;
+        name: string;
+        supplierId: string | null;
+        supplierName: string | null;
+        currentStock: number;
+        minStock: number;
+        purchasePrice: number;
+        lastPurchasePrice: number | null;
+        unit: string;
+      }>
+    >`
+      SELECT p.id,
+             p.code,
+             p.name,
+             p."supplierId",
+             s.name AS "supplierName",
+             p.stock::int AS "currentStock",
+             p."minStock"::int AS "minStock",
+             p."purchasePrice"::float8 AS "purchasePrice",
+             (
+               SELECT poi."unitPrice"::float8
+                 FROM purchase_order_items poi
+                 JOIN purchase_orders po ON po.id = poi."purchaseOrderId"
+                WHERE poi."productId" = p.id AND po."companyId" = ${companyId}
+                ORDER BY po."createdAt" DESC
+                LIMIT 1
+             ) AS "lastPurchasePrice",
+             p.unit
+        FROM products p
+        LEFT JOIN suppliers s ON s.id = p."supplierId"
+       WHERE p."companyId" = ${companyId}
+         AND p."deletedAt" IS NULL
+         AND p."isActive" = true
+         AND p."itemType" IN ('PRODUCT', 'INGREDIENT')
+         AND p."minStock" > 0
+         AND p.stock <= p."minStock"
+         AND p.id NOT IN (SELECT "productId" FROM recipes)
+       ORDER BY (p."minStock" - p.stock) DESC, p.name ASC
+       LIMIT 100
+    `;
+  }
+
   // ── Import template data ──
 
   async findImportTemplateData(companyId: string) {

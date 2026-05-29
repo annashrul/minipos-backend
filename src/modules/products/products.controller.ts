@@ -101,6 +101,17 @@ export class ProductsController {
     return { data: { code } };
   }
 
+  @Get("po-suggestions")
+  @RequireAccess("purchases", "view")
+  @ApiOperation({ summary: "Auto-suggest produk yang perlu di-PO (stok ≤ minStock)" })
+  async poSuggestions(
+    @CurrentCompany() companyId: string,
+    @Query("branchId") branchId?: string,
+  ) {
+    const data = await this.products.getPoSuggestions(companyId, branchId);
+    return { data };
+  }
+
   @Get("top-selling")
   @RequireAccess("products", "view")
   @ApiOperation({ summary: "List top-selling products" })

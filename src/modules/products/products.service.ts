@@ -235,6 +235,29 @@ export class ProductsService {
     };
   }
 
+  // ── Auto-suggest produk yang perlu di-PO (stok <= minStock) ──
+  // Hitung suggestedQty di service: bring stock back to 2× minStock.
+  // Unit price default ambil dari lastPurchasePrice (kalau ada) atau
+  // product.purchasePrice. Frontend tinggal pakai langsung tanpa logic tambahan.
+  async getPoSuggestions(companyId: string, branchId?: string) {
+    const rows = await this.repo.findPoSuggestions(companyId, branchId);
+    return rows.map((r) => {
+      const suggestedQty = Math.max(r.minStock * 2 - r.currentStock, 1);
+      return {
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        unit: r.unit,
+        supplierId: r.supplierId,
+        supplierName: r.supplierName,
+        currentStock: r.currentStock,
+        minStock: r.minStock,
+        suggestedQty,
+        unitPrice: r.lastPurchasePrice ?? r.purchasePrice,
+      };
+    });
+  }
+
   async generateUniqueProductCode(companyId: string): Promise<string> {
     const company = await this.repo.findCompanySlug(companyId);
     const rawSlug = (company?.slug || "PRD").replace(/[^a-zA-Z0-9]/g, "");
