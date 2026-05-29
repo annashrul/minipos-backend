@@ -68,6 +68,12 @@ type TenantCredentials = {
 @Injectable()
 export class WhatsappReceiptService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WhatsappReceiptService.name);
+  // Diagnostik: status terakhir yang dikembalikan getSession per-company,
+  // untuk mengukur seberapa sering status berganti (deteksi flapping di API).
+  private readonly lastSessionStatus = new Map<
+    string,
+    { status: string; stage: string; at: number }
+  >();
   private readonly inboundHandlers: InboundMessageHandler[] = [];
 
   constructor(
@@ -107,17 +113,53 @@ export class WhatsappReceiptService implements OnModuleInit, OnModuleDestroy {
   // ─── Session API ───────────────────────────────────────────────────
   async getSession(companyId: string): Promise<SessionView> {
     const creds = await this.ensureTenantCredentials(companyId);
+    let view: SessionView;
+    let source: "live" | "db-fallback";
     try {
       const live = await this.wa.getSession(creds.apiKey);
       // Best-effort cache supaya kalau wa-service down, kita masih bisa
       // tampilkan snapshot terakhir di UI tanpa error.
       await this.cacheSnapshot(companyId, live);
-      return this.toSessionView(live);
+      view = this.toSessionView(live);
+      source = "live";
     } catch (err) {
       this.logger.warn(
         `getSession company=${companyId} fallback ke DB snapshot: ${(err as Error).message}`,
       );
-      return this.snapshotFromDb(companyId);
+      view = await this.snapshotFromDb(companyId);
+      source = "db-fallback";
+    }
+    this.logSessionPoll(companyId, view, source);
+    return view;
+  }
+
+  // Diagnostik flapping: log tiap GET /baileys/session — status yang
+  // dikembalikan, sumbernya (live wa-service / db-fallback), dan jeda detik
+  // sejak status BERUBAH terakhir kali. Cari "[WA-POLL]" di log.
+  private logSessionPoll(
+    companyId: string,
+    view: SessionView,
+    source: "live" | "db-fallback",
+  ): void {
+    const now = Date.now();
+    const prev = this.lastSessionStatus.get(companyId);
+    const changed =
+      !prev || prev.status !== view.status || prev.stage !== view.stage;
+    const sinceChangeSec = prev ? ((now - prev.at) / 1000).toFixed(1) : "n/a";
+    if (changed) {
+      this.logger.log(
+        `[WA-POLL] company=${companyId} status=${view.status} stage=${view.stage} source=${source} BERUBAH` +
+          (prev ? ` dari ${prev.status}/${prev.stage} setelah ${sinceChangeSec}s` : " (pertama)"),
+      );
+      this.lastSessionStatus.set(companyId, {
+        status: view.status,
+        stage: view.stage,
+        at: now,
+      });
+    } else {
+      this.logger.debug(
+        `[WA-POLL] company=${companyId} status=${view.status} stage=${view.stage} source=${source} (tetap, ${sinceChangeSec}s)`,
+      );
     }
   }
 
