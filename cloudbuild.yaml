@@ -56,6 +56,10 @@ steps:
       - "--timeout=60"
       - "--execution-environment=gen2"
       - "--cpu-boost"
+      # CRITICAL: keep CPU allocated walau idle. Tanpa ini, socket.io client
+      # ke wa-service (/realtime) beku saat tidak ada HTTP request, sehingga
+      # event message.inbound hilang & bot WA tidak membalas pesan masuk.
+      - "--no-cpu-throttling"
       - "--service-account=${_RUNTIME_SA}"
       # PENTING: jangan set PORT — itu reserved env Cloud Run, auto ke 8080.
       # Set PORT manual akan bikin deploy gagal.
