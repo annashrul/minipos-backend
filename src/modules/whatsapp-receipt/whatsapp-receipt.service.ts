@@ -227,6 +227,26 @@ export class WhatsappReceiptService implements OnModuleInit, OnModuleDestroy {
     }
     if (data.fromMe) return;
 
+    // Idempotensi: skip kalau pesan dengan providerMessageId ini sudah
+    // diproses. wa-service/Baileys kadang mengirim event inbound yang sama
+    // lebih dari sekali, dan tiap instance pos-api punya socket sendiri ke
+    // wa-service — tanpa guard ini bot bisa membalas dobel ke customer.
+    if (data.providerMessageId) {
+      const existing = await this.prisma.whatsappMessageLog.findFirst({
+        where: {
+          providerMessageId: data.providerMessageId,
+          direction: "INBOUND",
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        this.logger.debug(
+          `Inbound duplikat di-skip (providerMessageId=${data.providerMessageId})`,
+        );
+        return;
+      }
+    }
+
     // Persist log inbound dulu — handler chatbot mungkin query history.
     await this.prisma.whatsappMessageLog.create({
       data: {
