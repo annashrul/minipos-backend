@@ -292,6 +292,19 @@ export class WhatsappChatbotService implements OnModuleInit {
     const model = config?.model || "openai/gpt-oss-120b";
     const groq = new Groq({ apiKey });
 
+    // Fallback ke Google AI Studio (Gemini) saat Groq kena rate-limit/quota
+    // harian. Gemini punya endpoint OpenAI-compatible, jadi cukup pakai client
+    // yang sama dengan baseURL + apiKey berbeda. Aktif kalau GEMINI_API_KEY ada.
+    const geminiKey = this.config.get<string>("GEMINI_API_KEY");
+    const geminiModel =
+      this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+    const gemini = geminiKey
+      ? new Groq({
+          apiKey: geminiKey,
+          baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+        })
+      : null;
+
     const basePrompt =
       params.role === "OWNER"
         ? config?.systemPromptOwner || DEFAULT_PROMPT_OWNER
@@ -360,6 +373,26 @@ export class WhatsappChatbotService implements OnModuleInit {
           max_tokens: 1024,
         });
       } catch (err) {
+        // Fallback ke Gemini saat Groq kena rate-limit / quota harian (429).
+        if (gemini && isRateLimitError(err)) {
+          this.logger.warn(
+            "[bot] Groq rate-limited — fallback ke Gemini (Google AI Studio)",
+          );
+          try {
+            return await gemini.chat.completions.create({
+              model: geminiModel,
+              messages: msgs,
+              tools,
+              tool_choice: "auto",
+              max_tokens: 1024,
+            });
+          } catch (gerr) {
+            this.logger.warn(
+              `[bot] Gemini fallback gagal: ${(gerr as Error).message}`,
+            );
+            // lanjut ke handling tool_use_failed pada error Groq asli di bawah.
+          }
+        }
         // Groq SDK error structure tidak konsisten — code & failed_generation
         // bisa ada di:
         //   - err.error?.code, err.error?.failed_generation (typed APIError)
@@ -755,6 +788,17 @@ const INLINE_FN_RE_LOOSE =
   /<function[=:]?\s*([a-zA-Z0-9_]+)\s*[=>]?\s*([\s\S]*?)\s*<\/?\s*function\s*\/?\s*>/gi;
 
 type ParsedInlineCall = { id: string; name: string; args: string };
+
+// Deteksi error rate-limit / quota (Groq harian) untuk memicu fallback Gemini.
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: number; message?: string };
+  if (e.status === 429) return true;
+  const msg = (e.message ?? "").toLowerCase();
+  return /rate.?limit|quota|too many requests|resource_exhausted|daily limit|limit reached|insufficient_quota|(^|\D)429(\D|$)/.test(
+    msg,
+  );
+}
 
 // Ekstrak URL order online (mengandung /table/<token>) dari teks balasan,
 // buang tanda baca penutup. Dipakai untuk memutuskan kirim pesan tombol.
