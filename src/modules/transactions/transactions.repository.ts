@@ -24,6 +24,7 @@ export const TX_SELECT = {
   status: true,
   voidReason: true,
   notes: true,
+  syncedFromOffline: true,
   createdAt: true,
   updatedAt: true,
   _count: { select: { items: true } },

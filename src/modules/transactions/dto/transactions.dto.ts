@@ -95,6 +95,8 @@ export type TransactionResponse = {
   status: string;
   voidReason: string | null;
   notes: string | null;
+  /** True kalau transaksi dibuat offline lalu disinkronkan — promo/poin perlu diverifikasi. */
+  syncedFromOffline: boolean;
   createdAt: string;
   updatedAt: string;
   itemCount: number;
@@ -215,6 +217,9 @@ export const CheckoutSchema = z
     // transaksi yang sudah ada alih-alih membuat duplikat. Dipakai saat
     // sinkronisasi transaksi offline yang bisa di-retry beberapa kali.
     idempotencyKey: z.string().max(100).optional(),
+    // Penanda transaksi dibuat saat offline lalu disinkronkan. Disimpan apa
+    // adanya untuk ditandai di riwayat (verifikasi promo/poin manual).
+    syncedFromOffline: z.boolean().optional(),
   })
   .refine(
     (v) => {

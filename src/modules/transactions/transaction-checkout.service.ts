@@ -288,6 +288,7 @@ export class TransactionCheckoutService {
               promoApplied: dto.promoApplied ?? null,
               notes: dto.notes ?? null,
               idempotencyKey: dto.idempotencyKey ?? null,
+              syncedFromOffline: dto.syncedFromOffline ?? false,
               status: "COMPLETED",
               items: {
                 create: dto.items.map((item) => {

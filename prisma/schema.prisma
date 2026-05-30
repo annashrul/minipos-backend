@@ -795,6 +795,10 @@ model Transaction {
   // ada untuk company ini, checkout mengembalikan transaksi yang sudah ada.
   // NULL untuk transaksi online biasa (banyak NULL diizinkan di composite unique).
   idempotencyKey       String?
+  // True kalau transaksi ini dibuat saat offline lalu disinkronkan. Dipakai
+  // untuk menandai di riwayat agar staf bisa memverifikasi promo/poin/customer
+  // yang mungkin tidak terhitung saat offline.
+  syncedFromOffline    Boolean           @default(false)
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   items                TransactionItem[]

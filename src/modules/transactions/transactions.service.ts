@@ -269,6 +269,7 @@ function toTransactionResponse(t: RawTx): TransactionResponse {
     status: t.status,
     voidReason: t.voidReason,
     notes: t.notes,
+    syncedFromOffline: t.syncedFromOffline,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     itemCount: t._count.items,
