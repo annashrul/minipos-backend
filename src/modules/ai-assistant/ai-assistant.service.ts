@@ -215,6 +215,110 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_dashboard_overview",
+      description:
+        "Ringkasan data dashboard: total omzet/pendapatan, jumlah transaksi, rata-rata per transaksi, diskon, pajak, perbandingan dengan periode sebelumnya (naik/turun %), metode bayar teratas, dan produk teratas. WAJIB dipakai saat user nanya 'gimana penjualan hari ini', 'ringkasan dashboard', 'omzet bulan ini', 'performa toko', 'lagi naik atau turun'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description: "today / week / month / year (default month)",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_payment_method_breakdown",
+      description:
+        "Rincian penjualan per METODE PEMBAYARAN (Tunai, QRIS, Transfer, E-Wallet, Debit, Kredit, dll): jumlah transaksi, total nominal, dan persentase tiap metode + metode paling ramai. WAJIB dipakai saat user nanya 'metode pembayaran paling banyak', 'pembayaran paling ramai pakai apa', 'berapa persen QRIS', 'orang lebih sering bayar cash atau transfer'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description: "today / week / month / year (default month)",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_table_status",
+      description:
+        "Status MEJA saat ini (untuk restoran/cafe): total meja, jumlah per status (tersedia/terisi/reserved/cleaning), dan daftar meja yang sedang terisi beserta nama customer, tagihan berjalan, dan jam buka sesi. Dipakai saat user nanya 'meja mana yang kosong', 'meja yang terisi', 'kondisi meja sekarang', 'ada berapa meja available'.",
+      parameters: {
+        type: "object",
+        properties: {
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_busiest_tables",
+      description:
+        "Meja PALING RAMAI berdasarkan omzet & jumlah transaksi dalam satu periode. Dipakai saat user nanya 'meja mana yang paling ramai', 'meja paling sering dipakai', 'meja penyumbang omzet terbesar'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description: "today / week / month / year (default month)",
+          },
+          limit: { type: "number", description: "Jumlah meja (default 10)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_sales_trend",
+      description:
+        "Tren penjualan HARIAN beberapa hari terakhir (omzet + jumlah transaksi per tanggal) plus hari paling ramai. Dipakai saat user nanya 'tren penjualan', 'hari apa paling ramai', 'grafik penjualan minggu ini', 'penjualan naik atau turun belakangan'.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "Jumlah hari ke belakang (default 14)",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_profit_summary",
+      description:
+        "Ringkasan LABA KOTOR (estimasi): omzet, modal/COGS, laba kotor, dan margin %. Modal dihitung dari harga beli produk saat ini. Dipakai saat user nanya 'berapa untung/laba', 'margin keuntungan', 'profit bulan ini', 'omzet vs modal'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description: "today / week / month / year (default month)",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
 ];
 
 type AuthContext = {
@@ -321,6 +425,36 @@ export class AiAssistantService {
             auth,
             input as { limit?: number },
           );
+        case "get_dashboard_overview":
+          return await this.tools.executeGetDashboardOverview(
+            auth,
+            input as { period?: string; branchId?: string },
+          );
+        case "get_payment_method_breakdown":
+          return await this.tools.executeGetPaymentBreakdown(
+            auth,
+            input as { period?: string; branchId?: string },
+          );
+        case "get_table_status":
+          return await this.tools.executeGetTableStatus(
+            auth,
+            input as { branchId?: string },
+          );
+        case "get_busiest_tables":
+          return await this.tools.executeGetBusiestTables(
+            auth,
+            input as { period?: string; limit?: number },
+          );
+        case "get_sales_trend":
+          return await this.tools.executeGetSalesTrend(
+            auth,
+            input as { days?: number; branchId?: string },
+          );
+        case "get_profit_summary":
+          return await this.tools.executeGetProfitSummary(
+            auth,
+            input as { period?: string; branchId?: string },
+          );
         default:
           return { error: `Tool '${name}' not found` };
       }
@@ -357,8 +491,19 @@ ATURAN KETAT:
 7. WAJIB pakai lookup_rack_contents saat user nanya ISI RAK ("apa isi rak X", "produk apa di rak Y", "tampilkan rak Z")
 8. find_low_stock_with_location lebih baik daripada get_low_stock karena include lokasi rak
 9. Saat buat PO, panggil get_restock_recommendation + get_suppliers dulu
+10. Pertanyaan soal DASHBOARD / ringkasan penjualan / omzet / performa toko / naik-turun -> get_dashboard_overview
+11. Pertanyaan soal METODE PEMBAYARAN paling ramai / persentase cash-QRIS-transfer -> get_payment_method_breakdown
+12. Pertanyaan soal MEJA: kondisi/kosong/terisi sekarang -> get_table_status; meja paling ramai (periode) -> get_busiest_tables
+13. Pertanyaan soal TREN / hari paling ramai -> get_sales_trend; soal LABA/UNTUNG/MARGIN -> get_profit_summary
+14. Untuk semua tool periode, default "month" kalau user tidak sebut. Format uang Rp. Saat laba, sebutkan bahwa angkanya ESTIMASI (sesuai field note).
 
 CONTOH ALUR:
+- "Gimana penjualan bulan ini?" -> get_dashboard_overview(month) -> sebut omzet, jml transaksi, rata-rata, naik/turun vs bulan lalu
+- "Pembayaran paling ramai pakai apa?" -> get_payment_method_breakdown -> "QRIS paling ramai (45% omzet), disusul Tunai (30%)..."
+- "Meja mana yang masih kosong?" -> get_table_status -> sebut jumlah available + daftar meja terisi
+- "Meja paling ramai minggu ini?" -> get_busiest_tables(week)
+- "Berapa laba bulan ini?" -> get_profit_summary(month) -> sebut omzet, modal, laba kotor, margin (catatan: estimasi)
+- "Hari apa paling ramai?" -> get_sales_trend -> sebut tanggal dengan omzet tertinggi
 - "Dimana oli Yamalube?" -> find_product_location("oli yamalube") -> "Oli Yamalube Power Matic ada di rak OL-02 (Sintetik/Premium). Tersedia 25 botol."
 - "Mekanik minta aki Vario, dimana?" -> find_product_location("aki vario") -> Jawab dengan kode rak + qty
 - "Apa isi rak BU-01?" -> lookup_rack_contents("BU-01") -> Daftar produk di rak itu

@@ -418,4 +418,201 @@ export class AiAssistantRepository {
       since,
     );
   }
+
+  // ── Analytics scoped per-company (dashboard, payment, meja, profit) ──
+
+  // Scope transaksi ke company (lewat user.companyId, sama seperti modul
+  // dashboard) + COMPLETED + rentang waktu + optional branch.
+  private scopedTxWhere(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId?: string,
+  ): Prisma.TransactionWhereInput {
+    const w: Prisma.TransactionWhereInput = {
+      status: "COMPLETED",
+      createdAt: { gte: from, lte: to },
+    };
+    if (companyId) w.user = { companyId };
+    if (branchId) w.branchId = branchId;
+    return w;
+  }
+
+  async aggregateSalesScoped(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId?: string,
+  ) {
+    return this.prisma.transaction.aggregate({
+      where: this.scopedTxWhere(companyId, from, to, branchId),
+      _sum: { grandTotal: true, discountAmount: true, taxAmount: true },
+      _count: { _all: true },
+    });
+  }
+
+  async groupPaymentMethods(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId?: string,
+  ) {
+    return this.prisma.transaction.groupBy({
+      by: ["paymentMethod"],
+      where: this.scopedTxWhere(companyId, from, to, branchId),
+      _sum: { grandTotal: true },
+      _count: { _all: true },
+      orderBy: { _sum: { grandTotal: "desc" } },
+    });
+  }
+
+  async topProductScoped(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId: string | undefined,
+    limit: number,
+  ) {
+    return this.prisma.transactionItem.groupBy({
+      by: ["productName", "productCode"],
+      where: { transaction: this.scopedTxWhere(companyId, from, to, branchId) },
+      _sum: { quantity: true, subtotal: true },
+      orderBy: { _sum: { subtotal: "desc" } },
+      take: limit,
+    });
+  }
+
+  // ── Meja / table status ──────────────────────────────────────────
+
+  async tableStatusList(companyId: string | null, branchId?: string) {
+    return this.prisma.restaurantTable.findMany({
+      where: {
+        isActive: true,
+        ...(branchId ? { branchId } : {}),
+        ...(companyId ? { branch: { companyId } } : {}),
+      },
+      select: {
+        id: true,
+        number: true,
+        name: true,
+        status: true,
+        section: true,
+        capacity: true,
+        isOnline: true,
+        branch: { select: { name: true } },
+        tableSessions: {
+          where: { status: { in: ["OPEN", "AWAITING_PAYMENT"] } },
+          select: {
+            status: true,
+            customerName: true,
+            customerPhone: true,
+            subtotal: true,
+            openedAt: true,
+          },
+          orderBy: { openedAt: "desc" },
+          take: 1,
+        },
+      },
+      orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
+    });
+  }
+
+  async busiestTablesRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    limit: number,
+  ): Promise<
+    {
+      number: number;
+      name: string | null;
+      section: string | null;
+      branch: string;
+      txCount: bigint;
+      revenue: number;
+    }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT rt.number, rt.name, rt.section, b.name as branch,
+             COUNT(t.id)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN restaurant_tables rt ON rt.id = t."tableId"
+      JOIN users u ON u.id = t."userId"
+      LEFT JOIN branches b ON b.id = rt."branchId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR u."companyId" = $3)
+      GROUP BY rt.number, rt.name, rt.section, b.name
+      ORDER BY revenue DESC
+      LIMIT $4
+      `,
+      from,
+      to,
+      companyId,
+      limit,
+    );
+  }
+
+  // ── Tren penjualan harian ────────────────────────────────────────
+
+  async salesTrendRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId?: string,
+  ): Promise<
+    { date: string; txCount: bigint; revenue: number }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT to_char(t."createdAt" AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') as date,
+             COUNT(*)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR u."companyId" = $3)
+        AND ($4::text IS NULL OR t."branchId" = $4)
+      GROUP BY 1
+      ORDER BY 1
+      `,
+      from,
+      to,
+      companyId,
+      branchId ?? null,
+    );
+  }
+
+  // ── Ringkasan laba (estimasi: COGS pakai purchasePrice produk saat ini) ──
+
+  async profitSummaryRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    branchId?: string,
+  ): Promise<{ revenue: number; cogs: number; txCount: bigint }[]> {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT
+        COALESCE(SUM(ti.subtotal), 0)::float as revenue,
+        COALESCE(SUM(COALESCE(ti."baseQty", ti.quantity * ti."conversionQty") * p."purchasePrice"), 0)::float as cogs,
+        COUNT(DISTINCT t.id)::bigint as "txCount"
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti."transactionId"
+      JOIN products p ON p.id = ti."productId"
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR u."companyId" = $3)
+        AND ($4::text IS NULL OR t."branchId" = $4)
+      `,
+      from,
+      to,
+      companyId,
+      branchId ?? null,
+    );
+  }
 }

@@ -10,6 +10,21 @@ type AuthContext = {
   companyId: string | null;
 };
 
+// Label metode pembayaran (enum PaymentMethod) ke Bahasa Indonesia ramah-baca.
+function paymentLabel(m: string): string {
+  const map: Record<string, string> = {
+    CASH: "Tunai",
+    TRANSFER: "Transfer Bank",
+    QRIS: "QRIS",
+    EWALLET: "E-Wallet",
+    DEBIT: "Kartu Debit",
+    CREDIT_CARD: "Kartu Kredit",
+    TERMIN: "Termin/Tempo",
+    SPLIT_BILL: "Split Bill",
+  };
+  return map[m] || m;
+}
+
 @Injectable()
 export class AiAssistantToolsService {
   private readonly logger = new Logger(AiAssistantToolsService.name);
@@ -446,5 +461,286 @@ export class AiAssistantToolsService {
       totalRevenue: Number(r.revenue),
       totalItems: Number(r.items),
     }));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Analytics tambahan: dashboard, metode pembayaran, meja, tren, laba
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Resolve "today"/"week"/"month"/"year" jadi rentang sekarang + periode
+  // sebelumnya (untuk perbandingan). Catatan: boundary pakai jam server (UTC) —
+  // konsisten dengan tool ringkasan penjualan lain.
+  private resolvePeriod(period?: string): {
+    start: Date;
+    end: Date;
+    prevStart: Date;
+    prevEnd: Date;
+    label: string;
+  } {
+    const now = new Date();
+    let start: Date;
+    let prevStart: Date;
+    let prevEnd: Date;
+    let label: string;
+
+    if (period === "today") {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      prevEnd = start;
+      prevStart = new Date(start);
+      prevStart.setDate(start.getDate() - 1);
+      label = "hari ini";
+    } else if (period === "week") {
+      start = new Date(now);
+      start.setDate(now.getDate() - 7);
+      prevEnd = start;
+      prevStart = new Date(now);
+      prevStart.setDate(now.getDate() - 14);
+      label = "7 hari terakhir";
+    } else if (period === "year") {
+      start = new Date(now.getFullYear(), 0, 1);
+      prevStart = new Date(now.getFullYear() - 1, 0, 1);
+      prevEnd = start;
+      label = "tahun ini";
+    } else {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      prevEnd = start;
+      label = "bulan ini";
+    }
+    return { start, end: now, prevStart, prevEnd, label };
+  }
+
+  // Ringkasan dashboard: omzet, transaksi, rata-rata, diskon/pajak, vs periode
+  // sebelumnya, metode bayar teratas, produk teratas.
+  async executeGetDashboardOverview(
+    auth: AuthContext,
+    input: { period?: string; branchId?: string },
+  ) {
+    const { start, end, prevStart, prevEnd, label } = this.resolvePeriod(
+      input.period,
+    );
+    const [agg, prevAgg, payments, topProd] = await Promise.all([
+      this.repo.aggregateSalesScoped(auth.companyId, start, end, input.branchId),
+      this.repo.aggregateSalesScoped(
+        auth.companyId,
+        prevStart,
+        prevEnd,
+        input.branchId,
+      ),
+      this.repo.groupPaymentMethods(auth.companyId, start, end, input.branchId),
+      this.repo.topProductScoped(
+        auth.companyId,
+        start,
+        end,
+        input.branchId,
+        3,
+      ),
+    ]);
+
+    const revenue = agg._sum.grandTotal || 0;
+    const count = agg._count._all;
+    const prevRevenue = prevAgg._sum.grandTotal || 0;
+    const changePercent =
+      prevRevenue > 0
+        ? Math.round(((revenue - prevRevenue) / prevRevenue) * 1000) / 10
+        : null;
+    const topPay = payments[0];
+
+    return {
+      period: label,
+      revenue,
+      transactions: count,
+      averageTicket: count > 0 ? Math.round(revenue / count) : 0,
+      discount: agg._sum.discountAmount || 0,
+      tax: agg._sum.taxAmount || 0,
+      vsPreviousPeriod: {
+        prevRevenue,
+        changePercent,
+        trend:
+          changePercent == null ? "n/a" : changePercent >= 0 ? "naik" : "turun",
+      },
+      topPaymentMethod: topPay
+        ? {
+            method: paymentLabel(topPay.paymentMethod),
+            amount: topPay._sum.grandTotal || 0,
+            count: topPay._count._all,
+          }
+        : null,
+      topProducts: topProd.map((p) => ({
+        name: p.productName,
+        qty: p._sum.quantity || 0,
+        revenue: p._sum.subtotal || 0,
+      })),
+    };
+  }
+
+  // Breakdown metode pembayaran — menjawab "metode penjualan/bayar paling ramai".
+  async executeGetPaymentBreakdown(
+    auth: AuthContext,
+    input: { period?: string; branchId?: string },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const rows = await this.repo.groupPaymentMethods(
+      auth.companyId,
+      start,
+      end,
+      input.branchId,
+    );
+    const totalAmount = rows.reduce(
+      (s, r) => s + (r._sum.grandTotal || 0),
+      0,
+    );
+    const totalCount = rows.reduce((s, r) => s + r._count._all, 0);
+
+    return {
+      period: label,
+      totalRevenue: totalAmount,
+      totalTransactions: totalCount,
+      busiestMethod: rows[0] ? paymentLabel(rows[0].paymentMethod) : null,
+      methods: rows.map((r) => ({
+        method: paymentLabel(r.paymentMethod),
+        amount: r._sum.grandTotal || 0,
+        count: r._count._all,
+        percentByAmount:
+          totalAmount > 0
+            ? Math.round(((r._sum.grandTotal || 0) / totalAmount) * 1000) / 10
+            : 0,
+      })),
+    };
+  }
+
+  // Status meja sekarang (restoran/cafe): jumlah per status + meja terisi.
+  async executeGetTableStatus(
+    auth: AuthContext,
+    input: { branchId?: string },
+  ) {
+    const tables = await this.repo.tableStatusList(
+      auth.companyId,
+      input.branchId,
+    );
+    if (tables.length === 0) {
+      return {
+        found: false,
+        message:
+          "Belum ada data meja. Fitur meja hanya untuk bisnis restoran/cafe.",
+      };
+    }
+
+    const counts: Record<string, number> = {};
+    for (const t of tables) counts[t.status] = (counts[t.status] || 0) + 1;
+
+    const occupiedTables = tables
+      .filter((t) => t.tableSessions.length > 0 || t.status === "OCCUPIED")
+      .map((t) => {
+        const s = t.tableSessions[0];
+        return {
+          table: t.name || `Meja ${t.number}`,
+          section: t.section,
+          status: t.status,
+          customer: s?.customerName || null,
+          currentBill: s?.subtotal || 0,
+          sessionStatus: s?.status || null,
+          openedAt: s?.openedAt ? s.openedAt.toISOString() : null,
+        };
+      });
+
+    return {
+      found: true,
+      totalTables: tables.length,
+      statusCounts: counts,
+      availableCount: counts["AVAILABLE"] || 0,
+      occupiedCount: occupiedTables.length,
+      occupiedTables,
+    };
+  }
+
+  // Meja paling ramai (by omzet & jumlah transaksi) dalam periode.
+  async executeGetBusiestTables(
+    auth: AuthContext,
+    input: { period?: string; limit?: number },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const rows = await this.repo.busiestTablesRaw(
+      auth.companyId,
+      start,
+      end,
+      input.limit || 10,
+    );
+    if (rows.length === 0) {
+      return {
+        period: label,
+        found: false,
+        message: "Belum ada transaksi yang terkait meja pada periode ini.",
+      };
+    }
+    return {
+      period: label,
+      found: true,
+      tables: rows.map((r, i) => ({
+        rank: i + 1,
+        table: r.name || `Meja ${r.number}`,
+        section: r.section,
+        branch: r.branch,
+        transactions: Number(r.txCount),
+        revenue: r.revenue,
+      })),
+    };
+  }
+
+  // Tren penjualan harian N hari terakhir + hari paling ramai.
+  async executeGetSalesTrend(
+    auth: AuthContext,
+    input: { days?: number; branchId?: string },
+  ) {
+    const days = input.days || 14;
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+
+    const rows = await this.repo.salesTrendRaw(
+      auth.companyId,
+      start,
+      end,
+      input.branchId,
+    );
+    const trend = rows.map((r) => ({
+      date: r.date,
+      transactions: Number(r.txCount),
+      revenue: r.revenue,
+    }));
+    const busiestDay = trend.reduce<(typeof trend)[number] | null>(
+      (best, d) => (best == null || d.revenue > best.revenue ? d : best),
+      null,
+    );
+
+    return { days, busiestDay, trend };
+  }
+
+  // Ringkasan laba kotor (estimasi) — omzet, modal (COGS), laba, margin.
+  async executeGetProfitSummary(
+    auth: AuthContext,
+    input: { period?: string; branchId?: string },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const [row] = await this.repo.profitSummaryRaw(
+      auth.companyId,
+      start,
+      end,
+      input.branchId,
+    );
+    const revenue = row?.revenue || 0;
+    const cogs = row?.cogs || 0;
+    const grossProfit = revenue - cogs;
+
+    return {
+      period: label,
+      note: "Laba kotor ESTIMASI — modal (COGS) memakai harga beli produk saat ini, bukan harga beli historis saat transaksi.",
+      revenue,
+      cogs,
+      grossProfit,
+      marginPercent:
+        revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0,
+      transactions: Number(row?.txCount || 0),
+    };
   }
 }
