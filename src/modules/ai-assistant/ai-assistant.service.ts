@@ -422,18 +422,22 @@ export class AiAssistantService {
       switch (name) {
         case "get_top_products":
           return await this.tools.executeGetTopProducts(
+            auth,
             input as { limit?: number; days?: number; branchId?: string },
           );
         case "get_slow_products":
           return await this.tools.executeGetSlowProducts(
+            auth,
             input as { days?: number; limit?: number },
           );
         case "get_sales_summary":
           return await this.tools.executeGetSalesSummary(
+            auth,
             input as { period?: string; branchId?: string },
           );
         case "get_low_stock":
           return await this.tools.executeGetLowStock(
+            auth,
             input as { limit?: number },
           );
         case "get_cashier_performance":
@@ -457,6 +461,7 @@ export class AiAssistantService {
           );
         case "get_restock_recommendation":
           return await this.tools.executeGetRestockRecommendation(
+            auth,
             input as { days?: number },
           );
         case "search_products":
@@ -465,9 +470,10 @@ export class AiAssistantService {
             input as { query: string },
           );
         case "get_suppliers":
-          return await this.tools.executeGetSuppliers();
+          return await this.tools.executeGetSuppliers(auth);
         case "get_category_sales":
           return await this.tools.executeGetCategorySales(
+            auth,
             input as { days?: number },
           );
         case "find_product_location":

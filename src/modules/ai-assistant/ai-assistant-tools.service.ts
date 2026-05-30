@@ -35,26 +35,27 @@ export class AiAssistantToolsService {
     private readonly purchases: PurchasesService,
   ) {}
 
-  async executeGetTopProducts(input: {
-    limit?: number;
-    days?: number;
-    branchId?: string;
-  }) {
+  async executeGetTopProducts(
+    auth: AuthContext,
+    input: {
+      limit?: number;
+      days?: number;
+      branchId?: string;
+    },
+  ) {
     const days = input.days || 30;
     const limit = input.limit || 10;
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const where: Record<string, unknown> = {
-      transaction: { status: "COMPLETED", createdAt: { gte: since } },
+    const txFilter: Record<string, unknown> = {
+      status: "COMPLETED",
+      createdAt: { gte: since },
     };
-    if (input.branchId) {
-      where.transaction = {
-        ...(where.transaction as object),
-        branchId: input.branchId,
-      };
-    }
+    if (auth.companyId) txFilter.user = { companyId: auth.companyId };
+    if (input.branchId) txFilter.branchId = input.branchId;
 
+    const where: Record<string, unknown> = { transaction: txFilter };
     const items = await this.repo.groupTopProducts(where, limit);
 
     return items.map((i, idx) => ({
@@ -66,19 +67,29 @@ export class AiAssistantToolsService {
     }));
   }
 
-  async executeGetSlowProducts(input: {
-    days?: number;
-    limit?: number;
-  }) {
+  async executeGetSlowProducts(
+    auth: AuthContext,
+    input: {
+      days?: number;
+      limit?: number;
+    },
+  ) {
     const days = input.days || 30;
     const limit = input.limit || 10;
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const soldProducts = await this.repo.groupSoldProductIds(since);
+    const soldProducts = await this.repo.groupSoldProductIds(
+      auth.companyId,
+      since,
+    );
     const soldIds = soldProducts.map((p) => p.productId);
 
-    const slow = await this.repo.findSlowProducts(soldIds, limit);
+    const slow = await this.repo.findSlowProducts(
+      auth.companyId,
+      soldIds,
+      limit,
+    );
 
     return slow.map((p) => ({
       id: p.id,
@@ -93,10 +104,13 @@ export class AiAssistantToolsService {
     }));
   }
 
-  async executeGetSalesSummary(input: {
-    period?: string;
-    branchId?: string;
-  }) {
+  async executeGetSalesSummary(
+    auth: AuthContext,
+    input: {
+      period?: string;
+      branchId?: string;
+    },
+  ) {
     const period = input.period || "month";
     const now = new Date();
     let start: Date;
@@ -116,6 +130,7 @@ export class AiAssistantToolsService {
       status: "COMPLETED",
       createdAt: { gte: start },
     };
+    if (auth.companyId) where.user = { companyId: auth.companyId };
     if (input.branchId) where.branchId = input.branchId;
 
     const [agg, count] = await Promise.all([
@@ -134,10 +149,10 @@ export class AiAssistantToolsService {
     };
   }
 
-  async executeGetLowStock(input: { limit?: number }) {
+  async executeGetLowStock(auth: AuthContext, input: { limit?: number }) {
     const limit = input.limit || 20;
 
-    const products = await this.repo.findLowStockRaw(limit);
+    const products = await this.repo.findLowStockRaw(auth.companyId, limit);
 
     return products.map((p) => ({
       id: p.id,
@@ -236,14 +251,17 @@ export class AiAssistantToolsService {
     return created;
   }
 
-  async executeGetRestockRecommendation(input: { days?: number }) {
+  async executeGetRestockRecommendation(
+    auth: AuthContext,
+    input: { days?: number },
+  ) {
     const days = input.days || 30;
     const since = new Date();
     since.setDate(since.getDate() - days);
 
     const [salesData, products] = await Promise.all([
-      this.repo.groupSalesData(since),
-      this.repo.findActiveProducts(),
+      this.repo.groupSalesData(auth.companyId, since),
+      this.repo.findActiveProducts(auth.companyId),
     ]);
 
     const salesMap = new Map(
@@ -444,16 +462,19 @@ export class AiAssistantToolsService {
     }));
   }
 
-  async executeGetSuppliers() {
-    return this.repo.findActiveSuppliers();
+  async executeGetSuppliers(auth: AuthContext) {
+    return this.repo.findActiveSuppliers(auth.companyId);
   }
 
-  async executeGetCategorySales(input: { days?: number }) {
+  async executeGetCategorySales(
+    auth: AuthContext,
+    input: { days?: number },
+  ) {
     const days = input.days || 30;
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const rows = await this.repo.getCategorySalesRaw(since);
+    const rows = await this.repo.getCategorySalesRaw(auth.companyId, since);
 
     return rows.map((r) => ({
       category: r.name,

@@ -228,21 +228,30 @@ export class AiAssistantRepository {
 
   // ── Slow products ────────────────────────────────────────────────
 
-  async groupSoldProductIds(since: Date) {
+  async groupSoldProductIds(companyId: string | null, since: Date) {
     return this.prisma.transactionItem.groupBy({
       by: ["productId"],
       where: {
-        transaction: { status: "COMPLETED", createdAt: { gte: since } },
+        transaction: {
+          status: "COMPLETED",
+          createdAt: { gte: since },
+          ...(companyId ? { user: { companyId } } : {}),
+        },
       },
     });
   }
 
   async findSlowProducts(
+    companyId: string | null,
     soldIds: string[],
     limit: number,
   ): Promise<RawSlowProduct[]> {
     return this.prisma.product.findMany({
-      where: { isActive: true, id: { notIn: soldIds } },
+      where: {
+        isActive: true,
+        id: { notIn: soldIds },
+        ...(companyId ? { companyId } : {}),
+      },
       select: SLOW_PRODUCT_SELECT,
       take: limit,
       orderBy: { stock: "desc" },
@@ -264,7 +273,10 @@ export class AiAssistantRepository {
 
   // ── Low stock (raw SQL) ──────────────────────────────────────────
 
-  async findLowStockRaw(limit: number): Promise<RawLowStockProduct[]> {
+  async findLowStockRaw(
+    companyId: string | null,
+    limit: number,
+  ): Promise<RawLowStockProduct[]> {
     return this.prisma.$queryRawUnsafe<RawLowStockProduct[]>(
       `
       SELECT p.id, p.name, p.code, p.stock, p."minStock", p.unit,
@@ -275,10 +287,12 @@ export class AiAssistantRepository {
       LEFT JOIN suppliers s ON p."supplierId" = s.id
       LEFT JOIN categories c ON p."categoryId" = c.id
       WHERE p."isActive" = true AND p.stock <= p."minStock"
+        AND ($2::text IS NULL OR p."companyId" = $2)
       ORDER BY p.stock ASC
       LIMIT $1
       `,
       limit,
+      companyId,
     );
   }
 
@@ -296,19 +310,25 @@ export class AiAssistantRepository {
 
   // ── Restock recommendation ───────────────────────────────────────
 
-  async groupSalesData(since: Date) {
+  async groupSalesData(companyId: string | null, since: Date) {
     return this.prisma.transactionItem.groupBy({
       by: ["productId"],
       _sum: { quantity: true },
       where: {
-        transaction: { status: "COMPLETED", createdAt: { gte: since } },
+        transaction: {
+          status: "COMPLETED",
+          createdAt: { gte: since },
+          ...(companyId ? { user: { companyId } } : {}),
+        },
       },
     });
   }
 
-  async findActiveProducts(): Promise<RawRestockProduct[]> {
+  async findActiveProducts(
+    companyId: string | null,
+  ): Promise<RawRestockProduct[]> {
     return this.prisma.product.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...(companyId ? { companyId } : {}) },
       select: RESTOCK_PRODUCT_SELECT,
     });
   }
@@ -390,9 +410,11 @@ export class AiAssistantRepository {
 
   // ── Suppliers ────────────────────────────────────────────────────
 
-  async findActiveSuppliers(): Promise<RawSupplier[]> {
+  async findActiveSuppliers(
+    companyId: string | null,
+  ): Promise<RawSupplier[]> {
     return this.prisma.supplier.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...(companyId ? { companyId } : {}) },
       select: SUPPLIER_SELECT,
       orderBy: { name: "asc" },
     });
@@ -400,7 +422,10 @@ export class AiAssistantRepository {
 
   // ── Category sales (raw SQL) ─────────────────────────────────────
 
-  async getCategorySalesRaw(since: Date): Promise<RawCategorySalesRow[]> {
+  async getCategorySalesRaw(
+    companyId: string | null,
+    since: Date,
+  ): Promise<RawCategorySalesRow[]> {
     return this.prisma.$queryRawUnsafe<RawCategorySalesRow[]>(
       `
       SELECT COALESCE(c.name, 'Tanpa Kategori') as name,
@@ -409,13 +434,16 @@ export class AiAssistantRepository {
              COUNT(*)::bigint as items
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti."transactionId"
+      JOIN users u ON u.id = t."userId"
       JOIN products p ON p.id = ti."productId"
       LEFT JOIN categories c ON c.id = p."categoryId"
       WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+        AND ($2::text IS NULL OR u."companyId" = $2)
       GROUP BY c.name
       ORDER BY revenue DESC
       `,
       since,
+      companyId,
     );
   }
 
