@@ -45,6 +45,34 @@ export const ListProductsQuerySchema = z.object({
 });
 export type ListProductsQueryDto = z.infer<typeof ListProductsQuerySchema>;
 
+// Boolean query param: terima boolean asli atau string "true"/"false" (karena
+// datang lewat query string GET).
+const QueryBoolSchema = z
+  .union([z.boolean(), z.enum(["true", "false"])])
+  .transform((v) => (typeof v === "boolean" ? v : v === "true"))
+  .optional();
+
+// Query untuk endpoint GET /products/branch-view. Diubah dari POST→GET supaya
+// idempoten & otomatis kena cache GET di client (per url+query).
+export const BranchViewQuerySchema = z.object({
+  branchId: z.string().optional(),
+  search: z.string().optional(),
+  categoryId: z.string().optional(),
+  brandId: z.string().optional(),
+  isActive: QueryBoolSchema,
+  stockStatus: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  sortBy: z.string().optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+  onlyWithStock: QueryBoolSchema,
+  restrictToBranchAssigned: QueryBoolSchema,
+  excludeIngredient: QueryBoolSchema,
+  excludeRecipeProducts: QueryBoolSchema,
+  itemType: ProductItemTypeSchema.optional(),
+});
+export type BranchViewQueryDto = z.infer<typeof BranchViewQuerySchema>;
+
 export const CreateProductSchema = z.object({
   // Empty string atau undefined → backend akan auto-generate (PRD-XXXXX).
   // TIDAK pakai .default("") karena akan apply juga ke partial() di

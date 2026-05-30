@@ -11,10 +11,12 @@
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import {
+  BranchViewQuerySchema,
   CreateProductSchema,
   GenerateProductDescriptionSchema,
   ListProductsQuerySchema,
   UpdateProductSchema,
+  type BranchViewQueryDto,
   type CreateProductDto,
   type GenerateProductDescriptionDto,
   type ListProductsQueryDto,
@@ -158,6 +160,30 @@ export class ProductsController {
     return { data };
   }
 
+  // PENTING: route statik harus didaftarkan SEBELUM route param `:id`.
+  // Kalau di bawah `:id`, GET /products/branch-view akan ketangkap `:id`
+  // (id="branch-view") → findById gagal → 404.
+  @Get("branch-view")
+  @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Branch product view" })
+  @ApiZodQuery(BranchViewQuerySchema)
+  async branchView(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(BranchViewQuerySchema))
+    query: BranchViewQueryDto,
+  ) {
+    const data = await this.products.branchView(companyId, query);
+    return { data };
+  }
+
+  @Get("import-template-data")
+  @RequireAccess("products", "view")
+  @ApiOperation({ summary: "Get import template reference data" })
+  async importTemplateData(@CurrentCompany() companyId: string) {
+    const data = await this.products.importTemplateData(companyId);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("products", "view")
   @ApiOperation({ summary: "Get product by ID" })
@@ -183,42 +209,6 @@ export class ProductsController {
     @Query("branchId") branchId?: string,
   ) {
     const data = await this.products.findDetail(companyId, id, branchId);
-    return { data };
-  }
-
-  @Post("branch-view")
-  @RequireAccess("products", "view")
-  @ApiOperation({ summary: "Branch product view" })
-  async branchView(
-    @CurrentCompany() companyId: string,
-    @Body()
-    body: {
-      branchId?: string;
-      search?: string;
-      categoryId?: string;
-      brandId?: string;
-      isActive?: boolean;
-      stockStatus?: string;
-      limit?: number;
-      offset?: number;
-      sortBy?: string;
-      sortDir?: "asc" | "desc";
-      onlyWithStock?: boolean;
-      restrictToBranchAssigned?: boolean;
-      excludeIngredient?: boolean;
-      excludeRecipeProducts?: boolean;
-      itemType?: "PRODUCT" | "SERVICE" | "INGREDIENT";
-    },
-  ) {
-    const data = await this.products.branchView(companyId, body);
-    return { data };
-  }
-
-  @Get("import-template-data")
-  @RequireAccess("products", "view")
-  @ApiOperation({ summary: "Get import template reference data" })
-  async importTemplateData(@CurrentCompany() companyId: string) {
-    const data = await this.products.importTemplateData(companyId);
     return { data };
   }
 
