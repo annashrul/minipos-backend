@@ -142,4 +142,18 @@ export class WaServiceClient {
       { jid, message },
     );
   }
+
+  // Kirim pesan dengan tombol cta_url (best-effort) + fallback teks.
+  async sendButton(
+    apiKey: string,
+    jid: string,
+    params: { text: string; buttonText: string; url: string },
+  ): Promise<WaServiceSendTextResult> {
+    return this.request(
+      "POST",
+      "/api/messages/send-button",
+      this.tenantHeaders(apiKey),
+      { jid, ...params },
+    );
+  }
 }

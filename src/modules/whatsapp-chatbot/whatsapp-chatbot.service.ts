@@ -201,16 +201,27 @@ export class WhatsappChatbotService implements OnModuleInit {
 
     if (!reply) return;
 
+    // Kalau balasan memuat link order online (/table/<token>), kirim sebagai
+    // pesan tombol "Pesan Sekarang" (best-effort) — wa-service auto-fallback ke
+    // teks kalau tombol gagal/tak render. Teks tetap memuat URL.
+    const orderUrl = extractOrderUrl(reply);
+
     try {
-      // Pakai sendTextToJid dengan remoteJid lengkap supaya kompatibel
-      // dengan @lid (LID anonymous) — kontak yang belum tersimpan di WA
-      // pengirim biasanya pakai LID, bukan phone JID. Kalau pakai sendText
-      // biasa (yang construct @s.whatsapp.net), pesan tidak akan deliver.
-      await this.waReceipt.sendTextToJid(
-        params.companyId,
-        params.remoteJid,
-        reply,
-      );
+      // sendTextToJid/sendOrderButton pakai remoteJid lengkap supaya kompatibel
+      // dengan @lid (kontak yang belum tersimpan).
+      if (orderUrl) {
+        await this.waReceipt.sendOrderButton(
+          params.companyId,
+          params.remoteJid,
+          { text: reply, buttonText: "🛒 Pesan Sekarang", url: orderUrl },
+        );
+      } else {
+        await this.waReceipt.sendTextToJid(
+          params.companyId,
+          params.remoteJid,
+          reply,
+        );
+      }
     } catch (err) {
       this.logger.warn(
         `[bot] gagal kirim balasan ke ${params.remoteJid}: ${
@@ -744,6 +755,14 @@ const INLINE_FN_RE_LOOSE =
   /<function[=:]?\s*([a-zA-Z0-9_]+)\s*[=>]?\s*([\s\S]*?)\s*<\/?\s*function\s*\/?\s*>/gi;
 
 type ParsedInlineCall = { id: string; name: string; args: string };
+
+// Ekstrak URL order online (mengandung /table/<token>) dari teks balasan,
+// buang tanda baca penutup. Dipakai untuk memutuskan kirim pesan tombol.
+function extractOrderUrl(text: string): string | null {
+  const m = text.match(/https?:\/\/[^\s<>)\]]+\/table\/[^\s<>)\]]+/i);
+  if (!m) return null;
+  return m[0].replace(/[).,;]+$/, "");
+}
 
 // Set nama tool yang valid — dipakai untuk mengenali tool-call JSON polos
 // yang bocor ke content (mis. gpt-oss kadang emit {"name":"...","arguments":{}}).

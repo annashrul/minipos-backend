@@ -118,6 +118,37 @@ export class WhatsappMessageService {
     }
   }
 
+  // Kirim pesan tombol order (cta_url) — best-effort. Kalau wa-service /
+  // tombol gagal, fallback ke teks biasa (yang sudah memuat URL).
+  async sendOrderButton(
+    companyId: string,
+    jid: string,
+    params: { text: string; buttonText: string; url: string },
+  ): Promise<{ success: true; messageId?: string }> {
+    const creds = await this.ensureTenantCredentials(companyId);
+    const session = await this.ensureLocalSession(companyId);
+    try {
+      const result = await this.wa.sendButton(creds.apiKey, jid, params);
+      await this.prisma.whatsappMessageLog.create({
+        data: {
+          sessionId: session.id,
+          direction: "OUTBOUND",
+          toNumber: jid,
+          messageType: "text",
+          content: params.text,
+          status: result.status || "SENT",
+          providerMessageId: result.providerMessageId,
+        },
+      });
+      return { success: true, messageId: result.messageId };
+    } catch (err) {
+      this.logger.warn(
+        `sendOrderButton gagal company=${companyId}: ${(err as Error).message} — fallback teks`,
+      );
+      return this.sendTextToJid(companyId, jid, params.text);
+    }
+  }
+
   // ─── Message log query (lokal — wa-service tidak simpan history) ──
   async listMessages(
     companyId: string,

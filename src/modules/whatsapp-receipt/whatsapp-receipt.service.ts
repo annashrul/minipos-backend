@@ -196,6 +196,14 @@ export class WhatsappReceiptService implements OnModuleInit, OnModuleDestroy {
     return this.messageService.sendText(companyId, phone, message);
   }
 
+  sendOrderButton(
+    companyId: string,
+    jid: string,
+    params: { text: string; buttonText: string; url: string },
+  ): Promise<{ success: true; messageId?: string }> {
+    return this.messageService.sendOrderButton(companyId, jid, params);
+  }
+
   sendTextToJid(
     companyId: string,
     jidOrPhone: string,
