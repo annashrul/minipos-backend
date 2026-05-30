@@ -602,8 +602,12 @@ Contoh: "AHM Oil SPX2 Matic 0.8L (OLI-007) - Rak OL-01 (Matic 0.8L), tersedia 40
 Info user: ${auth.userName} (${auth.role})`;
 
     const apiKey = this.config.get<string>("GROQ_API_KEY");
+    // Default gpt-oss-20b: jauh lebih ringan & latensi lebih konsisten daripada
+    // 120b (yang punya ekor 30-57s karena reasoning berat), tapi tetap sekeluarga
+    // gpt-oss sehingga tool-calling tetap andal. Bisa di-override balik ke
+    // gpt-oss-120b via env GROQ_MODEL kalau butuh kualitas sintesis lebih tinggi.
     const model =
-      this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-120b";
+      this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-20b";
 
     // Pertanyaan terakhir user + timer + daftar tool, untuk audit log.
     const question =
@@ -630,7 +634,7 @@ Info user: ${auth.userName} (${auth.role})`;
     // fetch ke endpoint OpenAI-compatible (path tidak ter-mangle, error terbaca).
     const groqModels = [
       model,
-      "openai/gpt-oss-20b",
+      "openai/gpt-oss-120b",
       "llama-3.3-70b-versatile",
     ].filter((m, i, arr) => arr.indexOf(m) === i);
     const geminiKey = this.config.get<string>("GEMINI_API_KEY");
