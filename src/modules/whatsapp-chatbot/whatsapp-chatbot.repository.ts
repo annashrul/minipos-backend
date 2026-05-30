@@ -1042,6 +1042,19 @@ export class WhatsappChatbotRepository {
   // Cari qrToken meja untuk dijadikan link pesan online. Prioritaskan meja
   // yang ditandai online/whatsapp; fallback meja pertama yang punya qrToken.
   async findOnlineOrderToken(companyId: string): Promise<string | null> {
+    // Prioritas: meja yang ditandai isOnline (meja virtual WhatsApp).
+    const online = await this.prisma.restaurantTable.findFirst({
+      where: {
+        branch: { companyId },
+        isActive: true,
+        isOnline: true,
+        qrToken: { not: null },
+      },
+      select: { qrToken: true },
+      orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
+    });
+    if (online?.qrToken) return online.qrToken;
+
     const preferred = await this.prisma.restaurantTable.findFirst({
       where: {
         branch: { companyId },

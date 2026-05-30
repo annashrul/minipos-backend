@@ -168,12 +168,26 @@ export class TableOrderSubmitService {
       };
     });
 
+    // Meja ONLINE (WhatsApp): satu meja virtual dipakai banyak customer →
+    // sesi di-scope per customerPhone supaya tiap customer punya keranjang
+    // sendiri. Meja fisik tetap 1 sesi per meja (perilaku lama tidak berubah).
+    const scopePhone =
+      table.isOnline && dto.customerPhone
+        ? dto.customerPhone
+        : null;
+    if (table.isOnline && !dto.customerPhone) {
+      throw new BadRequestException(
+        "Nomor WhatsApp wajib untuk pesan online. Buka link pesan dari chat WhatsApp.",
+      );
+    }
+
     const result = await this.prisma.$transaction(async (tx) => {
       // Find or create open session
       let session = await tx.tableSession.findFirst({
         where: {
           tableId: table.id,
           status: { in: ["OPEN", "AWAITING_PAYMENT"] },
+          ...(scopePhone ? { customerPhone: scopePhone } : {}),
         },
         select: {
           id: true,

@@ -2737,6 +2737,10 @@ model RestaurantTable {
   branchId  String?
   branch    Branch?  @relation(fields: [branchId], references: [id])
   isActive  Boolean  @default(true)
+  // Meja virtual untuk order online/WhatsApp. Saat true, satu meja menampung
+  // banyak customer sekaligus — sesi di-scope per customerPhone (bukan 1 sesi
+  // per meja seperti meja fisik).
+  isOnline  Boolean  @default(false)
   sortOrder Int      @default(0)
   section   String? // e.g. "Indoor", "Outdoor", "VIP"
   qrToken   String?  @unique // public token for tablet ordering URL

@@ -82,6 +82,7 @@ export class TableOrdersRepository {
         name: true,
         section: true,
         status: true,
+        isOnline: true,
         branchId: true,
         branch: { select: { id: true, name: true, companyId: true } },
       },
