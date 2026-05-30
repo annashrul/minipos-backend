@@ -292,18 +292,48 @@ export class WhatsappChatbotService implements OnModuleInit {
     const model = config?.model || "openai/gpt-oss-120b";
     const groq = new Groq({ apiKey });
 
-    // Fallback ke Google AI Studio (Gemini) saat Groq kena rate-limit/quota
-    // harian. Gemini punya endpoint OpenAI-compatible, jadi cukup pakai client
-    // yang sama dengan baseURL + apiKey berbeda. Aktif kalau GEMINI_API_KEY ada.
+    // Rantai fallback model Groq: tiap model punya kuota TPD (token-per-day)
+    // sendiri, jadi kalau model utama kena rate-limit harian kita coba model
+    // lain yang sama-sama support tool-calling sebelum lompat ke Gemini.
+    const groqModels = [
+      model,
+      "openai/gpt-oss-20b",
+      "llama-3.3-70b-versatile",
+    ].filter((m, i, arr) => arr.indexOf(m) === i);
+
+    // Fallback terakhir ke Google AI Studio (Gemini) saat SEMUA model Groq kena
+    // rate-limit/quota harian. Pakai endpoint OpenAI-compatible Gemini via fetch
+    // langsung (bukan SDK Groq) supaya path URL tidak ter-mangle jadi 404, dan
+    // body error (mis. quota=0) ikut terbaca. Aktif kalau GEMINI_API_KEY ada.
     const geminiKey = this.config.get<string>("GEMINI_API_KEY");
     const geminiModel =
       this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
-    const gemini = geminiKey
-      ? new Groq({
-          apiKey: geminiKey,
-          baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-        })
-      : null;
+    const callGemini = async (
+      msgs: ChatMessage[],
+    ): Promise<Groq.Chat.ChatCompletion> => {
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${geminiKey}`,
+          },
+          body: JSON.stringify({
+            model: geminiModel,
+            messages: msgs,
+            tools,
+            tool_choice: "auto",
+            max_tokens: 1024,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 300)}`);
+      }
+      return (await res.json()) as Groq.Chat.ChatCompletion;
+    };
 
     const basePrompt =
       params.role === "OWNER"
@@ -364,72 +394,78 @@ export class WhatsappChatbotService implements OnModuleInit {
     const callGroq = async (
       msgs: ChatMessage[],
     ): Promise<Groq.Chat.ChatCompletion> => {
-      try {
-        return await groq.chat.completions.create({
-          model,
-          messages: msgs,
-          tools,
-          tool_choice: "auto",
-          max_tokens: 1024,
-        });
-      } catch (err) {
-        // Fallback ke Gemini saat Groq kena rate-limit / quota harian (429).
-        if (gemini && isRateLimitError(err)) {
-          this.logger.warn(
-            "[bot] Groq rate-limited — fallback ke Gemini (Google AI Studio)",
-          );
-          try {
-            return await gemini.chat.completions.create({
-              model: geminiModel,
-              messages: msgs,
-              tools,
-              tool_choice: "auto",
-              max_tokens: 1024,
-            });
-          } catch (gerr) {
+      let lastErr: unknown;
+      for (const m of groqModels) {
+        try {
+          return await groq.chat.completions.create({
+            model: m,
+            messages: msgs,
+            tools,
+            tool_choice: "auto",
+            max_tokens: 1024,
+          });
+        } catch (err) {
+          lastErr = err;
+          // Rate-limit / quota harian model ini habis — coba model Groq lain
+          // (tiap model punya jatah TPD terpisah) sebelum lompat ke Gemini.
+          if (isRateLimitError(err)) {
             this.logger.warn(
-              `[bot] Gemini fallback gagal: ${(gerr as Error).message}`,
+              `[bot] Groq model ${m} rate-limited — coba model alternatif`,
             );
-            // lanjut ke handling tool_use_failed pada error Groq asli di bawah.
+            continue;
           }
-        }
-        // Groq SDK error structure tidak konsisten — code & failed_generation
-        // bisa ada di:
-        //   - err.error?.code, err.error?.failed_generation (typed APIError)
-        //   - err.message JSON-stringified (kasus paling sering di log)
-        // Coba semua jalur.
-        const failed = extractFailedGeneration(err);
-        if (failed !== null) {
-          this.logger.warn(
-            "[bot] Groq tool_use_failed — fallback ke inline parse",
-          );
-          return {
-            id: "synthetic_" + Date.now(),
-            object: "chat.completion",
-            created: Math.floor(Date.now() / 1000),
-            model,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: failed,
-                  refusal: null,
-                  tool_calls: [],
+          // Groq SDK error structure tidak konsisten — code & failed_generation
+          // bisa ada di:
+          //   - err.error?.code, err.error?.failed_generation (typed APIError)
+          //   - err.message JSON-stringified (kasus paling sering di log)
+          // Coba semua jalur.
+          const failed = extractFailedGeneration(err);
+          if (failed !== null) {
+            this.logger.warn(
+              "[bot] Groq tool_use_failed — fallback ke inline parse",
+            );
+            return {
+              id: "synthetic_" + Date.now(),
+              object: "chat.completion",
+              created: Math.floor(Date.now() / 1000),
+              model: m,
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: failed,
+                    refusal: null,
+                    tool_calls: [],
+                  },
+                  finish_reason: "stop",
+                  logprobs: null,
                 },
-                finish_reason: "stop",
-                logprobs: null,
+              ],
+              usage: {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
               },
-            ],
-            usage: {
-              prompt_tokens: 0,
-              completion_tokens: 0,
-              total_tokens: 0,
-            },
-          } as unknown as Groq.Chat.ChatCompletion;
+            } as unknown as Groq.Chat.ChatCompletion;
+          }
+          throw err;
         }
-        throw err;
       }
+      // Semua model Groq kena rate-limit harian — fallback terakhir ke Gemini.
+      if (geminiKey) {
+        this.logger.warn(
+          "[bot] Semua model Groq rate-limited — fallback ke Gemini (Google AI Studio)",
+        );
+        try {
+          return await callGemini(msgs);
+        } catch (gerr) {
+          this.logger.warn(
+            `[bot] Gemini fallback gagal: ${(gerr as Error).message}`,
+          );
+        }
+      }
+      throw lastErr;
     };
 
     try {
