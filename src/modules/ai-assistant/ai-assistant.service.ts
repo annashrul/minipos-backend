@@ -3,6 +3,13 @@ import { ConfigService } from "@nestjs/config";
 import type { AiChatMessageDto, AiChatResponse } from "./dto/ai-assistant.dto";
 import Groq from "groq-sdk";
 import { AiAssistantToolsService } from "./ai-assistant-tools.service";
+import { AiAssistantRepository } from "./ai-assistant.repository";
+
+// Pola jawaban "tidak terjawab" — AI merespons sopan tapi tidak punya
+// data/akses. Dipakai untuk menandai status UNANSWERED di audit log supaya
+// owner bisa lihat pertanyaan yang belum bisa dijawab AI.
+const UNANSWERED_RE =
+  /tidak (punya akses|bisa|dapat|tahu|menemukan|tersedia)|belum (bisa|ada)|tidak ada data|di luar (kemampuan|akses)|maaf,?\s*(saya|aku)?\s*tidak/i;
 
 // OpenAI-compatible tool definitions for Groq
 const TOOLS: Groq.Chat.ChatCompletionTool[] = [
@@ -347,7 +354,60 @@ export class AiAssistantService {
   constructor(
     private readonly config: ConfigService,
     private readonly tools: AiAssistantToolsService,
+    private readonly repo: AiAssistantRepository,
   ) {}
+
+  // List audit log percakapan AI untuk owner — default tampilkan yang TIDAK
+  // terjawab (UNANSWERED + ERROR) supaya gampang lihat gap pengetahuan AI.
+  async listLogs(
+    auth: AuthContext,
+    query: {
+      status?: "ANSWERED" | "UNANSWERED" | "ERROR";
+      days?: number;
+      limit?: number;
+      offset?: number;
+    },
+  ) {
+    const limit = Math.min(query.limit ?? 50, 200);
+    const offset = query.offset ?? 0;
+    const { rows, total } = await this.repo.listConversationLogs(
+      auth.companyId,
+      { status: query.status, days: query.days, limit, offset },
+    );
+    return { total, limit, offset, items: rows };
+  }
+
+  // Catat interaksi AI ke audit log (best-effort). Status:
+  //   ERROR      → ada error/exception
+  //   UNANSWERED → AI menjawab tapi tidak punya data/akses (audit utama)
+  //   ANSWERED   → AI menjawab dengan data
+  private async persistLog(
+    auth: AuthContext,
+    question: string,
+    toolsUsed: string[],
+    startedAt: number,
+    result: AiChatResponse,
+  ): Promise<void> {
+    const answer = result.response ?? null;
+    const errorMessage = result.error ?? null;
+    let status: "ERROR" | "UNANSWERED" | "ANSWERED";
+    if (errorMessage) status = "ERROR";
+    else if (answer && UNANSWERED_RE.test(answer)) status = "UNANSWERED";
+    else status = "ANSWERED";
+
+    await this.repo.createConversationLog({
+      companyId: auth.companyId,
+      userId: auth.userId,
+      userName: auth.userName,
+      role: auth.role,
+      question,
+      answer,
+      status,
+      toolsUsed: Array.from(new Set(toolsUsed)),
+      errorMessage,
+      durationMs: Date.now() - startedAt,
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Tool dispatcher
@@ -521,11 +581,21 @@ Info user: ${auth.userName} (${auth.role})`;
     const model =
       this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-120b";
 
+    // Pertanyaan terakhir user + timer + daftar tool, untuk audit log.
+    const question =
+      [...messages].reverse().find((m) => m.role === "user")?.content ??
+      messages[messages.length - 1]?.content ??
+      "";
+    const toolsUsed: string[] = [];
+    const startedAt = Date.now();
+
     if (!apiKey) {
-      return {
+      const result: AiChatResponse = {
         error:
           "GROQ_API_KEY belum dikonfigurasi. Dapatkan gratis di console.groq.com",
       };
+      await this.persistLog(auth, question, toolsUsed, startedAt, result);
+      return result;
     }
 
     const groq = new Groq({ apiKey });
@@ -600,6 +670,7 @@ Info user: ${auth.userName} (${auth.role})`;
       throw lastErr;
     };
 
+    let result: AiChatResponse = { error: "Gagal memproses permintaan." };
     try {
       const chatMessages: Groq.Chat.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
@@ -624,6 +695,7 @@ Info user: ${auth.userName} (${auth.role})`;
         chatMessages.push(choice.message);
 
         for (const toolCall of choice.message.tool_calls) {
+          toolsUsed.push(toolCall.function.name);
           try {
             const args = JSON.parse(toolCall.function.arguments || "{}");
             const result = await this.executeTool(
@@ -651,7 +723,7 @@ Info user: ${auth.userName} (${auth.role})`;
       }
 
       const text = response.choices[0]?.message.content;
-      return { response: text || "Maaf, tidak bisa memproses permintaan." };
+      result = { response: text || "Maaf, tidak bisa memproses permintaan." };
     } catch (err) {
       this.logger.error(
         `[AI Assistant] ${(err as Error).message}`,
@@ -670,8 +742,8 @@ Info user: ${auth.userName} (${auth.role})`;
           "Tool calling failed — retrying without tools for fallback response",
         );
         try {
-          const groq = new Groq({ apiKey });
-          const fallbackResponse = await groq.chat.completions.create({
+          const groqFb = new Groq({ apiKey });
+          const fallbackResponse = await groqFb.chat.completions.create({
             model,
             messages: [
               {
@@ -687,37 +759,40 @@ Info user: ${auth.userName} (${auth.role})`;
             max_tokens: 256,
             temperature: 0.3,
           });
-          return {
+          result = {
             response:
               fallbackResponse.choices[0]?.message.content ||
               "Maaf, AI sedang bermasalah. Coba buka halaman /products atau /racks untuk cari produk manual.",
           };
         } catch {
-          return {
+          result = {
             error:
               "AI sedang bermasalah saat memanggil tool. Coba lagi atau buka halaman /products / /racks untuk cari manual.",
           };
         }
-      }
-
-      if (msg.includes("API") || msg.includes("key") || msg.includes("auth")) {
-        return {
-          error:
-            "GROQ_API_KEY tidak valid. Dapatkan gratis di console.groq.com",
+      } else if (
+        msg.includes("API") ||
+        msg.includes("key") ||
+        msg.includes("auth")
+      ) {
+        result = {
+          error: "GROQ_API_KEY tidak valid. Dapatkan gratis di console.groq.com",
         };
-      }
-      if (msg.includes("429") || msg.includes("rate")) {
-        return {
+      } else if (msg.includes("429") || msg.includes("rate")) {
+        result = {
           error: "Rate limit tercapai. Coba lagi dalam beberapa detik.",
         };
-      }
-      if (msg.includes("decommissioned") || msg.includes("model")) {
-        return {
+      } else if (msg.includes("decommissioned") || msg.includes("model")) {
+        result = {
           error:
             "Model AI sudah deprecated. Set GROQ_MODEL=openai/gpt-oss-120b di .env backend.",
         };
+      } else {
+        result = { error: `Gagal memproses: ${msg}` };
       }
-      return { error: `Gagal memproses: ${msg}` };
     }
+
+    await this.persistLog(auth, question, toolsUsed, startedAt, result);
+    return result;
   }
 }

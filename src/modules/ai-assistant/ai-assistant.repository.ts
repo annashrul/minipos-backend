@@ -419,6 +419,54 @@ export class AiAssistantRepository {
     );
   }
 
+  // ── Audit log percakapan AI Asisten ─────────────────────────────
+
+  // Catat satu interaksi AI ke ai_assistant_logs. Di-wrap try/catch supaya
+  // kegagalan logging TIDAK PERNAH menggagalkan respons AI ke user.
+  async createConversationLog(data: {
+    companyId: string | null;
+    userId: string;
+    userName: string | null;
+    role: string | null;
+    question: string;
+    answer: string | null;
+    status: string;
+    toolsUsed: string[];
+    errorMessage: string | null;
+    durationMs: number | null;
+  }): Promise<void> {
+    try {
+      await this.prisma.aiAssistantLog.create({ data });
+    } catch {
+      // sengaja ditelan — audit log bersifat best-effort.
+    }
+  }
+
+  // List audit log percakapan (untuk endpoint audit). Scoped per-company.
+  async listConversationLogs(
+    companyId: string | null,
+    opts: { status?: string; days?: number; limit: number; offset: number },
+  ) {
+    const where: Prisma.AiAssistantLogWhereInput = {};
+    if (companyId) where.companyId = companyId;
+    if (opts.status) where.status = opts.status;
+    if (opts.days) {
+      const since = new Date();
+      since.setDate(since.getDate() - opts.days);
+      where.createdAt = { gte: since };
+    }
+    const [rows, total] = await Promise.all([
+      this.prisma.aiAssistantLog.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: opts.limit,
+        skip: opts.offset,
+      }),
+      this.prisma.aiAssistantLog.count({ where }),
+    ]);
+    return { rows, total };
+  }
+
   // ── Analytics scoped per-company (dashboard, payment, meja, profit) ──
 
   // Scope transaksi ke company (lewat user.companyId, sama seperti modul

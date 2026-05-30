@@ -1564,6 +1564,33 @@ model WhatsappMessageLog {
   @@map("whatsapp_message_logs")
 }
 
+// Audit log percakapan AI Asisten (dashboard internal). Tiap query owner/staf
+// dicatat: pertanyaan, jawaban, status (terjawab / tidak terjawab / error),
+// tool yang dipanggil. Tujuan: audit pertanyaan yang TIDAK BISA dijawab AI
+// supaya knowledge/tool bisa ditambah.
+model AiAssistantLog {
+  id           String   @id @default(uuid())
+  companyId    String?
+  userId       String
+  userName     String?
+  role         String?
+  question     String // pertanyaan terakhir user
+  answer       String? // jawaban AI (null kalau error)
+  // ANSWERED  = AI menjawab dengan data
+  // UNANSWERED = AI menjawab tapi tidak bisa/tdk punya akses (audit utama)
+  // ERROR     = exception saat proses (audit utama)
+  status       String   @default("ANSWERED")
+  toolsUsed    String[] @default([]) // nama tool yang dipanggil
+  errorMessage String?
+  durationMs   Int?
+  createdAt    DateTime @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("ai_assistant_logs")
+}
+
 // Konfigurasi chatbot WhatsApp per company. Bot punya 2 mode:
 // - CUSTOMER: balas FAQ harga/jam buka, cek booking pribadi, daftar layanan
 // - OWNER: cek stok produk, penjualan hari ini, booking hari ini, top product

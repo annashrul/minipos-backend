@@ -15,3 +15,12 @@ export type AiChatResponse = {
   response?: string;
   error?: string;
 };
+
+// Query audit log percakapan AI (untuk halaman/endpoint audit).
+export const AiLogsQuerySchema = z.object({
+  status: z.enum(["ANSWERED", "UNANSWERED", "ERROR"]).optional(),
+  days: z.coerce.number().int().positive().max(365).optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+export type AiLogsQueryDto = z.infer<typeof AiLogsQuerySchema>;
