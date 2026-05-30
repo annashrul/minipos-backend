@@ -79,29 +79,46 @@ export class AiAssistantToolsService {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const soldProducts = await this.repo.groupSoldProductIds(
-      auth.companyId,
-      since,
+    // "Bergerak" = terjual langsung ATAU terkonsumsi sebagai bahan baku lewat
+    // resep produk jadi yang terjual. Tanpa bagian kedua, bahan baku seperti
+    // beras salah ditandai slow-moving padahal ikut terpakai saat Nasi Padang
+    // (yang resepnya memuat beras) laku.
+    const [soldProducts, consumed] = await Promise.all([
+      this.repo.groupSoldProductIds(auth.companyId, since),
+      this.repo.groupConsumedIngredientIds(auth.companyId, since),
+    ]);
+    const movedIds = Array.from(
+      new Set([
+        ...soldProducts.map((p) => p.productId),
+        ...consumed.map((c) => c.ingredientId),
+      ]),
     );
-    const soldIds = soldProducts.map((p) => p.productId);
 
     const slow = await this.repo.findSlowProducts(
       auth.companyId,
-      soldIds,
+      movedIds,
       limit,
     );
 
-    return slow.map((p) => ({
-      id: p.id,
-      name: p.name,
-      code: p.code,
-      stock: p.stock,
-      sellingPrice: p.sellingPrice,
-      purchasePrice: p.purchasePrice,
-      unit: p.unit,
-      category: p.category?.name || "Tanpa Kategori",
-      daysSinceLastSale: `Tidak terjual dalam ${days} hari terakhir`,
-    }));
+    return slow.map((p) => {
+      const isIngredient = p.itemType === "INGREDIENT";
+      return {
+        id: p.id,
+        name: p.name,
+        code: p.code,
+        stock: p.stock,
+        sellingPrice: p.sellingPrice,
+        purchasePrice: p.purchasePrice,
+        unit: p.unit,
+        category: p.category?.name || "Tanpa Kategori",
+        itemType: isIngredient ? "Bahan baku" : "Produk jadi",
+        // Untuk bahan baku, "tidak laku" berarti tidak terjual langsung DAN
+        // tidak terpakai di resep produk yang laku — jadi memang benar-benar diam.
+        daysSinceLastSale: isIngredient
+          ? `Bahan baku — tidak terpakai (langsung/via resep) dalam ${days} hari terakhir`
+          : `Tidak terjual dalam ${days} hari terakhir`,
+      };
+    });
   }
 
   async executeGetSalesSummary(

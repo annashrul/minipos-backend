@@ -35,7 +35,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_slow_products",
-      description: "Mendapatkan produk yang lambat/tidak terjual.",
+      description:
+        "Produk slow-moving (tidak bergerak) dalam N hari. Sudah RECIPE-AWARE: bahan baku yang terpakai lewat resep produk jadi yang terjual TIDAK dianggap slow-moving. Tiap item punya field itemType ('Produk jadi' / 'Bahan baku') — sebutkan bedanya saat menjawab.",
       parameters: {
         type: "object",
         properties: {
@@ -578,6 +579,7 @@ ATURAN KETAT:
     "hari ini"->today, "kemarin"/"hari kemarin"->yesterday, "minggu ini"/"7 hari"->week, "bulan ini"->month, "tahun ini"->year.
     Kalau user bilang "kemarin", WAJIB panggil tool dengan period="yesterday" — JANGAN balik nanya periode.
 16. Untuk pertanyaan "siapa kasir yang jaga (kemarin/hari ini/...)", pakai get_cashier_performance dengan period yang sesuai, lalu sebutkan nama-nama kasir yang ada transaksinya.
+17. BAHAN BAKU vs PRODUK JADI: ada 2 jenis item (field itemType). Bahan baku (mis. beras, gula, kopi bubuk) tidak dijual langsung — terpakai lewat resep saat produk jadi (mis. Nasi Padang) terjual. get_slow_products SUDAH recipe-aware (bahan baku yg terpakai via resep tidak masuk slow-moving). Saat menjawab slow-moving, BEDAKAN dan beri label: "Produk jadi" vs "Bahan baku", dan jangan menyarankan menghentikan bahan baku yang sebenarnya terpakai di resep.
 
 CONTOH ALUR:
 - "Gimana penjualan bulan ini?" -> get_dashboard_overview(month) -> sebut omzet, jml transaksi, rata-rata, naik/turun vs bulan lalu

@@ -35,6 +35,7 @@ const SLOW_PRODUCT_SELECT = {
   sellingPrice: true,
   purchasePrice: true,
   unit: true,
+  itemType: true,
   category: { select: { name: true } },
 } satisfies Prisma.ProductSelect;
 
@@ -239,6 +240,29 @@ export class AiAssistantRepository {
         },
       },
     });
+  }
+
+  // Bahan baku (itemType=INGREDIENT) yang TERKONSUMSI lewat resep produk jadi
+  // yang terjual dalam periode. Dipakai supaya bahan baku yang sebenarnya
+  // "bergerak" (mis. beras saat Nasi Padang laku) TIDAK dianggap slow-moving.
+  async groupConsumedIngredientIds(
+    companyId: string | null,
+    since: Date,
+  ): Promise<{ ingredientId: string }[]> {
+    return this.prisma.$queryRawUnsafe<{ ingredientId: string }[]>(
+      `
+      SELECT DISTINCT ri."ingredientId"
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti."transactionId"
+      JOIN users u ON u.id = t."userId"
+      JOIN recipes r ON r."productId" = ti."productId"
+      JOIN recipe_ingredients ri ON ri."recipeId" = r.id
+      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+        AND ($2::text IS NULL OR u."companyId" = $2)
+      `,
+      since,
+      companyId,
+    );
   }
 
   async findSlowProducts(
