@@ -286,10 +286,11 @@ export class WhatsappChatbotService implements OnModuleInit {
     }
 
     const config = params.config;
-    // Default model: openai/gpt-oss-120b — tool-calling jauh lebih reliable
-    // dibanding Llama-3 family (yang kadang emit native function-tag malformed).
+    // Default model: openai/gpt-oss-20b — ringan & latensi konsisten (penting
+    // untuk balasan WA realtime ke pelanggan), tetap sekeluarga gpt-oss jadi
+    // tool-calling tetap reliable. Eskalasi ke 120b lalu llama saat rate-limit.
     // Bisa override per-company via WhatsappBotConfig.model.
-    const model = config?.model || "openai/gpt-oss-120b";
+    const model = config?.model || "openai/gpt-oss-20b";
     const groq = new Groq({ apiKey });
 
     // Rantai fallback model Groq: tiap model punya kuota TPD (token-per-day)
@@ -297,7 +298,7 @@ export class WhatsappChatbotService implements OnModuleInit {
     // lain yang sama-sama support tool-calling sebelum lompat ke Gemini.
     const groqModels = [
       model,
-      "openai/gpt-oss-20b",
+      "openai/gpt-oss-120b",
       "llama-3.3-70b-versatile",
     ].filter((m, i, arr) => arr.indexOf(m) === i);
 
@@ -402,6 +403,10 @@ export class WhatsappChatbotService implements OnModuleInit {
             messages: msgs,
             tools,
             tool_choice: "auto",
+            // gpt-oss reasoning model — "low" memangkas waktu "berpikir" supaya
+            // balasan WA ke pelanggan jauh lebih cepat tanpa menurunkan kualitas
+            // tool-calling untuk percakapan order/menu yang lugas.
+            reasoning_effort: "low",
             max_tokens: 1024,
           });
         } catch (err) {
