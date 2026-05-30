@@ -224,6 +224,18 @@ type AuthContext = {
   companyId: string | null;
 };
 
+// Deteksi error rate-limit / quota habis dari Groq (429) maupun Gemini
+// (RESOURCE_EXHAUSTED). Dipakai untuk memicu fallback antar-model & ke Gemini.
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: number; message?: string };
+  if (e.status === 429) return true;
+  const msg = (e.message ?? "").toLowerCase();
+  return /rate.?limit|quota|too many requests|resource_exhausted|daily limit|limit reached|insufficient_quota|(^|\D)429(\D|$)/.test(
+    msg,
+  );
+}
+
 @Injectable()
 export class AiAssistantService {
   private readonly logger = new Logger(AiAssistantService.name);
@@ -373,6 +385,76 @@ Info user: ${auth.userName} (${auth.role})`;
 
     const groq = new Groq({ apiKey });
 
+    // Rantai fallback model Groq (tiap model punya kuota TPD sendiri) lalu
+    // fallback terakhir ke Google AI Studio (Gemini) saat SEMUA model Groq
+    // kena rate-limit/quota harian — sama seperti wa-bot. Gemini dipanggil via
+    // fetch ke endpoint OpenAI-compatible (path tidak ter-mangle, error terbaca).
+    const groqModels = [
+      model,
+      "openai/gpt-oss-20b",
+      "llama-3.3-70b-versatile",
+    ].filter((m, i, arr) => arr.indexOf(m) === i);
+    const geminiKey = this.config.get<string>("GEMINI_API_KEY");
+    const geminiModel =
+      this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+
+    const callModel = async (
+      msgs: Groq.Chat.ChatCompletionMessageParam[],
+    ): Promise<Groq.Chat.ChatCompletion> => {
+      let lastErr: unknown;
+      for (const m of groqModels) {
+        try {
+          return await groq.chat.completions.create({
+            model: m,
+            messages: msgs,
+            tools: TOOLS,
+            tool_choice: "auto",
+            max_tokens: 4096,
+          });
+        } catch (err) {
+          lastErr = err;
+          // Hanya rate-limit yang memicu pindah model; error lain (mis.
+          // tool_use_failed) dilempar ke catch luar yang sudah menanganinya.
+          if (isRateLimitError(err)) {
+            this.logger.warn(
+              `[AI Assistant] Groq model ${m} rate-limited — coba model alternatif`,
+            );
+            continue;
+          }
+          throw err;
+        }
+      }
+      // Semua model Groq kena rate-limit harian — fallback ke Gemini.
+      if (geminiKey) {
+        this.logger.warn(
+          "[AI Assistant] Semua model Groq rate-limited — fallback ke Gemini (Google AI Studio)",
+        );
+        const res = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${geminiKey}`,
+            },
+            body: JSON.stringify({
+              model: geminiModel,
+              messages: msgs,
+              tools: TOOLS,
+              tool_choice: "auto",
+              max_tokens: 4096,
+            }),
+          },
+        );
+        if (res.ok) return (await res.json()) as Groq.Chat.ChatCompletion;
+        const body = await res.text().catch(() => "");
+        this.logger.warn(
+          `[AI Assistant] Gemini fallback gagal: HTTP ${res.status} ${body.slice(0, 200)}`,
+        );
+      }
+      throw lastErr;
+    };
+
     try {
       const chatMessages: Groq.Chat.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
@@ -382,13 +464,7 @@ Info user: ${auth.userName} (${auth.role})`;
         })),
       ];
 
-      let response = await groq.chat.completions.create({
-        model,
-        messages: chatMessages,
-        tools: TOOLS,
-        tool_choice: "auto",
-        max_tokens: 4096,
-      });
+      let response = await callModel(chatMessages);
 
       // Handle tool calls in a loop (max 5 iterations)
       let iterations = 0;
@@ -424,13 +500,7 @@ Info user: ${auth.userName} (${auth.role})`;
           }
         }
 
-        response = await groq.chat.completions.create({
-          model,
-          messages: chatMessages,
-          tools: TOOLS,
-          tool_choice: "auto",
-          max_tokens: 4096,
-        });
+        response = await callModel(chatMessages);
 
         iterations++;
       }
