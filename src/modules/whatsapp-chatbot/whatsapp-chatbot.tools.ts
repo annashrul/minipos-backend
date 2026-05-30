@@ -495,8 +495,31 @@ export const CUSTOMER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     function: {
       name: "start_order",
       description:
-        "Mulai proses PEMESANAN — kembalikan LINK halaman pesan online (katalog + keranjang) untuk customer. WAJIB panggil saat customer ingin memesan/checkout: 'mau pesan', 'order', 'beli', 'bungkus/takeaway', 'mau ambil X'. Setelah dapat hasilnya, sertakan link-nya APA ADANYA di balasan sebagai cara memesan.",
-      parameters: { type: "object", properties: {} },
+        "Mulai PEMESANAN — kembalikan LINK halaman pesan online (katalog + keranjang). WAJIB panggil saat customer ingin memesan/checkout: 'mau pesan', 'order', 'beli', 'bungkus/takeaway'. Kalau customer SUDAH menyebut menu yang mau dipesan, ISI `items` — keranjang akan otomatis terisi menu itu saat customer buka link. Sertakan link hasilnya APA ADANYA di balasan.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            description:
+              "Menu yang ingin dipesan customer (dari chat). Kosongkan kalau customer belum menyebut menu spesifik.",
+            items: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "Nama menu, mis. 'Ayam Bakar Madu'",
+                },
+                quantity: {
+                  type: "number",
+                  description: "Jumlah pesanan (default 1)",
+                },
+              },
+              required: ["name"],
+            },
+          },
+        },
+      },
     },
   },
 ];
@@ -1447,13 +1470,50 @@ export async function executeCustomerTool(
         process.env.WEB_ORIGIN || "https://menopos.vercel.app"
       ).replace(/\/$/, "");
       const phone = senderPhone ? senderPhone.replace(/\D/g, "") : "";
-      const url =
-        `${base}/table/${token}` + (phone ? `?phone=${phone}` : "");
+
+      // Resolve menu yang disebut customer -> productId untuk pre-fill keranjang.
+      const rawItems = Array.isArray(args.items) ? args.items : [];
+      const resolved: {
+        id: string;
+        name: string;
+        qty: number;
+        price: number;
+      }[] = [];
+      const notFound: string[] = [];
+      for (const it of rawItems) {
+        const obj = (it ?? {}) as { name?: unknown; quantity?: unknown };
+        const nm = typeof obj.name === "string" ? obj.name.trim() : "";
+        if (!nm) continue;
+        const qty = Math.max(1, Math.min(99, Number(obj.quantity) || 1));
+        const p = await repo.resolveOrderProductByName(companyId, nm);
+        if (p) {
+          resolved.push({ id: p.id, name: p.name, qty, price: p.sellingPrice });
+        } else {
+          notFound.push(nm);
+        }
+      }
+
+      const params = new URLSearchParams();
+      if (phone) params.set("phone", phone);
+      if (resolved.length > 0) {
+        params.set("cart", resolved.map((r) => `${r.id}:${r.qty}`).join(","));
+      }
+      const qs = params.toString();
+      const url = `${base}/table/${token}` + (qs ? `?${qs}` : "");
+
       return {
         available: true,
         orderUrl: url,
+        cartItems: resolved.map((r) => ({
+          name: r.name,
+          qty: r.qty,
+          price: fmtRp(r.price),
+        })),
+        notFound,
         instruction:
-          "Berikan link ini ke customer sebagai cara memesan (klik untuk buka menu + keranjang + checkout). Tulis URL APA ADANYA, jangan diubah/dipersingkat. Ajak singkat, mis. 'Silakan pesan di sini ya Kak 👉 <url>'.",
+          resolved.length > 0
+            ? "Keranjang SUDAH terisi item di atas. Berikan link APA ADANYA, sebutkan ringkasan item + jumlah, dan kalau ada notFound sampaikan item itu tidak ditemukan. Customer tinggal klik link untuk checkout. JANGAN ubah URL."
+            : "Berikan link ini sebagai cara memesan (pilih menu + checkout di halaman). Tulis URL apa adanya.",
       };
     }
   }

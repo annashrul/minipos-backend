@@ -1084,6 +1084,44 @@ export class WhatsappChatbotRepository {
     return any?.qrToken ?? null;
   }
 
+  // Resolve nama menu (dari chat) ke produk untuk pre-fill keranjang order.
+  // Pakai pencarian per-token + ranking overlap (mis. "ayam bakar madu").
+  async resolveOrderProductByName(
+    companyId: string,
+    name: string,
+  ): Promise<{ id: string; name: string; sellingPrice: number } | null> {
+    const tokens = tokenizeQuery(name);
+    const orConds: Prisma.ProductWhereInput[] =
+      tokens.length > 0
+        ? tokens.map((t) => ({
+            name: { contains: t, mode: "insensitive" as const },
+          }))
+        : [{ name: { contains: name, mode: "insensitive" as const } }];
+    const rows = await this.prisma.product.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        itemType: "PRODUCT",
+        OR: orConds,
+      },
+      select: { id: true, name: true, sellingPrice: true },
+      take: 15,
+    });
+    if (rows.length === 0) return null;
+    if (tokens.length === 0) return rows[0] ?? null;
+    let best = rows[0]!;
+    let bestScore = -1;
+    for (const r of rows) {
+      const n = r.name.toLowerCase();
+      const score = tokens.filter((t) => n.includes(t)).length;
+      if (score > bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+    return best;
+  }
+
   // ─── Promo aktif ─────────────────────────────────────────────────
   findActivePromotions(companyId: string): Promise<RawPromotionInfo[]> {
     const now = new Date();
