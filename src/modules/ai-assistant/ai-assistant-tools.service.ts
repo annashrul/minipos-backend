@@ -111,24 +111,11 @@ export class AiAssistantToolsService {
       branchId?: string;
     },
   ) {
-    const period = input.period || "month";
-    const now = new Date();
-    let start: Date;
-
-    if (period === "today") {
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    } else if (period === "week") {
-      start = new Date(now);
-      start.setDate(now.getDate() - 7);
-    } else if (period === "year") {
-      start = new Date(now.getFullYear(), 0, 1);
-    } else {
-      start = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
+    const { start, end, label } = this.resolvePeriod(input.period);
 
     const where: Record<string, unknown> = {
       status: "COMPLETED",
-      createdAt: { gte: start },
+      createdAt: { gte: start, lte: end },
     };
     if (auth.companyId) where.user = { companyId: auth.companyId };
     if (input.branchId) where.branchId = input.branchId;
@@ -139,7 +126,7 @@ export class AiAssistantToolsService {
     ]);
 
     return {
-      period,
+      period: label,
       revenue: agg._sum.grandTotal || 0,
       discount: agg._sum.discountAmount || 0,
       tax: agg._sum.taxAmount || 0,
@@ -176,22 +163,7 @@ export class AiAssistantToolsService {
   ) {
     if (!auth.companyId) return [];
 
-    const period = (input.period as "today" | "week" | "month") || "month";
-    const now = new Date();
-    let start: Date;
-    let end: Date;
-
-    if (period === "today") {
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      end = now;
-    } else if (period === "week") {
-      start = new Date(now);
-      start.setDate(now.getDate() - 7);
-      end = now;
-    } else {
-      start = new Date(now.getFullYear(), now.getMonth(), 1);
-      end = now;
-    }
+    const { start, end } = this.resolvePeriod(input.period);
 
     const result = await this.cashier.getPerformance(auth.companyId, {
       from: start.toISOString(),
@@ -488,9 +460,9 @@ export class AiAssistantToolsService {
   // Analytics tambahan: dashboard, metode pembayaran, meja, tren, laba
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Resolve "today"/"week"/"month"/"year" jadi rentang sekarang + periode
-  // sebelumnya (untuk perbandingan). Catatan: boundary pakai jam server (UTC) —
-  // konsisten dengan tool ringkasan penjualan lain.
+  // Resolve "today"/"yesterday"/"week"/"month"/"year" jadi rentang sekarang +
+  // periode sebelumnya (untuk perbandingan). Catatan: boundary pakai jam server
+  // (UTC) — konsisten dengan tool ringkasan penjualan lain.
   private resolvePeriod(period?: string): {
     start: Date;
     end: Date;
@@ -500,6 +472,7 @@ export class AiAssistantToolsService {
   } {
     const now = new Date();
     let start: Date;
+    let end = now;
     let prevStart: Date;
     let prevEnd: Date;
     let label: string;
@@ -510,6 +483,21 @@ export class AiAssistantToolsService {
       prevStart = new Date(start);
       prevStart.setDate(start.getDate() - 1);
       label = "hari ini";
+    } else if (period === "yesterday") {
+      // Kemarin: [kemarin 00:00, hari ini 00:00). end DIBATASI ke awal hari ini
+      // supaya transaksi hari ini tidak ikut.
+      const todayStart = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      );
+      end = todayStart;
+      start = new Date(todayStart);
+      start.setDate(todayStart.getDate() - 1);
+      prevEnd = start;
+      prevStart = new Date(start);
+      prevStart.setDate(start.getDate() - 1);
+      label = "kemarin";
     } else if (period === "week") {
       start = new Date(now);
       start.setDate(now.getDate() - 7);
@@ -528,7 +516,7 @@ export class AiAssistantToolsService {
       prevEnd = start;
       label = "bulan ini";
     }
-    return { start, end: now, prevStart, prevEnd, label };
+    return { start, end, prevStart, prevEnd, label };
   }
 
   // Ringkasan dashboard: omzet, transaksi, rata-rata, diskon/pajak, vs periode

@@ -57,7 +57,10 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
       parameters: {
         type: "object",
         properties: {
-          period: { type: "string", description: "today/week/month/year" },
+          period: {
+            type: "string",
+            description: "today/yesterday/week/month/year ('kemarin'=yesterday)",
+          },
           branchId: { type: "string", description: "ID cabang" },
         },
       },
@@ -84,7 +87,10 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
       parameters: {
         type: "object",
         properties: {
-          period: { type: "string", description: "today/week/month" },
+          period: {
+            type: "string",
+            description: "today/yesterday/week/month ('kemarin'=yesterday)",
+          },
         },
       },
     },
@@ -233,7 +239,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today / week / month / year (default month)",
+            description:
+              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
         },
@@ -251,7 +258,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today / week / month / year (default month)",
+            description:
+              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
         },
@@ -283,7 +291,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today / week / month / year (default month)",
+            description:
+              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
           },
           limit: { type: "number", description: "Jumlah meja (default 10)" },
         },
@@ -319,7 +328,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today / week / month / year (default month)",
+            description:
+              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
         },
@@ -550,7 +560,9 @@ export class AiAssistantService {
 ATURAN KETAT:
 1. Pertanyaan tentang produk, stok, lokasi rak, penjualan, kasir, supplier, kategori -> WAJIB panggil tool dulu
 2. JANGAN mengarang angka, nama produk, kode rak, atau data apapun tanpa tool call
-3. Jika tidak ada tool yang cocok, jawab "Maaf, saya tidak punya akses ke data tersebut"
+3. Bedakan DUA kondisi (PENTING):
+   (a) TIDAK ADA tool yang cocok untuk pertanyaan -> jawab "Maaf, saya belum bisa menjawab pertanyaan itu."
+   (b) Tool SUDAH dipanggil tapi hasilnya KOSONG / nol / array kosong -> JANGAN bilang "tidak punya akses". Sampaikan apa adanya bahwa datanya nihil, mis. "Tidak ada produk dengan stok menipis saat ini", "Belum ada penjualan pada periode itu", "Semua meja kosong". Angka 0 / data kosong adalah jawaban yang VALID dan harus disampaikan dengan jelas, BUKAN ditolak.
 4. Bahasa Indonesia, ringkas, langsung ke jawabannya. JANGAN bertele-tele.
 5. Format angka uang dengan Rp (contoh: Rp 150.000)
 6. WAJIB pakai find_product_location saat user nanya LOKASI/POSISI produk ("dimana", "rak mana", "ada di mana", "letak", "cariin")
@@ -562,6 +574,10 @@ ATURAN KETAT:
 12. Pertanyaan soal MEJA: kondisi/kosong/terisi sekarang -> get_table_status; meja paling ramai (periode) -> get_busiest_tables
 13. Pertanyaan soal TREN / hari paling ramai -> get_sales_trend; soal LABA/UNTUNG/MARGIN -> get_profit_summary
 14. Untuk semua tool periode, default "month" kalau user tidak sebut. Format uang Rp. Saat laba, sebutkan bahwa angkanya ESTIMASI (sesuai field note).
+15. PEMETAAN PERIODE waktu (parameter period) WAJIB dari kata user:
+    "hari ini"->today, "kemarin"/"hari kemarin"->yesterday, "minggu ini"/"7 hari"->week, "bulan ini"->month, "tahun ini"->year.
+    Kalau user bilang "kemarin", WAJIB panggil tool dengan period="yesterday" — JANGAN balik nanya periode.
+16. Untuk pertanyaan "siapa kasir yang jaga (kemarin/hari ini/...)", pakai get_cashier_performance dengan period yang sesuai, lalu sebutkan nama-nama kasir yang ada transaksinya.
 
 CONTOH ALUR:
 - "Gimana penjualan bulan ini?" -> get_dashboard_overview(month) -> sebut omzet, jml transaksi, rata-rata, naik/turun vs bulan lalu
