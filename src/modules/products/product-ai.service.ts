@@ -18,6 +18,17 @@ import { PrismaService } from "@/modules/prisma/prisma.service";
  *   - Fokus: kompatibilitas, use-case, spec actionable, alasan beli
  *   - Tone: faktual, seperti ngomong ke konsumen yang nanya "kenapa pilih ini?"
  */
+
+// Deteksi error rate-limit / quota habis (Groq 429 / Gemini RESOURCE_EXHAUSTED).
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: number; message?: string };
+  if (e.status === 429) return true;
+  const msg = (e.message ?? "").toLowerCase();
+  return /rate.?limit|quota|too many requests|resource_exhausted|daily limit|limit reached|insufficient_quota|(^|\D)429(\D|$)/.test(
+    msg,
+  );
+}
 @Injectable()
 export class ProductAiService {
   private readonly logger = new Logger(ProductAiService.name);
@@ -161,6 +172,62 @@ Tulis deskripsinya (ikuti aturan ketat di atas, lihat contoh).`;
             `Generate description failed with ${candidateModel}: ${
               err instanceof Error ? err.message : String(err)
             }`,
+          );
+        }
+      }
+
+      // Semua model Groq gagal karena rate-limit/quota harian → fallback ke
+      // Gemini (Google AI Studio) via endpoint OpenAI-compatible. Tanpa tools,
+      // jadi cukup plain text generation.
+      const geminiKey = this.config.get<string>("GEMINI_API_KEY");
+      if (geminiKey && isRateLimitError(lastError)) {
+        this.logger.warn(
+          "[ProductAI] Semua model Groq rate-limited — fallback ke Gemini",
+        );
+        try {
+          const geminiModel =
+            this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+          const res = await fetch(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${geminiKey}`,
+              },
+              body: JSON.stringify({
+                model: geminiModel,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: userPrompt },
+                ],
+                max_tokens: 700,
+                temperature: 0.5,
+              }),
+            },
+          );
+          if (res.ok) {
+            const data = (await res.json()) as {
+              choices?: { message?: { content?: string } }[];
+            };
+            const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+            const cleaned = text.replace(/^["'`]+|["'`]+$/g, "").trim();
+            if (cleaned) {
+              return {
+                description: /[.!?]$/.test(cleaned)
+                  ? cleaned
+                  : `${cleaned.replace(/[,\s]+$/g, "")}.`,
+              };
+            }
+          } else {
+            const body = await res.text().catch(() => "");
+            this.logger.warn(
+              `[ProductAI] Gemini fallback gagal: HTTP ${res.status} ${body.slice(0, 200)}`,
+            );
+          }
+        } catch (gerr) {
+          this.logger.warn(
+            `[ProductAI] Gemini fallback error: ${(gerr as Error).message}`,
           );
         }
       }
