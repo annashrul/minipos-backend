@@ -150,6 +150,22 @@ export class TransactionsRepository {
     });
   }
 
+  /**
+   * Cari transaksi berdasarkan idempotencyKey (di-scope per company). Dipakai
+   * checkout untuk mengembalikan transaksi yang sudah ada saat retry sinkron
+   * offline, alih-alih membuat duplikat.
+   */
+  findByIdempotencyKey(companyId: string, idempotencyKey: string) {
+    return this.prisma.transaction.findFirst({
+      where: { companyId, idempotencyKey },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        invoiceDisplayNumber: true,
+      },
+    });
+  }
+
   findRecipesByProductIds(productIds: string[]) {
     return this.prisma.recipe.findMany({
       where: { productId: { in: productIds } },

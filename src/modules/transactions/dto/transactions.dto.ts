@@ -210,6 +210,11 @@ export const CheckoutSchema = z
     // Edit-mode: kalau di-set, transaksi sumber akan di-void otomatis setelah
     // checkout sukses (stok sumber di-restore, user-facing seperti "diedit").
     replaceTransactionId: z.string().nullable().optional(),
+    // Kunci idempoten dari client (= id antrian offline). Kalau key ini sudah
+    // pernah ter-checkout untuk company yang sama, backend mengembalikan
+    // transaksi yang sudah ada alih-alih membuat duplikat. Dipakai saat
+    // sinkronisasi transaksi offline yang bisa di-retry beberapa kali.
+    idempotencyKey: z.string().max(100).optional(),
   })
   .refine(
     (v) => {

@@ -68,6 +68,26 @@ export class TransactionCheckoutService {
     dto: CheckoutDto,
     retryCount = 0,
   ): Promise<CheckoutResponse> {
+    // Idempotensi: kalau key ini sudah pernah ter-checkout untuk company yang
+    // sama (mis. retry sinkronisasi transaksi offline), kembalikan transaksi
+    // yang sudah ada tanpa membuat duplikat. Points di-set 0 karena sudah
+    // diberikan saat create pertama; pemanggil (offline sync) tidak memakainya.
+    if (dto.idempotencyKey) {
+      const existing = await this.repo.findByIdempotencyKey(
+        companyId,
+        dto.idempotencyKey,
+      );
+      if (existing) {
+        return {
+          id: existing.id,
+          invoiceNumber: existing.invoiceNumber,
+          invoiceDisplayNumber: existing.invoiceDisplayNumber ?? null,
+          pointsEarned: 0,
+          pointsRedeemed: 0,
+        };
+      }
+    }
+
     const branchId = dto.branchId ?? null;
     if (branchId) await this.assert.branch(companyId, branchId);
     if (dto.customerId) await this.assert.customer(companyId, dto.customerId);
@@ -267,6 +287,7 @@ export class TransactionCheckoutService {
               changeAmount: dto.changeAmount,
               promoApplied: dto.promoApplied ?? null,
               notes: dto.notes ?? null,
+              idempotencyKey: dto.idempotencyKey ?? null,
               status: "COMPLETED",
               items: {
                 create: dto.items.map((item) => {
@@ -612,6 +633,24 @@ export class TransactionCheckoutService {
     } catch (err) {
       if (isInvoiceConflict(err) && retryCount < 3) {
         return this.checkout(companyId, userId, dto, retryCount + 1);
+      }
+      // Race idempotensi: dua sinkronisasi paralel membawa key sama → salah
+      // satu kena unique violation. Ambil & kembalikan transaksi yang sudah
+      // dibuat oleh request pemenang, bukan melempar error duplikat.
+      if (dto.idempotencyKey && isIdempotencyConflict(err)) {
+        const existing = await this.repo.findByIdempotencyKey(
+          companyId,
+          dto.idempotencyKey,
+        );
+        if (existing) {
+          return {
+            id: existing.id,
+            invoiceNumber: existing.invoiceNumber,
+            invoiceDisplayNumber: existing.invoiceDisplayNumber ?? null,
+            pointsEarned: 0,
+            pointsRedeemed: 0,
+          };
+        }
       }
       throw err;
     }
@@ -1036,6 +1075,18 @@ function isInvoiceConflict(err: unknown): boolean {
       if (target.includes("invoiceNumber")) return true;
       if (target.includes("invoiceDisplayNumber")) return true;
     }
+  }
+  return false;
+}
+
+function isIdempotencyConflict(err: unknown): boolean {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2002"
+  ) {
+    const target = err.meta?.target;
+    if (Array.isArray(target)) return target.includes("idempotencyKey");
+    if (typeof target === "string") return target.includes("idempotencyKey");
   }
   return false;
 }

@@ -790,6 +790,11 @@ model Transaction {
   voidReason           String?
   promoApplied         String?
   notes                String?
+  // Kunci idempoten dari client (= id antrian offline). Dipakai supaya retry
+  // sinkronisasi transaksi offline tidak membuat duplikat: kalau key sudah
+  // ada untuk company ini, checkout mengembalikan transaksi yang sudah ada.
+  // NULL untuk transaksi online biasa (banyak NULL diizinkan di composite unique).
+  idempotencyKey       String?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   items                TransactionItem[]
@@ -805,6 +810,7 @@ model Transaction {
   serviceOrder         ServiceOrder?     @relation("ServiceOrderTransaction")
 
   @@unique([companyId, invoiceDisplayNumber])
+  @@unique([companyId, idempotencyKey])
   @@index([invoiceNumber])
   @@index([userId])
   @@index([branchId])
