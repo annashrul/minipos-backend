@@ -1038,6 +1038,39 @@ export class WhatsappChatbotRepository {
     });
   }
 
+  // ─── Order online (link katalog WhatsApp) ────────────────────────
+  // Cari qrToken meja untuk dijadikan link pesan online. Prioritaskan meja
+  // yang ditandai online/whatsapp; fallback meja pertama yang punya qrToken.
+  async findOnlineOrderToken(companyId: string): Promise<string | null> {
+    const preferred = await this.prisma.restaurantTable.findFirst({
+      where: {
+        branch: { companyId },
+        isActive: true,
+        qrToken: { not: null },
+        OR: [
+          { section: { contains: "online", mode: "insensitive" } },
+          { section: { contains: "whatsapp", mode: "insensitive" } },
+          { name: { contains: "online", mode: "insensitive" } },
+          { name: { contains: "whatsapp", mode: "insensitive" } },
+        ],
+      },
+      select: { qrToken: true },
+      orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
+    });
+    if (preferred?.qrToken) return preferred.qrToken;
+
+    const any = await this.prisma.restaurantTable.findFirst({
+      where: {
+        branch: { companyId },
+        isActive: true,
+        qrToken: { not: null },
+      },
+      select: { qrToken: true },
+      orderBy: [{ sortOrder: "asc" }, { number: "asc" }],
+    });
+    return any?.qrToken ?? null;
+  }
+
   // ─── Promo aktif ─────────────────────────────────────────────────
   findActivePromotions(companyId: string): Promise<RawPromotionInfo[]> {
     const now = new Date();

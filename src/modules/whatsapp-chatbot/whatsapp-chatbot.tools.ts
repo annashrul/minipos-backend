@@ -490,6 +490,15 @@ export const CUSTOMER_TOOLS: Groq.Chat.ChatCompletionTool[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "start_order",
+      description:
+        "Mulai proses PEMESANAN — kembalikan LINK halaman pesan online (katalog + keranjang) untuk customer. WAJIB panggil saat customer ingin memesan/checkout: 'mau pesan', 'order', 'beli', 'bungkus/takeaway', 'mau ambil X'. Setelah dapat hasilnya, sertakan link-nya APA ADANYA di balasan sebagai cara memesan.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 // ─── Implementations ─────────────────────────────────────────────────
@@ -1422,6 +1431,29 @@ export async function executeCustomerTool(
           validUntil: toDateOnly(p.endDate),
           description: p.description ?? null,
         })),
+      };
+    }
+
+    case "start_order": {
+      const token = await repo.findOnlineOrderToken(companyId);
+      if (!token) {
+        return {
+          available: false,
+          instruction:
+            "Pemesanan online belum diaktifkan (tidak ada meja ber-QR). Sarankan customer pesan langsung di tempat / hubungi admin. JANGAN mengarang link.",
+        };
+      }
+      const base = (
+        process.env.WEB_ORIGIN || "https://menopos.vercel.app"
+      ).replace(/\/$/, "");
+      const phone = senderPhone ? senderPhone.replace(/\D/g, "") : "";
+      const url =
+        `${base}/table/${token}` + (phone ? `?phone=${phone}` : "");
+      return {
+        available: true,
+        orderUrl: url,
+        instruction:
+          "Berikan link ini ke customer sebagai cara memesan (klik untuk buka menu + keranjang + checkout). Tulis URL APA ADANYA, jangan diubah/dipersingkat. Ajak singkat, mis. 'Silakan pesan di sini ya Kak 👉 <url>'.",
       };
     }
   }
