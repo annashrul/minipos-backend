@@ -648,7 +648,12 @@ Info user: ${auth.userName} (${auth.role})`;
             messages: msgs,
             tools: TOOLS,
             tool_choice: "auto",
-            max_tokens: 4096,
+            // gpt-oss adalah reasoning model — default-nya "berpikir" panjang
+            // sebelum menjawab (penyebab utama latensi 16s+). "low" memangkas
+            // reasoning drastis tanpa banyak menurunkan kualitas tool-calling.
+            reasoning_effort: "low",
+            // 2048 cukup untuk tabel ringkas; menahan output bertele-tele.
+            max_tokens: 2048,
           });
         } catch (err) {
           lastErr = err;
@@ -681,7 +686,7 @@ Info user: ${auth.userName} (${auth.role})`;
               messages: msgs,
               tools: TOOLS,
               tool_choice: "auto",
-              max_tokens: 4096,
+              max_tokens: 2048,
             }),
           },
         );
@@ -718,27 +723,38 @@ Info user: ${auth.userName} (${auth.role})`;
 
         chatMessages.push(choice.message);
 
-        for (const toolCall of choice.message.tool_calls) {
-          toolsUsed.push(toolCall.function.name);
-          try {
-            const args = JSON.parse(toolCall.function.arguments || "{}");
-            const result = await this.executeTool(
-              auth,
-              toolCall.function.name,
-              args,
-            );
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: JSON.stringify(result),
-            });
-          } catch {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: JSON.stringify({ error: "Gagal menjalankan tool" }),
-            });
-          }
+        // Jalankan SEMUA tool call dalam satu giliran secara paralel — kalau
+        // model minta beberapa tool sekaligus (mis. restock + suppliers),
+        // jangan tunggu berurutan. Urutan pesan tool tetap mengikuti urutan
+        // tool_calls (Promise.all mempertahankan urutan array).
+        const toolResults = await Promise.all(
+          choice.message.tool_calls.map(async (toolCall) => {
+            toolsUsed.push(toolCall.function.name);
+            try {
+              const args = JSON.parse(toolCall.function.arguments || "{}");
+              const result = await this.executeTool(
+                auth,
+                toolCall.function.name,
+                args,
+              );
+              return {
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(result),
+              };
+            } catch {
+              return {
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: "Gagal menjalankan tool" }),
+              };
+            }
+          }),
+        );
+        for (const r of toolResults) {
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: r.tool_call_id,
+            content: r.content,
+          });
         }
 
         response = await callModel(chatMessages);
@@ -782,6 +798,7 @@ Info user: ${auth.userName} (${auth.role})`;
             ],
             max_tokens: 256,
             temperature: 0.3,
+            reasoning_effort: "low",
           });
           result = {
             response:
