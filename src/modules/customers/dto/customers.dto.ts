@@ -36,6 +36,8 @@ export const CreateCustomerSchema = z.object({
   memberLevel: MemberLevelSchema.optional().default("REGULAR"),
   memberCardCode: z.string().nullable().optional(),
   dateOfBirth: z.string().datetime().nullable().optional(),
+  creditLimit: z.number().nonnegative().optional().default(0),
+  creditTermDays: z.number().int().min(0).optional().default(30),
 });
 export type CreateCustomerDto = z.infer<typeof CreateCustomerSchema>;
 
@@ -53,8 +55,21 @@ export type CustomerResponse = {
   points: number;
   memberCardCode: string | null;
   dateOfBirth: string | null;
+  creditLimit: number;
+  creditTermDays: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CustomerCreditStatusResponse = {
+  customerId: string;
+  creditLimit: number;
+  /** Total sisa piutang (RECEIVABLE) yang belum lunas untuk customer ini. */
+  outstanding: number;
+  /** Sisa limit yang masih bisa dipakai = creditLimit - outstanding. */
+  available: number;
+  /** True jika creditLimit > 0 (batas kredit aktif). 0 = tanpa batas. */
+  hasLimit: boolean;
 };
 
 export type CustomerListResponse = {

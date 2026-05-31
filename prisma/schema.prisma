@@ -723,6 +723,14 @@ model Customer {
   points         Int                    @default(0)
   memberCardCode String?
   dateOfBirth    DateTime?
+  // Batas kredit untuk pembelian TERMIN (piutang). 0 = tanpa batas (default
+  // aman supaya customer lama tidak terhalang). Saat checkout TERMIN, backend
+  // tolak jika outstanding piutang + nominal termin baru > creditLimit, kecuali
+  // ada override otorisasi supervisor.
+  creditLimit    Float                  @default(0)
+  // Tempo default (hari) untuk piutang customer ini. Dipakai sebagai dueDate
+  // saat termin tanpa konfigurasi cicilan eksplisit.
+  creditTermDays Int                    @default(30)
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
   transactions   Transaction[]

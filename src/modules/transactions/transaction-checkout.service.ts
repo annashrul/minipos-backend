@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
+import bcrypt from "bcryptjs";
 import { Prisma } from "@prisma/client";
 import { AssertService } from "@/common/assert/assert.service";
 import type {
@@ -62,6 +64,106 @@ export class TransactionCheckoutService {
     this._voidFn = fn;
   }
 
+  /**
+   * Tegakkan batas kredit (credit limit) untuk pembayaran TERMIN. Piutang baru
+   * tidak boleh membuat total outstanding melebihi `customer.creditLimit`
+   * (0 = tanpa batas). Bila melebihi, transaksi ditolak kecuali ada override
+   * otorisasi dari supervisor (role MANAGER ke atas) dengan password valid.
+   *
+   * Dipanggil SEBELUM membuka transaksi DB karena verifikasi password override
+   * bersifat CPU-bound (bcrypt) — tidak boleh menahan koneksi transaksi terbuka.
+   */
+  private async enforceCreditLimit(
+    companyId: string,
+    dto: CheckoutDto,
+  ): Promise<void> {
+    if (!dto.customerId) return;
+
+    // Nominal termin pada checkout ini (yang akan menjadi piutang baru).
+    const terminFromPayments = (dto.payments ?? [])
+      .filter((p) => p.method === "TERMIN")
+      .reduce((sum, p) => sum + p.amount, 0);
+    let terminAmount = terminFromPayments;
+    if (terminAmount <= 0 && dto.paymentMethod === "TERMIN") {
+      terminAmount = dto.paymentAmount > 0 ? dto.paymentAmount : dto.grandTotal;
+    }
+    if (terminAmount <= 0) return; // bukan transaksi termin → tidak perlu cek
+
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: dto.customerId, companyId },
+      select: { id: true, creditLimit: true },
+    });
+    // Customer invalid ditangani validasi lain di alur checkout; cek limit hanya
+    // relevan bila limit aktif (> 0).
+    if (!customer || customer.creditLimit <= 0) return;
+
+    const agg = await this.prisma.debt.aggregate({
+      where: {
+        companyId,
+        partyType: "CUSTOMER",
+        partyId: dto.customerId,
+        type: "RECEIVABLE",
+        status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
+      },
+      _sum: { remainingAmount: true },
+    });
+    const outstanding = agg._sum.remainingAmount ?? 0;
+
+    // Piutang baru = nominal termin dikurangi DP (DP langsung mengurangi sisa).
+    const downPayment = dto.terminConfig?.downPayment ?? 0;
+    const newReceivable = Math.max(terminAmount - downPayment, 0);
+    const projected = outstanding + newReceivable;
+
+    if (projected <= customer.creditLimit) return;
+
+    const available = Math.max(customer.creditLimit - outstanding, 0);
+    if (!dto.creditOverride) {
+      throw new BadRequestException(
+        `Melebihi limit kredit pelanggan. Limit: ${customer.creditLimit}, ` +
+          `piutang berjalan: ${outstanding}, sisa limit: ${available}, ` +
+          `tagihan baru: ${newReceivable}. Perlu persetujuan supervisor.`,
+      );
+    }
+
+    await this.verifyCreditOverride(companyId, dto.creditOverride);
+  }
+
+  /**
+   * Validasi override limit kredit: supervisor pemberi izin harus aktif, satu
+   * company, berperan MANAGER ke atas, dan password-nya cocok. Memakai
+   * `authorizationPassword` bila di-set, jika tidak fallback ke password login.
+   * Hashing memakai bcrypt (konsisten dengan auth & users module).
+   */
+  private async verifyCreditOverride(
+    companyId: string,
+    override: { email: string; password: string },
+  ): Promise<void> {
+    const approver = await this.prisma.user.findFirst({
+      where: { email: override.email, companyId, isActive: true },
+      select: {
+        role: true,
+        password: true,
+        authorizationPassword: true,
+      },
+    });
+    if (!approver) {
+      throw new ForbiddenException("Pemberi otorisasi tidak valid");
+    }
+
+    const allowedRoles = ["MANAGER", "ADMIN", "SUPER_ADMIN", "PLATFORM_OWNER"];
+    if (!allowedRoles.includes(approver.role)) {
+      throw new ForbiddenException(
+        "Override limit kredit memerlukan role Manager ke atas",
+      );
+    }
+
+    const hash = approver.authorizationPassword ?? approver.password;
+    const valid = await bcrypt.compare(override.password, hash);
+    if (!valid) {
+      throw new ForbiddenException("Password otorisasi salah");
+    }
+  }
+
   async checkout(
     companyId: string,
     userId: string,
@@ -106,6 +208,10 @@ export class TransactionCheckoutService {
       companyId,
       new Date(),
     );
+
+    // Tegakkan batas kredit untuk pembayaran TERMIN sebelum membuka transaksi
+    // DB (verifikasi password override bersifat CPU-bound).
+    await this.enforceCreditLimit(companyId, dto);
 
     const shouldValidateStock = await this.shouldValidateStock(branchId);
 

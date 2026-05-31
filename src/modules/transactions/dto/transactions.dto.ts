@@ -208,6 +208,17 @@ export const CheckoutSchema = z
     promoIds: z.array(z.string()).optional(),
     notes: z.string().nullable().optional(),
     terminConfig: TerminConfigSchema.nullable().optional(),
+    // Override batas kredit untuk pembayaran TERMIN. Di-set frontend setelah
+    // supervisor (role Manager ke atas) menyetujui via dialog. Backend
+    // memverifikasi email + password supervisor sebelum mengizinkan piutang yang
+    // melebihi creditLimit pelanggan.
+    creditOverride: z
+      .object({
+        email: z.string().email(),
+        password: z.string().min(1),
+      })
+      .nullable()
+      .optional(),
     redeemPoints: z.number().int().min(0).optional(),
     // Edit-mode: kalau di-set, transaksi sumber akan di-void otomatis setelah
     // checkout sukses (stok sumber di-restore, user-facing seperti "diedit").

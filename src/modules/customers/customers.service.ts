@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { throwIfUniqueConstraint } from "@/common/utils/prisma-errors";
 import type {
   CreateCustomerDto,
+  CustomerCreditStatusResponse,
   CustomerResponse,
   ListCustomersQueryDto,
   UpdateCustomerDto,
@@ -98,6 +99,24 @@ export class CustomersService {
     return toCustomerResponse(customer);
   }
 
+  async getCreditStatus(
+    companyId: string,
+    id: string,
+  ): Promise<CustomerCreditStatusResponse> {
+    const customer = await this.repo.findCreditInfo(companyId, id);
+    if (!customer) throw new NotFoundException("Pelanggan tidak ditemukan");
+
+    const outstanding = await this.repo.sumOutstandingReceivable(companyId, id);
+    const creditLimit = customer.creditLimit;
+    return {
+      customerId: id,
+      creditLimit,
+      outstanding,
+      available: Math.max(creditLimit - outstanding, 0),
+      hasLimit: creditLimit > 0,
+    };
+  }
+
   async create(
     companyId: string,
     dto: CreateCustomerDto,
@@ -111,6 +130,8 @@ export class CustomersService {
         memberLevel: dto.memberLevel ?? "REGULAR",
         memberCardCode: dto.memberCardCode ?? null,
         dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+        creditLimit: dto.creditLimit ?? 0,
+        creditTermDays: dto.creditTermDays ?? 30,
         companyId,
       });
       return toCustomerResponse(created);
@@ -138,6 +159,8 @@ export class CustomersService {
     if (dto.dateOfBirth !== undefined) {
       data.dateOfBirth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : null;
     }
+    if (dto.creditLimit !== undefined) data.creditLimit = dto.creditLimit;
+    if (dto.creditTermDays !== undefined) data.creditTermDays = dto.creditTermDays;
 
     try {
       const updated = await this.repo.update(id, data);
@@ -175,6 +198,8 @@ function toCustomerResponse(c: RawCustomer): CustomerResponse {
     points: c.points,
     memberCardCode: c.memberCardCode,
     dateOfBirth: c.dateOfBirth ? c.dateOfBirth.toISOString() : null,
+    creditLimit: c.creditLimit,
+    creditTermDays: c.creditTermDays,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

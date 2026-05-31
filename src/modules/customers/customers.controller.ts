@@ -53,6 +53,17 @@ export class CustomersController {
     return { data };
   }
 
+  @Get(":id/credit-status")
+  @RequireAccess("customers", "view")
+  @ApiOperation({ summary: "Get customer credit limit & outstanding status" })
+  async creditStatus(
+    @CurrentCompany() companyId: string,
+    @Param("id") id: string,
+  ) {
+    const data = await this.customers.getCreditStatus(companyId, id);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("customers", "view")
   @ApiOperation({ summary: "Get customer by ID" })

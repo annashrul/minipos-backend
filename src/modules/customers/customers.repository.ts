@@ -13,6 +13,8 @@ export const CUSTOMER_SELECT = {
   points: true,
   memberCardCode: true,
   dateOfBirth: true,
+  creditLimit: true,
+  creditTermDays: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.CustomerSelect;
@@ -61,6 +63,37 @@ export class CustomersRepository {
       where: { id, companyId },
       select: { id: true },
     });
+  }
+
+  async findCreditInfo(
+    companyId: string,
+    id: string,
+  ): Promise<{ id: string; creditLimit: number } | null> {
+    return this.prisma.customer.findFirst({
+      where: { id, companyId },
+      select: { id: true, creditLimit: true },
+    });
+  }
+
+  /**
+   * Total sisa piutang (RECEIVABLE) yang belum lunas untuk satu customer.
+   * Dihitung dari Debt agar selalu sinkron dengan pembayaran/cicilan.
+   */
+  async sumOutstandingReceivable(
+    companyId: string,
+    customerId: string,
+  ): Promise<number> {
+    const agg = await this.prisma.debt.aggregate({
+      where: {
+        companyId,
+        partyType: "CUSTOMER",
+        partyId: customerId,
+        type: "RECEIVABLE",
+        status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
+      },
+      _sum: { remainingAmount: true },
+    });
+    return agg._sum.remainingAmount ?? 0;
   }
 
   async create(data: Prisma.CustomerUncheckedCreateInput): Promise<RawCustomer> {
