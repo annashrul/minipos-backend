@@ -103,6 +103,8 @@ export class TransactionsController {
       user.id,
       id,
       body.reason,
+      user.role,
+      body.override ?? null,
     );
     return { data };
   }
@@ -159,6 +161,8 @@ export class TransactionsController {
       user.id,
       id,
       body.reason,
+      user.role,
+      body.override ?? null,
     );
     return { data };
   }

@@ -10,6 +10,7 @@ import type {
   CheckoutResponse,
   ListTransactionsQueryDto,
   RefundTransactionResponse,
+  SupervisorOverrideDto,
   TransactionDetailResponse,
   TransactionListResponse,
   TransactionResponse,
@@ -222,12 +223,16 @@ export class TransactionsService implements OnModuleInit {
     userId: string,
     id: string,
     reason: string,
+    actorRole?: string | null,
+    override?: SupervisorOverrideDto | null,
   ): Promise<VoidTransactionResponse> {
     return this.voidRefundService.voidTransaction(
       companyId,
       userId,
       id,
       reason,
+      actorRole ?? null,
+      override ?? null,
     );
   }
 
@@ -236,12 +241,16 @@ export class TransactionsService implements OnModuleInit {
     userId: string,
     id: string,
     reason: string,
+    actorRole?: string | null,
+    override?: SupervisorOverrideDto | null,
   ): Promise<RefundTransactionResponse> {
     return this.voidRefundService.refundTransaction(
       companyId,
       userId,
       id,
       reason,
+      actorRole ?? null,
+      override ?? null,
     );
   }
 }

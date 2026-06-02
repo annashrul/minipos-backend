@@ -266,13 +266,24 @@ export type CheckoutResponse = {
   pointsRedeemed: number;
 };
 
+// Otorisasi supervisor (email + password) untuk aksi sensitif yang dilakukan
+// non-supervisor. Dipakai void/refund (dan bisa dipakai aksi lain). Verifikasi
+// di backend: approver harus role MANAGER ke atas + password cocok.
+export const SupervisorOverrideSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+export type SupervisorOverrideDto = z.infer<typeof SupervisorOverrideSchema>;
+
 export const VoidTransactionSchema = z.object({
   reason: z.string().min(1, "Reason wajib diisi"),
+  override: SupervisorOverrideSchema.optional(),
 });
 export type VoidTransactionDto = z.infer<typeof VoidTransactionSchema>;
 
 export const RefundTransactionSchema = z.object({
   reason: z.string().min(1, "Reason wajib diisi"),
+  override: SupervisorOverrideSchema.optional(),
 });
 export type RefundTransactionDto = z.infer<typeof RefundTransactionSchema>;
 

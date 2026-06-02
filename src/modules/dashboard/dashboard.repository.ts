@@ -4,7 +4,9 @@ import { PrismaService } from "@/modules/prisma/prisma.service";
 // ── Raw SQL row types ────────────────────────────────────────────────
 
 export type RawDailySalesRow = {
-  d: Date;
+  // Tanggal lokal (zona bisnis) format "YYYY-MM-DD" — string, bukan Date, supaya
+  // tidak di-reinterpret ke UTC oleh JS.
+  d: string;
   total: bigint;
   count: bigint;
 };
@@ -48,6 +50,7 @@ export class DashboardRepository {
     startDate: Date,
     branchId: string | undefined,
     companyBranchIds: string[],
+    timeZone: string,
   ): Promise<RawDailySalesRow[]> {
     const params: unknown[] = [startDate];
     const branchCondition = this.buildBranchCondition(
@@ -55,18 +58,22 @@ export class DashboardRepository {
       branchId,
       companyBranchIds,
     );
+    const safeTz = timeZone.replace(/'/g, "''");
+    // Kelompokkan per hari di ZONA BISNIS (bukan UTC) — konsisten dgn query
+    // hourly & rentang KPI. Kembalikan tanggal sbg string "YYYY-MM-DD".
+    const dayExpr = `DATE_TRUNC('day', (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))`;
 
     return this.prisma.$queryRawUnsafe<RawDailySalesRow[]>(
       `
-      SELECT DATE_TRUNC('day', "createdAt") as d,
+      SELECT TO_CHAR(${dayExpr}, 'YYYY-MM-DD') as d,
              COALESCE(SUM("grandTotal"), 0) as total,
              COUNT(*)::bigint as count
       FROM transactions
       WHERE "createdAt" >= $1
         AND status = 'COMPLETED'
         ${branchCondition}
-      GROUP BY DATE_TRUNC('day', "createdAt")
-      ORDER BY d ASC
+      GROUP BY ${dayExpr}
+      ORDER BY ${dayExpr} ASC
       `,
       ...params,
     );

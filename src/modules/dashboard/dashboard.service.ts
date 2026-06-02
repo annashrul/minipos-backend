@@ -1,6 +1,5 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { toDateOnly } from "@/common/utils/date";
 import {
   APP_TIME_ZONE,
   addDaysInTimeZone,
@@ -773,34 +772,47 @@ export class DashboardService {
     branchId: string | undefined,
     companyBranchIds: string[],
   ) {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - (days - 1));
-    startDate.setHours(0, 0, 0, 0);
+    const now = new Date();
+    // Tengah malam HARI INI di zona bisnis, lalu mundur (days-1) hari.
+    const todayStart = startOfDayInTimeZone(now, this.timeZone);
+    const startDate = addDaysInTimeZone(todayStart, -(days - 1), this.timeZone);
 
-    const rows = await this.repo.findDailySales(startDate, branchId, companyBranchIds);
+    const rows = await this.repo.findDailySales(
+      startDate,
+      branchId,
+      companyBranchIds,
+      this.timeZone,
+    );
 
+    // row.d sudah string "YYYY-MM-DD" zona bisnis → langsung jadi key.
     const salesMap = new Map<string, { total: number; count: number }>();
     for (const row of rows) {
-      const dateKey = toDateOnly(row.d);
-      salesMap.set(dateKey, {
+      salesMap.set(row.d, {
         total: Number(row.total),
         count: Number(row.count),
       });
     }
 
+    // Key & label dihitung di zona bisnis yang SAMA dgn SQL (anti off-by-one).
+    const keyFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: this.timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const labelFmt = new Intl.DateTimeFormat("id-ID", {
+      timeZone: this.timeZone,
+      day: "numeric",
+      month: "short",
+    });
+
     const result: { date: string; total: number; count: number }[] = [];
-    const today = new Date();
     for (let i = days - 1; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      date.setHours(0, 0, 0, 0);
-      const dateKey = toDateOnly(date);
+      const dayInstant = addDaysInTimeZone(todayStart, -i, this.timeZone);
+      const dateKey = keyFmt.format(dayInstant);
       const data = salesMap.get(dateKey) || { total: 0, count: 0 };
       result.push({
-        date: date.toLocaleDateString("id-ID", {
-          day: "numeric",
-          month: "short",
-        }),
+        date: labelFmt.format(dayInstant),
         total: data.total,
         count: data.count,
       });

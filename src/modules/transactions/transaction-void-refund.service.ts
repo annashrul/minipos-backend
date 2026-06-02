@@ -1,10 +1,13 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import bcrypt from "bcryptjs";
 import type {
   RefundTransactionResponse,
+  SupervisorOverrideDto,
   VoidTransactionResponse,
 } from "./dto/transactions.dto";
 import { PrismaService } from "@/modules/prisma/prisma.service";
@@ -29,6 +32,8 @@ export class TransactionVoidRefundService {
     userId: string,
     id: string,
     reason: string,
+    actorRole?: string | null,
+    override?: SupervisorOverrideDto | null,
   ): Promise<VoidTransactionResponse> {
     return this.changeStatusWithRestore(
       companyId,
@@ -36,6 +41,8 @@ export class TransactionVoidRefundService {
       id,
       reason,
       "VOIDED",
+      actorRole ?? null,
+      override ?? null,
     ) as Promise<VoidTransactionResponse>;
   }
 
@@ -44,6 +51,8 @@ export class TransactionVoidRefundService {
     userId: string,
     id: string,
     reason: string,
+    actorRole?: string | null,
+    override?: SupervisorOverrideDto | null,
   ): Promise<RefundTransactionResponse> {
     return this.changeStatusWithRestore(
       companyId,
@@ -51,7 +60,65 @@ export class TransactionVoidRefundService {
       id,
       reason,
       "REFUNDED",
+      actorRole ?? null,
+      override ?? null,
     ) as Promise<RefundTransactionResponse>;
+  }
+
+  /**
+   * Role yang dianggap supervisor (boleh menyetujui/melakukan aksi sensitif).
+   */
+  private static readonly SUPERVISOR_ROLES = [
+    "MANAGER",
+    "ADMIN",
+    "SUPER_ADMIN",
+    "PLATFORM_OWNER",
+  ];
+
+  /**
+   * Pastikan aksi void/refund terotorisasi. Bila actor sudah supervisor → lolos.
+   * Bila bukan, butuh override supervisor (email+password, role MANAGER ke atas).
+   * `actorRole` null = pemanggil internal (mis. void otomatis) → tanpa approval.
+   * Verifikasi bcrypt CPU-bound → dipanggil SEBELUM membuka transaksi DB.
+   *
+   * @returns nama approver (untuk audit) atau null bila tanpa override.
+   */
+  private async ensureAuthorized(
+    companyId: string,
+    actorRole: string | null,
+    override: SupervisorOverrideDto | null,
+    noun: string,
+  ): Promise<string | null> {
+    if (!actorRole) return null; // internal/system call
+    if (TransactionVoidRefundService.SUPERVISOR_ROLES.includes(actorRole)) {
+      return null; // actor sudah supervisor
+    }
+    if (!override) {
+      throw new BadRequestException(
+        `${noun} memerlukan persetujuan supervisor`,
+      );
+    }
+    const approver = await this.prisma.user.findFirst({
+      where: { email: override.email, companyId, isActive: true },
+      select: {
+        name: true,
+        role: true,
+        password: true,
+        authorizationPassword: true,
+      },
+    });
+    if (
+      !approver ||
+      !TransactionVoidRefundService.SUPERVISOR_ROLES.includes(approver.role)
+    ) {
+      throw new ForbiddenException(
+        "Persetujuan memerlukan role Manager ke atas",
+      );
+    }
+    const hash = approver.authorizationPassword ?? approver.password;
+    const valid = await bcrypt.compare(override.password, hash);
+    if (!valid) throw new ForbiddenException("Password otorisasi salah");
+    return approver.name;
   }
 
   private async changeStatusWithRestore(
@@ -60,11 +127,21 @@ export class TransactionVoidRefundService {
     id: string,
     reason: string,
     target: "VOIDED" | "REFUNDED",
+    actorRole: string | null = null,
+    override: SupervisorOverrideDto | null = null,
   ): Promise<VoidTransactionResponse | RefundTransactionResponse> {
     const noun = target === "VOIDED" ? "Void" : "Refund";
 
     const existing = await this.repo.findByIdMinimal(companyId, id);
     if (!existing) throw new NotFoundException("Transaksi tidak ditemukan");
+
+    // Otorisasi supervisor (di luar transaksi DB — bcrypt CPU-bound).
+    const approverName = await this.ensureAuthorized(
+      companyId,
+      actorRole,
+      override,
+      noun,
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const transaction = await tx.transaction.findUnique({
@@ -167,7 +244,9 @@ export class TransactionVoidRefundService {
           action: target === "VOIDED" ? "VOID" : "REFUND",
           entity: "Transaction",
           entityId: id,
-          details: `${noun} ${transaction.invoiceNumber}: ${reason}`,
+          details:
+            `${noun} ${transaction.invoiceNumber}: ${reason}` +
+            (approverName ? ` (disetujui: ${approverName})` : ""),
         },
       });
 
