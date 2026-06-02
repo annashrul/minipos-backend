@@ -20,6 +20,7 @@ export const PRODUCT_SELECT = {
   unit: true,
   itemType: true,
   isActive: true,
+  trackBatch: true,
   description: true,
   imageUrl: true,
   defaultRackId: true,

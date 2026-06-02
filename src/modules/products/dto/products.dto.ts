@@ -94,6 +94,8 @@ export const CreateProductSchema = z.object({
   unit: z.string().optional(),
   itemType: ProductItemTypeSchema.optional(),
   isActive: z.boolean().optional(),
+  // Aktifkan pelacakan batch/lot + expired per-batch (FEFO + product recall).
+  trackBatch: z.boolean().optional(),
   description: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
   // Default rack untuk fitur bin-location inventory. Saat checkout POS,
@@ -165,6 +167,7 @@ export type ProductResponse = {
   unit: string;
   itemType: ProductItemType;
   isActive: boolean;
+  trackBatch: boolean;
   description: string | null;
   imageUrl: string | null;
   defaultRackId: string | null;

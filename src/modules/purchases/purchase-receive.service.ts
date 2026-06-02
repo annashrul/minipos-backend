@@ -8,6 +8,7 @@ import { round2 } from "@/common/utils/math";
 import { AssertService } from "@/common/assert/assert.service";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
+import { ProductBatchHelperService } from "@/modules/product-batches/product-batch-helper.service";
 import type {
   ReceivePurchaseDto,
   ReceivePurchaseResponse,
@@ -28,6 +29,7 @@ export class PurchaseReceiveService {
     private readonly prisma: PrismaService,
     private readonly repo: PurchasesRepository,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly batchHelper: ProductBatchHelperService,
     private readonly assert: AssertService,
   ) {}
 
@@ -353,6 +355,31 @@ export class PurchaseReceiveService {
               createdBy: userId,
             },
           });
+
+          // Traceability: catat batch/lot bila produk di-track (FEFO + recall).
+          // Flag trackBatch diambil dari query PO (bukan query terpisah) supaya
+          // tidak menambah round-trip di dalam transaksi.
+          if (poItem.product?.trackBatch === true) {
+            await this.batchHelper.addBatchOnReceive(tx, {
+              companyId,
+              productId,
+              productName: poItem.product?.name ?? "",
+              branchId: targetBranchId,
+              variantId,
+              variantLabel,
+              batchNumber: input.batchNumber?.trim() || receiptNumber,
+              expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
+              supplierId: po.supplierId ?? null,
+              supplierName: po.supplier?.name ?? null,
+              goodsReceiptId: receipt.id,
+              qty: input.quantityReceived,
+              unitCost: unitCost > 0 ? unitCost : null,
+              refType: "goods_receipt",
+              refId: receipt.id,
+              refNumber: receiptNumber,
+              createdBy: userId,
+            });
+          }
         }
 
         const [poItemSummary] = await tx.$queryRaw<
@@ -467,7 +494,7 @@ export class PurchaseReceiveService {
           debtId: createdDebtId,
           debtRemaining: debtRemaining > 0 ? debtRemaining : null,
         };
-      });
+      }, { maxWait: 15000, timeout: 30000 });
 
       return {
         receipt: toReceiptResponse(result.receipt),

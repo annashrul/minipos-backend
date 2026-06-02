@@ -17,6 +17,7 @@ import { DebtsService } from "@/modules/debts/debts.service";
 import { PointsService } from "@/modules/points/points.service";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
+import { ProductBatchHelperService } from "@/modules/product-batches/product-batch-helper.service";
 import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
 import { TransactionsRepository } from "./transactions.repository";
 
@@ -36,6 +37,7 @@ export class TransactionCheckoutService {
     private readonly autoJournal: AutoJournalService,
     private readonly whatsapp: WhatsappReceiptService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly batchHelper: ProductBatchHelperService,
     private readonly assert: AssertService,
   ) {}
 
@@ -545,6 +547,26 @@ export class TransactionCheckoutService {
                   reference: invoiceNumber,
                   createdBy: userId,
                 },
+              });
+            }
+
+            // Traceability: konsumsi batch FEFO bila produk di-track. Mencatat
+            // OUT movement per batch → jejak recall (batch terjual di transaksi
+            // mana / ke pelanggan siapa). No-op utk produk biasa (helper cek
+            // Product.trackBatch). batchHelper subset BranchStock — kalau qty
+            // tidak tercover batch (stok lama untracked) tidak error.
+            if (await this.batchHelper.isBatchTracked(tx, d.productId)) {
+              await this.batchHelper.consumeFefo(tx, {
+                companyId,
+                productId: d.productId,
+                branchId,
+                variantId: d.variantId ?? null,
+                qty: qtyInt,
+                refType: "transaction",
+                refId: newTx.id,
+                refNumber: displayRef,
+                note,
+                createdBy: userId,
               });
             }
           }

@@ -9,6 +9,7 @@ import type {
 } from "./dto/transactions.dto";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
+import { ProductBatchHelperService } from "@/modules/product-batches/product-batch-helper.service";
 import { TransactionsRepository } from "./transactions.repository";
 
 import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
@@ -20,6 +21,7 @@ export class TransactionVoidRefundService {
     private readonly repo: TransactionsRepository,
     private readonly realtime: RealtimeService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly batchHelper: ProductBatchHelperService,
   ) {}
 
   async voidTransaction(
@@ -136,6 +138,16 @@ export class TransactionVoidRefundService {
           });
         }),
       );
+
+      // Pulihkan konsumsi batch FEFO (kalau ada produk trackBatch). No-op untuk
+      // transaksi tanpa batch movement. Menjaga sum(batch.remaining) konsisten
+      // dengan BranchStock yang baru dikembalikan.
+      await this.batchHelper.restoreFefoForTransaction(tx, {
+        companyId,
+        transactionId: transaction.id,
+        note: `${noun} transaksi ${transaction.invoiceNumber}`,
+        createdBy: userId ?? null,
+      });
 
       const updated = await tx.transaction.update({
         where: { id },

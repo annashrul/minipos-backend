@@ -21,7 +21,8 @@
     "db:seed:default-coa": "tsx prisma/seed-default-coa.ts",
     "db:backfill:journals:transactions": "tsx prisma/backfill-transaction-journals.ts",
     "db:seed:transactions:2025": "tsx prisma/seed-transactions-2025.ts",
-    "db:seed:wholesale": "tsx prisma/seed-wholesale.ts"
+    "db:seed:wholesale": "tsx prisma/seed-wholesale.ts",
+    "db:seed:product-batches": "tsx prisma/seed-product-batches-menu.ts"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

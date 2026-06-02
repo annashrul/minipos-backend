@@ -19,6 +19,7 @@ import { AuditLogsModule } from "./modules/audit-logs/audit-logs.module";
 import { BankReconciliationModule } from "./modules/bank-reconciliation/bank-reconciliation.module";
 import { BranchesModule } from "./modules/branches/branches.module";
 import { RacksModule } from "./modules/racks/racks.module";
+import { ProductBatchesModule } from "./modules/product-batches/product-batches.module";
 import { BrandsModule } from "./modules/brands/brands.module";
 import { BundlesModule } from "./modules/bundles/bundles.module";
 import { RecipesModule } from "./modules/recipes/recipes.module";
@@ -103,6 +104,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     BankReconciliationModule,
     BranchesModule,
     RacksModule,
+    ProductBatchesModule,
     BrandsModule,
     BundlesModule,
     RecipesModule,

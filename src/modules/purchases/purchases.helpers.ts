@@ -28,7 +28,12 @@ function toPOItemResponse(
     purchaseOrderId: it.purchaseOrderId,
     productId: it.productId,
     product: it.product
-      ? { id: it.product.id, code: it.product.code, name: it.product.name }
+      ? {
+          id: it.product.id,
+          code: it.product.code,
+          name: it.product.name,
+          trackBatch: it.product.trackBatch,
+        }
       : null,
     unitId: it.unitId ?? null,
     unitName: it.unit?.name ?? null,

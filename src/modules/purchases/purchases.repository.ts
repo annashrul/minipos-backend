@@ -11,7 +11,13 @@ export const PO_ITEM_SELECT = {
   purchaseOrderId: true,
   productId: true,
   product: {
-    select: { id: true, code: true, name: true, purchasePrice: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      purchasePrice: true,
+      trackBatch: true,
+    },
   },
   unitId: true,
   unit: { select: { id: true, name: true, purchasePrice: true } },
@@ -223,7 +229,7 @@ export class PurchasesRepository {
             receivedQty: true,
             unitPrice: true,
             previousPurchasePrice: true,
-            product: { select: { id: true, name: true } },
+            product: { select: { id: true, name: true, trackBatch: true } },
             variant: {
               select: {
                 id: true,

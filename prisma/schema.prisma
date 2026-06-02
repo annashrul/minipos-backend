@@ -505,6 +505,10 @@ model Product {
   description         String?
   imageUrl            String?
   expiryDate          DateTime?
+  // Aktifkan pelacakan batch/lot + expired per-batch (FEFO + product recall).
+  // Default false → produk lama tetap pakai stok agregat tanpa batch (helper
+  // batch no-op). Lihat model ProductBatch.
+  trackBatch          Boolean                     @default(false)
   deletedAt           DateTime?
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @updatedAt
@@ -1281,6 +1285,87 @@ model GoodsReceiptItem {
 
   @@index([goodsReceiptId])
   @@map("goods_receipt_items")
+}
+
+// ===========================
+// TRACEABILITY — BATCH & EXPIRED (FEFO)
+// ===========================
+
+// Batch/lot stok per produk per cabang. Lapisan ADITIF di atas BranchStock:
+// BranchStock tetap source of truth untuk TOTAL qty; ProductBatch mencatat
+// DARI batch mana qty itu berasal — untuk FEFO consume + product recall.
+// Hanya dipakai untuk produk dgn Product.trackBatch = true; produk lain tidak
+// membuat row di sini (helper no-op) → backward compatible. Relasi ke
+// product/branch/supplier sengaja SCALAR-ONLY (+ nama denormalized) supaya
+// tidak menambah back-ref di model existing — pola yang sama dipakai
+// StockMovement/Debt di schema ini.
+model ProductBatch {
+  id             String                 @id @default(uuid())
+  companyId      String
+  productId      String
+  productName    String
+  branchId       String?
+  variantId      String?
+  variantLabel   String?
+  // Nomor batch/lot dari supplier (atau auto-generate kalau kosong).
+  batchNumber    String
+  // Kunci FEFO (First Expired First Out). Null = tanpa expiry → di-consume
+  // paling akhir.
+  expiryDate     DateTime?
+  supplierId     String?
+  supplierName   String?
+  goodsReceiptId String?
+  // Qty awal masuk (satuan stok yang sama dgn BranchStock.quantity).
+  receivedQty    Int
+  // Sisa qty batch ini saat ini. FEFO consume mengurangi nilai ini.
+  remainingQty   Int
+  unitCost       Decimal?               @db.Decimal(14, 2)
+  // ACTIVE | DEPLETED | EXPIRED | RECALLED
+  status         String                 @default("ACTIVE")
+  receivedAt     DateTime               @default(now())
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  movements      ProductBatchMovement[]
+
+  @@index([companyId])
+  @@index([productId, branchId])
+  @@index([productId, branchId, status])
+  @@index([expiryDate])
+  @@index([batchNumber])
+  @@index([status])
+  @@map("product_batches")
+}
+
+// Ledger pergerakan batch (audit + recall trace). OUT row dgn refType =
+// "transaction" + refId = transactionId → jejak "batch X terjual di transaksi
+// mana / ke pelanggan siapa".
+model ProductBatchMovement {
+  id             String       @id @default(uuid())
+  batchId        String
+  batch          ProductBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  companyId      String?
+  productId      String
+  branchId       String?
+  // IN | OUT | ADJUST | RECALL | EXPIRE
+  type           String
+  // IN | OUT
+  direction      String
+  quantity       Int
+  remainingAfter Int
+  // Referensi dokumen sumber: goods_receipt | transaction | stock_opname |
+  // recall | manual.
+  refType        String?
+  refId          String?
+  refNumber      String?
+  note           String?
+  createdBy      String?
+  createdAt      DateTime     @default(now())
+
+  @@index([batchId])
+  @@index([productId, branchId])
+  @@index([refType, refId])
+  @@index([createdAt])
+  @@map("product_batch_movements")
 }
 
 // ===========================

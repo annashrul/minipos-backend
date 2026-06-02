@@ -20,6 +20,7 @@ export function toProductResponse(p: RawProduct): ProductResponse {
     unit: p.unit,
     itemType: (p.itemType as ProductResponse["itemType"]) ?? "PRODUCT",
     isActive: p.isActive,
+    trackBatch: p.trackBatch,
     description: p.description,
     imageUrl: p.imageUrl,
     defaultRackId: p.defaultRackId ?? null,

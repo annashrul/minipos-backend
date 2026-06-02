@@ -3,6 +3,7 @@ import { AutoJournalModule } from "@/modules/auto-journal/auto-journal.module";
 import { DebtsModule } from "@/modules/debts/debts.module";
 import { PointsModule } from "@/modules/points/points.module";
 import { RacksModule } from "@/modules/racks/racks.module";
+import { ProductBatchesModule } from "@/modules/product-batches/product-batches.module";
 import { WhatsappReceiptModule } from "@/modules/whatsapp-receipt/whatsapp-receipt.module";
 import { TransactionsController } from "./transactions.controller";
 import { TransactionsRepository } from "./transactions.repository";
@@ -17,6 +18,7 @@ import { TransactionVoidRefundService } from "./transaction-void-refund.service"
     AutoJournalModule,
     WhatsappReceiptModule,
     RacksModule,
+    ProductBatchesModule,
   ],
   controllers: [TransactionsController],
   providers: [

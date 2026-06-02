@@ -80,6 +80,11 @@ export const ReceivePurchaseItemSchema = z.object({
   // product.defaultRackId. Kalau produk tidak punya default, item tetap
   // diterima ke BranchStock tapi tidak ditaruh ke rak (unassigned).
   rackId: z.string().uuid().nullable().optional(),
+  // Traceability: nomor batch/lot + tanggal kedaluwarsa. Hanya dipakai bila
+  // produk punya Product.trackBatch = true. Kalau trackBatch true tapi
+  // batchNumber kosong, backend auto-generate dari nomor penerimaan.
+  batchNumber: z.string().max(100).nullable().optional(),
+  expiryDate: z.string().datetime().nullable().optional(),
 }).refine((v) => !!v.purchaseOrderItemId || !!v.productId, {
   message: "purchaseOrderItemId atau productId wajib diisi",
 });
@@ -172,7 +177,12 @@ export type PurchaseOrderItemResponse = {
   id: string;
   purchaseOrderId: string;
   productId: string;
-  product: { id: string; code: string; name: string } | null;
+  product: {
+    id: string;
+    code: string;
+    name: string;
+    trackBatch?: boolean;
+  } | null;
   unitId: string | null;
   unitName: string | null;
   variantId: string | null;

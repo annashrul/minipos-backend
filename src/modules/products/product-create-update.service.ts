@@ -56,6 +56,7 @@ export class ProductCreateUpdateService {
         unit: dto.unit ?? "pcs",
         itemType: dto.itemType ?? "PRODUCT",
         isActive: dto.isActive ?? true,
+        trackBatch: dto.trackBatch ?? false,
         description: dto.description ?? null,
         imageUrl: dto.imageUrl ?? null,
         defaultRackId: dto.defaultRackId ?? null,
@@ -114,6 +115,7 @@ export class ProductCreateUpdateService {
     if (dto.unit !== undefined) data.unit = dto.unit;
     if (dto.itemType !== undefined) data.itemType = dto.itemType;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.trackBatch !== undefined) data.trackBatch = dto.trackBatch;
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.defaultRackId !== undefined) {
