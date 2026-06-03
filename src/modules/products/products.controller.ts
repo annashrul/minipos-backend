@@ -154,6 +154,8 @@ export class ProductsController {
       limit?: number;
       offset?: number;
       restrictToBranchAssigned?: boolean;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
     },
   ) {
     const data = await this.products.posSearch(companyId, body);

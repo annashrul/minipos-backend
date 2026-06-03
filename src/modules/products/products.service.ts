@@ -361,6 +361,8 @@ export class ProductsService {
       limit?: number;
       offset?: number;
       restrictToBranchAssigned?: boolean;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
     },
   ): Promise<{ products: unknown[]; total: number }> {
     return this.search.posSearch(companyId, params);

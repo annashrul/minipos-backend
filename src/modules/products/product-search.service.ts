@@ -114,6 +114,8 @@ export class ProductSearchService {
       limit?: number;
       offset?: number;
       restrictToBranchAssigned?: boolean;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
     },
   ): Promise<{ products: unknown[]; total: number }> {
     const { rows, total } = await this.branchView(companyId, {
@@ -125,6 +127,8 @@ export class ProductSearchService {
       offset: params.offset ?? 0,
       restrictToBranchAssigned: params.restrictToBranchAssigned ?? false,
       excludeIngredient: true,
+      ...(params.sortBy ? { sortBy: params.sortBy } : {}),
+      ...(params.sortDir ? { sortDir: params.sortDir } : {}),
     });
     const rawRows = rows as Record<string, unknown>[];
     const productIds = rawRows.map((row) => String(row.productId));
