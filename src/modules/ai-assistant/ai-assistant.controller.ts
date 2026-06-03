@@ -5,6 +5,8 @@ import {
   type AiChatRequestDto,
   AiLogsQuerySchema,
   type AiLogsQueryDto,
+  NormalizeSearchSchema,
+  type NormalizeSearchDto,
 } from "./dto/ai-assistant.dto";
 import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
@@ -38,6 +40,21 @@ export class AiAssistantController {
         companyId: user.companyId ?? null,
       },
       body.messages,
+    );
+    return { data };
+  }
+
+  @Post("normalize-search")
+  @RequireAccess("ai-assistant", "view")
+  @ApiOperation({ summary: "Normalisasi hasil voice-to-text jadi kata kunci" })
+  @ApiZodBody(NormalizeSearchSchema)
+  async normalizeSearch(
+    @Body(new ZodValidationPipe(NormalizeSearchSchema))
+    body: NormalizeSearchDto,
+  ) {
+    const data = await this.service.normalizeSearchQuery(
+      body.transcript,
+      body.candidates ?? [],
     );
     return { data };
   }

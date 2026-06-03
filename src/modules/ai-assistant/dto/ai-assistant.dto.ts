@@ -16,6 +16,17 @@ export type AiChatResponse = {
   error?: string;
 };
 
+// Normalisasi hasil voice-to-text -> kata kunci pencarian yang benar.
+export const NormalizeSearchSchema = z.object({
+  transcript: z.string().min(1),
+  candidates: z.array(z.string()).max(300).optional(),
+});
+export type NormalizeSearchDto = z.infer<typeof NormalizeSearchSchema>;
+
+export type NormalizeSearchResponse = {
+  query: string;
+};
+
 // Query audit log percakapan AI (untuk halaman/endpoint audit).
 export const AiLogsQuerySchema = z.object({
   status: z.enum(["ANSWERED", "UNANSWERED", "ERROR"]).optional(),

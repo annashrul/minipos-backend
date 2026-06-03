@@ -552,6 +552,64 @@ export class AiAssistantService {
   // Public API
   // ─────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Normalisasi hasil voice-to-text menjadi kata kunci pencarian yang benar.
+   * One-shot Groq (tanpa tools) — contoh "kontaktor" -> "contactor",
+   * "konveyor" -> "conveyor". Fallback ke transkrip asli kalau AI gagal.
+   */
+  async normalizeSearchQuery(
+    transcript: string,
+    candidates: string[] = [],
+  ): Promise<{ query: string }> {
+    const raw = (transcript || "").trim();
+    if (!raw) return { query: "" };
+
+    const apiKey = this.config.get<string>("GROQ_API_KEY");
+    if (!apiKey) return { query: raw };
+    // Pakai model instruct langsung (bukan reasoning gpt-oss) supaya output
+    // ringkas & cepat — normalisasi cuma butuh 1 kata kunci.
+    const model = "llama-3.3-70b-versatile";
+
+    const list = candidates
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .slice(0, 150);
+    const sys = `Kamu MEMPERBAIKI hasil voice-to-text (bisa salah dengar) untuk pencarian sparepart mesin produksi pabrik.
+Input bisa: (a) salah eja/transliterasi, atau (b) SALAH DENGAR TOTAL jadi kata lain yang BUNYINYA mirip.
+
+ATURAN:
+1. Perbaiki transliterasi ejaan Indonesia ke istilah teknis Inggris yang benar. Contoh: "kontaktor"->"contactor", "konveyor"->"conveyor", "bering"->"bearing", "soleinoid"->"solenoid", "filter oli"->"oil filter".
+2. Perbaiki SALAH DENGAR fonetik: kalau hasil voice terdengar seperti istilah/produk sparepart yang ada (cocokkan BERDASARKAN BUNYI, bukan makna), ganti ke istilah itu. Contoh: "get rich"/"ketrid"/"katrid" -> "cartridge"; "biring" -> "bearing"; "selenoid" -> "solenoid".
+3. Kalau kata SUDAH istilah sparepart yang valid & masuk akal, kembalikan APA ADANYA. Contoh: "safety"->"safety", "bearing"->"bearing", "motor"->"motor", "filter"->"filter".
+4. JANGAN mempersempit/melengkapi jadi nama produk spesifik. Pertahankan keluasan kata kunci. Contoh: "safety" TETAP "safety" (JANGAN "safety relay"); "cartridge" TETAP "cartridge" (JANGAN "cartridge heater").
+5. JANGAN menambah kata. Jumlah kata output kira-kira sama dengan ucapan user.${
+      list.length
+        ? `\n\nDaftar produk/istilah yang ADA di gudang (pakai sebagai acuan BUNYI & ejaan untuk mencocokkan; ambil hanya KATA KUNCI inti, jangan salin nama lengkap):\n${list.join("; ")}`
+        : ""
+    }
+Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa tanda baca tambahan.`;
+
+    try {
+      const groq = new Groq({ apiKey });
+      const res = await groq.chat.completions.create({
+        model,
+        temperature: 0,
+        max_tokens: 64,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: raw },
+        ],
+      });
+      const out = res.choices?.[0]?.message?.content?.trim();
+      const cleaned = out
+        ? out.replace(/^["'`]+|["'`.]+$/g, "").trim()
+        : "";
+      return { query: cleaned.length > 0 ? cleaned : raw };
+    } catch {
+      return { query: raw };
+    }
+  }
+
   async chat(
     auth: AuthContext,
     messages: AiChatMessageDto[],
