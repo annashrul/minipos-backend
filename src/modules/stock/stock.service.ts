@@ -19,6 +19,7 @@ import type {
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
 import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
+import { StockAlertService } from "@/modules/whatsapp-receipt/stock-alert.service";
 import {
   StockRepository,
   MOVEMENT_SELECT,
@@ -41,6 +42,7 @@ export class StockService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly rackStockHelper: RackStockHelperService,
+    private readonly stockAlert: StockAlertService,
   ) {}
 
   async listMovements(
@@ -353,6 +355,9 @@ export class StockService {
       { productId: dto.productId },
       branchId ?? undefined,
     );
+
+    // Best-effort: kirim WA bila stok produk ini turun di bawah ambang kritis.
+    this.stockAlert.notifyCriticalStock(companyId, branchId, [dto.productId]);
 
     return toMovementResponse(movement);
   }

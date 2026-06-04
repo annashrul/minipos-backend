@@ -5,6 +5,7 @@ import { WhatsappReceiptService } from "./whatsapp-receipt.service";
 import { WhatsappMessageService } from "./whatsapp-message.service";
 import { WhatsappReceiptFormatService } from "./whatsapp-receipt-format.service";
 import { WaServiceSocketService } from "./wa-service-socket.service";
+import { StockAlertService } from "./stock-alert.service";
 
 @Module({
   controllers: [WhatsappReceiptController, WhatsappWebhookController],
@@ -16,7 +17,8 @@ import { WaServiceSocketService } from "./wa-service-socket.service";
     WhatsappReceiptFormatService,
     WhatsappReceiptService,
     WaServiceSocketService,
+    StockAlertService,
   ],
-  exports: [WhatsappReceiptService],
+  exports: [WhatsappReceiptService, StockAlertService],
 })
 export class WhatsappReceiptModule {}

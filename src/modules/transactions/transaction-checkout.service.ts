@@ -19,6 +19,7 @@ import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RackStockHelperService } from "@/modules/racks/rack-stock-helper.service";
 import { ProductBatchHelperService } from "@/modules/product-batches/product-batch-helper.service";
 import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
+import { StockAlertService } from "@/modules/whatsapp-receipt/stock-alert.service";
 import { TransactionsRepository } from "./transactions.repository";
 
 import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
@@ -36,6 +37,7 @@ export class TransactionCheckoutService {
     private readonly realtime: RealtimeService,
     private readonly autoJournal: AutoJournalService,
     private readonly whatsapp: WhatsappReceiptService,
+    private readonly stockAlert: StockAlertService,
     private readonly rackStockHelper: RackStockHelperService,
     private readonly batchHelper: ProductBatchHelperService,
     private readonly assert: AssertService,
@@ -630,6 +632,15 @@ export class TransactionCheckoutService {
       );
       this.realtime.emit(EVENTS.STOCK_UPDATED, {}, emitBranch);
       this.realtime.emit(EVENTS.DASHBOARD_REFRESH, {}, emitBranch);
+
+      // Best-effort: WA alert utk produk yang stoknya jatuh < ambang kritis.
+      this.stockAlert.notifyCriticalStock(
+        companyId,
+        dto.branchId,
+        dto.items
+          .map((it) => it.productId)
+          .filter((id) => !id.startsWith("bundle:")),
+      );
 
       // Auto-post journal for every successful sales transaction.
       // Do not block checkout flow if accounting setup is incomplete.
