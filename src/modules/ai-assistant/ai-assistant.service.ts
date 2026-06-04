@@ -617,14 +617,18 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
   async searchByImage(
     imageDataUrl: string,
     candidates: string[] = [],
-  ): Promise<{ query: string; error?: string }> {
+  ): Promise<{ query: string; similar: string[]; error?: string }> {
     const img = (imageDataUrl || "").trim();
     if (!img.startsWith("data:image/")) {
-      return { query: "", error: "Format gambar tidak valid" };
+      return { query: "", similar: [], error: "Format gambar tidak valid" };
     }
     const apiKey = this.config.get<string>("GROQ_API_KEY");
     if (!apiKey) {
-      return { query: "", error: "GROQ_API_KEY belum dikonfigurasi" };
+      return {
+        query: "",
+        similar: [],
+        error: "GROQ_API_KEY belum dikonfigurasi",
+      };
     }
     // Model multimodal (vision) Groq.
     const model = "meta-llama/llama-4-scout-17b-16e-instruct";
@@ -633,20 +637,22 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
       .map((c) => c.trim())
       .filter(Boolean)
       .slice(0, 150);
-    const prompt = `Identifikasi komponen / sparepart mesin produksi pada gambar.
-Kembalikan SATU kata kunci pencarian singkat dalam istilah teknis bahasa Inggris (contoh: "bearing", "contactor", "solenoid valve", "conveyor belt", "oil filter", "cartridge").${
+    const prompt = `Identifikasi komponen/sparepart UTAMA pada gambar, lalu sebutkan beberapa komponen LAIN yang MIRIP (bentuk/jenis serupa) yang mungkin ada di gudang.
+Balas HANYA JSON valid (tanpa teks lain), format:
+{"primary":"<kata kunci utama, istilah teknis Inggris>","similar":["<kata kunci serupa>","..."]}
+- "primary": 1 kata kunci (mis. laptop, bearing, contactor). Kosongkan "" jika bukan sparepart / tidak yakin.
+- "similar": 0-4 kata kunci komponen lain yang mirip (boleh []).${
       list.length
-        ? `\nJika cocok dengan salah satu produk berikut, pakai kata kuncinya:\n${list.join("; ")}`
+        ? `\nAcuan produk yang ADA di gudang (pakai kata kuncinya bila relevan):\n${list.join("; ")}`
         : ""
-    }
-Jawab HANYA kata kuncinya, tanpa tanda kutip & tanpa penjelasan. Jika bukan sparepart / tidak yakin, jawab string kosong.`;
+    }`;
 
     try {
       const groq = new Groq({ apiKey });
       const res = await groq.chat.completions.create({
         model,
         temperature: 0,
-        max_tokens: 30,
+        max_tokens: 150,
         messages: [
           {
             role: "user",
@@ -658,13 +664,32 @@ Jawab HANYA kata kuncinya, tanpa tanda kutip & tanpa penjelasan. Jika bukan spar
         ],
       });
       const out = res.choices?.[0]?.message?.content?.trim() ?? "";
-      const cleaned = out.replace(/^["'`]+|["'`.]+$/g, "").trim();
-      return { query: cleaned };
+      // Ekstrak JSON {primary, similar}. Fallback: anggap seluruh output =
+      // primary bila bukan JSON.
+      const clean = (s: string) =>
+        String(s || "").replace(/^["'`]+|["'`.]+$/g, "").trim();
+      try {
+        const m = out.match(/\{[\s\S]*\}/);
+        const json = JSON.parse(m ? m[0] : out) as {
+          primary?: unknown;
+          similar?: unknown;
+        };
+        const primary = clean(typeof json.primary === "string" ? json.primary : "");
+        const similar = Array.isArray(json.similar)
+          ? json.similar
+              .map((x) => clean(typeof x === "string" ? x : ""))
+              .filter(Boolean)
+              .slice(0, 4)
+          : [];
+        return { query: primary, similar };
+      } catch {
+        return { query: clean(out), similar: [] };
+      }
     } catch (err) {
       this.logger.warn(
         `[AI search-by-image] error: ${err instanceof Error ? err.message : err}`,
       );
-      return { query: "", error: "Gagal memproses gambar" };
+      return { query: "", similar: [], error: "Gagal memproses gambar" };
     }
   }
 

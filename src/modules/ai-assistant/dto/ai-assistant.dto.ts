@@ -37,6 +37,7 @@ export type SearchByImageDto = z.infer<typeof SearchByImageSchema>;
 
 export type SearchByImageResponse = {
   query: string;
+  similar: string[];
   error?: string;
 };
 
