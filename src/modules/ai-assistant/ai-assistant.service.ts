@@ -582,19 +582,18 @@ export class AiAssistantService {
         [raw, ...alternatives.map((a) => (a || "").trim())].filter(Boolean),
       ),
     ).slice(0, 8);
-    const sys = `Kamu MEMPERBAIKI hasil voice-to-text (bisa salah dengar) untuk pencarian sparepart mesin produksi pabrik.
-Input bisa: (a) salah eja/transliterasi, atau (b) SALAH DENGAR TOTAL jadi kata lain yang BUNYINYA mirip.
-Sistem voice memberi BEBERAPA alternatif hasil dengar (N-best). Pilih & koreksi ke SATU kata kunci yang paling masuk akal sebagai sparepart, utamakan yang COCOK (bunyi/ejaan) dengan daftar gudang.
+    const sys = `Kamu MEMPERBAIKI hasil voice-to-text (sering salah dengar) menjadi KATA KUNCI pencarian produk yang tepat untuk katalog sebuah toko/gudang. Toko bisa apa saja (rokok, sparepart, sembako, dll) — JANGAN berasumsi satu jenis.
+Sistem voice memberi BEBERAPA alternatif hasil dengar (N-best). Pilih SATU yang paling cocok dengan katalog.
 
-ATURAN:
-1. Perbaiki transliterasi ejaan Indonesia ke istilah teknis Inggris yang benar. Contoh: "kontaktor"->"contactor", "konveyor"->"conveyor", "bering"->"bearing", "soleinoid"->"solenoid", "filter oli"->"oil filter".
-2. Perbaiki SALAH DENGAR fonetik: kalau hasil voice terdengar seperti istilah/produk sparepart yang ada (cocokkan BERDASARKAN BUNYI, bukan makna), ganti ke istilah itu. Contoh: "get rich"/"ketrid"/"katrid" -> "cartridge"; "biring" -> "bearing"; "selenoid" -> "solenoid".
-3. Kalau ADA alternatif yang sudah merupakan istilah sparepart valid / cocok dengan daftar gudang, PILIH alternatif itu.
-4. Kalau kata SUDAH istilah sparepart yang valid & masuk akal, kembalikan APA ADANYA. Contoh: "safety"->"safety", "bearing"->"bearing", "motor"->"motor", "filter"->"filter".
-5. JANGAN mempersempit/melengkapi jadi nama produk spesifik. Pertahankan keluasan kata kunci. Contoh: "safety" TETAP "safety" (JANGAN "safety relay"); "cartridge" TETAP "cartridge" (JANGAN "cartridge heater").
-6. JANGAN menambah kata. Jumlah kata output kira-kira sama dengan ucapan user.${
+ATURAN (urut prioritas):
+1. COCOKKAN ke produk di KATALOG berdasarkan BUNYI & ejaan (boleh lintas bahasa). Kalau SATU produk jelas dimaksud, kembalikan nama/kata kuncinya SEPERTI di katalog dan PERTAHANKAN kata pembeda (merek + varian). Contoh: "gudang garam filter" -> "Gudang Garam Filter"; "sampoerna mild" -> "Sampoerna Mild"; "djarum super" -> "Djarum Super".
+2. DILARANG menyusutkan nama produk spesifik menjadi kata kategori umum. "Gudang Garam Filter" TIDAK BOLEH menjadi hanya "filter". "Aqua botol" tidak boleh jadi "botol".
+3. DILARANG melebarkan kata umum menjadi produk spesifik. Kalau user hanya bilang "filter", biarkan "filter" (JANGAN ditebak jadi "Gudang Garam Filter"). Pertahankan tingkat kekhususan ucapan — jangan menambah, jangan mengurangi kata pembeda.
+4. Perbaiki transliterasi/salah-dengar istilah asing HANYA bila jelas cocok ke katalog atau jelas dimaksud: "kontaktor"->"contactor", "konveyor"->"conveyor", "bering"->"bearing", "soleinoid"->"solenoid", "ketrid"/"get rich"->"cartridge".
+5. Kalau tidak ada yang cocok di katalog, kembalikan ucapan APA ADANYA (rapikan ejaan ringan saja).
+6. JANGAN menambah kata yang tidak diucapkan.${
       list.length
-        ? `\n\nDaftar produk/istilah yang ADA di gudang (pakai sebagai acuan BUNYI & ejaan untuk mencocokkan; ambil hanya KATA KUNCI inti, jangan salin nama lengkap):\n${list.join("; ")}`
+        ? `\n\nKATALOG produk yang ADA (acuan UTAMA untuk mencocokkan — pilih yang paling mirip bunyinya):\n${list.join("; ")}`
         : ""
     }
 Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa tanda baca tambahan.`;
@@ -654,18 +653,18 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
       .map((c) => c.trim())
       .filter(Boolean)
       .slice(0, 150);
-    const prompt = `Kamu ahli sparepart mesin produksi pabrik. Amati gambar dengan TELITI.
-Fokus pada OBJEK UTAMA di tengah/paling menonjol; ABAIKAN latar belakang, tangan, meja, atau kemasan.
-Perhatikan ciri fisik: bentuk, bahan (logam/plastik/karet), jumlah terminal/pin, ulir, label, ukuran relatif.
-Identifikasi komponen/sparepart UTAMA, lalu sebutkan beberapa komponen LAIN yang bentuk/jenisnya MIRIP yang mungkin ada di gudang.
+    const prompt = `Kamu ahli identifikasi PRODUK di toko/gudang. Toko bisa apa saja (rokok, sparepart, sembako, minuman, dll) — JANGAN berasumsi satu jenis. Amati gambar dengan TELITI.
+Fokus pada OBJEK/PRODUK UTAMA di tengah/paling menonjol; abaikan latar belakang, tangan, dan meja.
+BACA teks merek/varian yang tertera di kemasan atau label (mis. "Gudang Garam Filter", "Aqua 600ml", "Bearing SKF 6204"). Perhatikan juga ciri fisik (bentuk, bahan, warna, ukuran).
+Identifikasi produk UTAMA, lalu sebutkan beberapa produk LAIN yang serupa yang mungkin ada di katalog.
 Balas HANYA JSON valid (tanpa teks lain), format:
-{"primary":"<kata kunci utama, istilah teknis Inggris>","similar":["<kata kunci serupa>","..."]}
-- "primary": 1 kata kunci inti, istilah teknis Inggris yang umum (mis. bearing, contactor, solenoid, relay, sensor, cartridge). Kosongkan "" HANYA jika benar-benar bukan sparepart / tidak bisa dikenali.
-- Jika objek COCOK dengan salah satu kata kunci di daftar gudang, WAJIB pakai kata kunci dari daftar itu.
-- "similar": 0-4 kata kunci komponen lain yang mirip secara fisik (boleh []). Utamakan yang ada di daftar gudang.
-- Pertahankan keluasan: jangan terlalu spesifik ke nama produk/merk. "bearing" cukup, jangan "deep groove ball bearing 6204".${
+{"primary":"<nama/kata kunci produk utama>","similar":["<produk serupa>","..."]}
+- "primary": nama/kata kunci produk. Kalau ada MEREK + VARIAN yang terbaca, SERTAKAN (mis. "Gudang Garam Filter", bukan cuma "rokok"/"filter"). Kosongkan "" HANYA jika benar-benar tidak bisa dikenali.
+- Jika produk COCOK dengan salah satu item di KATALOG, WAJIB pakai nama/kata kunci PERSIS dari katalog itu.
+- "similar": 0-4 produk lain yang mirip jenis/merek (boleh []). Utamakan yang ada di katalog.
+- Jangan menebak detail yang tidak terlihat (mis. nomor seri). Setepat yang terbaca saja.${
       list.length
-        ? `\n\nDaftar kata kunci produk yang ADA di gudang (acuan utama untuk mencocokkan):\n${list.join("; ")}`
+        ? `\n\nKATALOG produk yang ADA (acuan UTAMA untuk mencocokkan):\n${list.join("; ")}`
         : ""
     }`;
 
