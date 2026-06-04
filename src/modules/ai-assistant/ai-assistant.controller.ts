@@ -7,6 +7,8 @@ import {
   type AiLogsQueryDto,
   NormalizeSearchSchema,
   type NormalizeSearchDto,
+  SearchByImageSchema,
+  type SearchByImageDto,
 } from "./dto/ai-assistant.dto";
 import { type AuthUser } from "@/contracts";
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
@@ -54,6 +56,21 @@ export class AiAssistantController {
   ) {
     const data = await this.service.normalizeSearchQuery(
       body.transcript,
+      body.candidates ?? [],
+    );
+    return { data };
+  }
+
+  @Post("search-by-image")
+  @RequireAccess("ai-assistant", "view")
+  @ApiOperation({ summary: "Cari produk berdasarkan foto (AI vision)" })
+  @ApiZodBody(SearchByImageSchema)
+  async searchByImage(
+    @Body(new ZodValidationPipe(SearchByImageSchema))
+    body: SearchByImageDto,
+  ) {
+    const data = await this.service.searchByImage(
+      body.image,
       body.candidates ?? [],
     );
     return { data };

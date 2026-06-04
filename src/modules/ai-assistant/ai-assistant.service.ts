@@ -610,6 +610,64 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
     }
   }
 
+  /**
+   * Cari produk berdasarkan FOTO komponen via Gemini vision (multimodal).
+   * Mengembalikan SATU kata kunci pencarian (mis. "bearing", "contactor").
+   */
+  async searchByImage(
+    imageDataUrl: string,
+    candidates: string[] = [],
+  ): Promise<{ query: string; error?: string }> {
+    const img = (imageDataUrl || "").trim();
+    if (!img.startsWith("data:image/")) {
+      return { query: "", error: "Format gambar tidak valid" };
+    }
+    const apiKey = this.config.get<string>("GROQ_API_KEY");
+    if (!apiKey) {
+      return { query: "", error: "GROQ_API_KEY belum dikonfigurasi" };
+    }
+    // Model multimodal (vision) Groq.
+    const model = "meta-llama/llama-4-scout-17b-16e-instruct";
+
+    const list = candidates
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .slice(0, 150);
+    const prompt = `Identifikasi komponen / sparepart mesin produksi pada gambar.
+Kembalikan SATU kata kunci pencarian singkat dalam istilah teknis bahasa Inggris (contoh: "bearing", "contactor", "solenoid valve", "conveyor belt", "oil filter", "cartridge").${
+      list.length
+        ? `\nJika cocok dengan salah satu produk berikut, pakai kata kuncinya:\n${list.join("; ")}`
+        : ""
+    }
+Jawab HANYA kata kuncinya, tanpa tanda kutip & tanpa penjelasan. Jika bukan sparepart / tidak yakin, jawab string kosong.`;
+
+    try {
+      const groq = new Groq({ apiKey });
+      const res = await groq.chat.completions.create({
+        model,
+        temperature: 0,
+        max_tokens: 30,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: img } },
+            ],
+          },
+        ],
+      });
+      const out = res.choices?.[0]?.message?.content?.trim() ?? "";
+      const cleaned = out.replace(/^["'`]+|["'`.]+$/g, "").trim();
+      return { query: cleaned };
+    } catch (err) {
+      this.logger.warn(
+        `[AI search-by-image] error: ${err instanceof Error ? err.message : err}`,
+      );
+      return { query: "", error: "Gagal memproses gambar" };
+    }
+  }
+
   async chat(
     auth: AuthContext,
     messages: AiChatMessageDto[],

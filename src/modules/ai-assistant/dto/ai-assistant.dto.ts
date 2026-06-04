@@ -27,6 +27,19 @@ export type NormalizeSearchResponse = {
   query: string;
 };
 
+// Cari produk berdasarkan FOTO (vision) -> kata kunci pencarian.
+export const SearchByImageSchema = z.object({
+  // data URL: "data:image/jpeg;base64,...."
+  image: z.string().min(1).max(400_000),
+  candidates: z.array(z.string()).max(300).optional(),
+});
+export type SearchByImageDto = z.infer<typeof SearchByImageSchema>;
+
+export type SearchByImageResponse = {
+  query: string;
+  error?: string;
+};
+
 // Query audit log percakapan AI (untuk halaman/endpoint audit).
 export const AiLogsQuerySchema = z.object({
   status: z.enum(["ANSWERED", "UNANSWERED", "ERROR"]).optional(),
