@@ -264,7 +264,11 @@ export class ProductsService {
     const slug = (rawSlug || "PRD").toUpperCase().slice(0, 6);
     const prefix = `${slug}-`;
 
-    const rows = await this.repo.findProductCodes(companyId, prefix);
+    // Sertakan produk soft-deleted (kode-nya masih dipakai unique constraint).
+    const rows = await this.repo.findProductCodesIncludingDeleted(
+      companyId,
+      prefix,
+    );
     let maxSeq = 0;
     for (const r of rows) {
       const tail = r.code.slice(prefix.length);
@@ -276,7 +280,10 @@ export class ProductsService {
 
     for (let attempt = 0; attempt < 100; attempt++) {
       const candidate = `${prefix}${String(maxSeq + 1 + attempt).padStart(4, "0")}`;
-      const exists = await this.repo.findExists({ companyId, code: candidate });
+      const exists = await this.repo.codeExistsIncludingDeleted(
+        companyId,
+        candidate,
+      );
       if (!exists) return candidate;
     }
     throw new InternalServerErrorException(

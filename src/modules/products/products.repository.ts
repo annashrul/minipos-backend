@@ -228,6 +228,33 @@ export class ProductsRepository {
     });
   }
 
+  // ── Code generation: HARUS menyertakan produk soft-deleted ──
+  // Proxy soft-delete (PrismaService) menyembunyikan baris deletedAt != null
+  // dari query model biasa, padahal kode produk terhapus MASIH menempati unique
+  // constraint (companyId, code). Pakai raw SQL agar baris terhapus ikut
+  // terhitung — supaya generate/cek tidak menghasilkan kode yang sudah dipakai.
+  async findProductCodesIncludingDeleted(
+    companyId: string,
+    prefix: string,
+  ): Promise<{ code: string }[]> {
+    return this.prisma.$queryRaw<{ code: string }[]>`
+      SELECT code FROM products
+      WHERE "companyId" = ${companyId} AND code LIKE ${prefix + "%"}
+    `;
+  }
+
+  async codeExistsIncludingDeleted(
+    companyId: string,
+    code: string,
+  ): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<{ exists: boolean }[]>`
+      SELECT EXISTS(
+        SELECT 1 FROM products WHERE "companyId" = ${companyId} AND code = ${code}
+      ) AS "exists"
+    `;
+    return rows[0]?.exists === true;
+  }
+
   async barcodeExistsInProduct(companyId: string, barcode: string) {
     return this.prisma.product.findFirst({
       where: { companyId, barcode },

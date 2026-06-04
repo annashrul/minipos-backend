@@ -24,13 +24,41 @@ export class ProductCreateUpdateService {
     private readonly prisma: PrismaService,
   ) {}
 
+  // Auto-generate kode saat simpan TANPA kode. Skema HARUS sama dengan
+  // ProductsService.generateUniqueProductCode (tombol "Generate" di form):
+  // `SLUG-0001` sekuensial — supaya urutan maju & tidak duplikat. Sebelumnya
+  // memakai skema acak `PRD-xxxx` yang berbeda, sehingga tombol Generate
+  // selalu mengembalikan SLUG-0001 (seolah kode yang sama) karena tak ada
+  // produk berkode SLUG-.
   private async generateProductCode(companyId: string): Promise<string> {
-    for (let i = 0; i < 5; i++) {
-      const candidate = `PRD-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().slice(-3)}`;
-      const exists = await this.repo.findExists({ companyId, code: candidate });
+    const company = await this.repo.findCompanySlug(companyId);
+    const rawSlug = (company?.slug || "PRD").replace(/[^a-zA-Z0-9]/g, "");
+    const slug = (rawSlug || "PRD").toUpperCase().slice(0, 6);
+    const prefix = `${slug}-`;
+
+    // Sertakan produk soft-deleted (kode-nya masih dipakai unique constraint).
+    const rows = await this.repo.findProductCodesIncludingDeleted(
+      companyId,
+      prefix,
+    );
+    let maxSeq = 0;
+    for (const r of rows) {
+      const tail = r.code.slice(prefix.length);
+      if (/^\d+$/.test(tail)) {
+        const n = parseInt(tail, 10);
+        if (n > maxSeq) maxSeq = n;
+      }
+    }
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const candidate = `${prefix}${String(maxSeq + 1 + attempt).padStart(4, "0")}`;
+      const exists = await this.repo.codeExistsIncludingDeleted(
+        companyId,
+        candidate,
+      );
       if (!exists) return candidate;
     }
-    return `PRD-${Date.now().toString(36).toUpperCase()}`;
+    return `${prefix}${Date.now().toString(36).toUpperCase()}`;
   }
 
   async create(
