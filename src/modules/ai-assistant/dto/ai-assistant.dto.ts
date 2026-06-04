@@ -19,6 +19,8 @@ export type AiChatResponse = {
 // Normalisasi hasil voice-to-text -> kata kunci pencarian yang benar.
 export const NormalizeSearchSchema = z.object({
   transcript: z.string().min(1),
+  // Alternatif hasil STT (N-best). AI memilih yang paling tepat thd katalog.
+  alternatives: z.array(z.string()).max(10).optional(),
   candidates: z.array(z.string()).max(300).optional(),
 });
 export type NormalizeSearchDto = z.infer<typeof NormalizeSearchSchema>;
@@ -29,8 +31,8 @@ export type NormalizeSearchResponse = {
 
 // Cari produk berdasarkan FOTO (vision) -> kata kunci pencarian.
 export const SearchByImageSchema = z.object({
-  // data URL: "data:image/jpeg;base64,...."
-  image: z.string().min(1).max(400_000),
+  // data URL: "data:image/jpeg;base64,...." (resolusi dinaikkan utk akurasi)
+  image: z.string().min(1).max(3_000_000),
   candidates: z.array(z.string()).max(300).optional(),
 });
 export type SearchByImageDto = z.infer<typeof SearchByImageSchema>;

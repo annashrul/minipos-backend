@@ -560,6 +560,7 @@ export class AiAssistantService {
   async normalizeSearchQuery(
     transcript: string,
     candidates: string[] = [],
+    alternatives: string[] = [],
   ): Promise<{ query: string }> {
     const raw = (transcript || "").trim();
     if (!raw) return { query: "" };
@@ -574,20 +575,36 @@ export class AiAssistantService {
       .map((c) => c.trim())
       .filter(Boolean)
       .slice(0, 150);
+    // Alternatif N-best dari STT (selain transcript utama). Diberikan ke AI agar
+    // bisa memilih hipotesis yang paling cocok dengan katalog/bunyi.
+    const alts = Array.from(
+      new Set(
+        [raw, ...alternatives.map((a) => (a || "").trim())].filter(Boolean),
+      ),
+    ).slice(0, 8);
     const sys = `Kamu MEMPERBAIKI hasil voice-to-text (bisa salah dengar) untuk pencarian sparepart mesin produksi pabrik.
 Input bisa: (a) salah eja/transliterasi, atau (b) SALAH DENGAR TOTAL jadi kata lain yang BUNYINYA mirip.
+Sistem voice memberi BEBERAPA alternatif hasil dengar (N-best). Pilih & koreksi ke SATU kata kunci yang paling masuk akal sebagai sparepart, utamakan yang COCOK (bunyi/ejaan) dengan daftar gudang.
 
 ATURAN:
 1. Perbaiki transliterasi ejaan Indonesia ke istilah teknis Inggris yang benar. Contoh: "kontaktor"->"contactor", "konveyor"->"conveyor", "bering"->"bearing", "soleinoid"->"solenoid", "filter oli"->"oil filter".
 2. Perbaiki SALAH DENGAR fonetik: kalau hasil voice terdengar seperti istilah/produk sparepart yang ada (cocokkan BERDASARKAN BUNYI, bukan makna), ganti ke istilah itu. Contoh: "get rich"/"ketrid"/"katrid" -> "cartridge"; "biring" -> "bearing"; "selenoid" -> "solenoid".
-3. Kalau kata SUDAH istilah sparepart yang valid & masuk akal, kembalikan APA ADANYA. Contoh: "safety"->"safety", "bearing"->"bearing", "motor"->"motor", "filter"->"filter".
-4. JANGAN mempersempit/melengkapi jadi nama produk spesifik. Pertahankan keluasan kata kunci. Contoh: "safety" TETAP "safety" (JANGAN "safety relay"); "cartridge" TETAP "cartridge" (JANGAN "cartridge heater").
-5. JANGAN menambah kata. Jumlah kata output kira-kira sama dengan ucapan user.${
+3. Kalau ADA alternatif yang sudah merupakan istilah sparepart valid / cocok dengan daftar gudang, PILIH alternatif itu.
+4. Kalau kata SUDAH istilah sparepart yang valid & masuk akal, kembalikan APA ADANYA. Contoh: "safety"->"safety", "bearing"->"bearing", "motor"->"motor", "filter"->"filter".
+5. JANGAN mempersempit/melengkapi jadi nama produk spesifik. Pertahankan keluasan kata kunci. Contoh: "safety" TETAP "safety" (JANGAN "safety relay"); "cartridge" TETAP "cartridge" (JANGAN "cartridge heater").
+6. JANGAN menambah kata. Jumlah kata output kira-kira sama dengan ucapan user.${
       list.length
         ? `\n\nDaftar produk/istilah yang ADA di gudang (pakai sebagai acuan BUNYI & ejaan untuk mencocokkan; ambil hanya KATA KUNCI inti, jangan salin nama lengkap):\n${list.join("; ")}`
         : ""
     }
 Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa tanda baca tambahan.`;
+
+    const userContent =
+      alts.length > 1
+        ? `Alternatif hasil voice (N-best, urut dari paling yakin):\n${alts
+            .map((a, i) => `${i + 1}. ${a}`)
+            .join("\n")}`
+        : raw;
 
     try {
       const groq = new Groq({ apiKey });
@@ -597,7 +614,7 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
         max_tokens: 64,
         messages: [
           { role: "system", content: sys },
-          { role: "user", content: raw },
+          { role: "user", content: userContent },
         ],
       });
       const out = res.choices?.[0]?.message?.content?.trim();
@@ -637,13 +654,18 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
       .map((c) => c.trim())
       .filter(Boolean)
       .slice(0, 150);
-    const prompt = `Identifikasi komponen/sparepart UTAMA pada gambar, lalu sebutkan beberapa komponen LAIN yang MIRIP (bentuk/jenis serupa) yang mungkin ada di gudang.
+    const prompt = `Kamu ahli sparepart mesin produksi pabrik. Amati gambar dengan TELITI.
+Fokus pada OBJEK UTAMA di tengah/paling menonjol; ABAIKAN latar belakang, tangan, meja, atau kemasan.
+Perhatikan ciri fisik: bentuk, bahan (logam/plastik/karet), jumlah terminal/pin, ulir, label, ukuran relatif.
+Identifikasi komponen/sparepart UTAMA, lalu sebutkan beberapa komponen LAIN yang bentuk/jenisnya MIRIP yang mungkin ada di gudang.
 Balas HANYA JSON valid (tanpa teks lain), format:
 {"primary":"<kata kunci utama, istilah teknis Inggris>","similar":["<kata kunci serupa>","..."]}
-- "primary": 1 kata kunci (mis. laptop, bearing, contactor). Kosongkan "" jika bukan sparepart / tidak yakin.
-- "similar": 0-4 kata kunci komponen lain yang mirip (boleh []).${
+- "primary": 1 kata kunci inti, istilah teknis Inggris yang umum (mis. bearing, contactor, solenoid, relay, sensor, cartridge). Kosongkan "" HANYA jika benar-benar bukan sparepart / tidak bisa dikenali.
+- Jika objek COCOK dengan salah satu kata kunci di daftar gudang, WAJIB pakai kata kunci dari daftar itu.
+- "similar": 0-4 kata kunci komponen lain yang mirip secara fisik (boleh []). Utamakan yang ada di daftar gudang.
+- Pertahankan keluasan: jangan terlalu spesifik ke nama produk/merk. "bearing" cukup, jangan "deep groove ball bearing 6204".${
       list.length
-        ? `\nAcuan produk yang ADA di gudang (pakai kata kuncinya bila relevan):\n${list.join("; ")}`
+        ? `\n\nDaftar kata kunci produk yang ADA di gudang (acuan utama untuk mencocokkan):\n${list.join("; ")}`
         : ""
     }`;
 
@@ -652,13 +674,16 @@ Balas HANYA JSON valid (tanpa teks lain), format:
       const res = await groq.chat.completions.create({
         model,
         temperature: 0,
-        max_tokens: 150,
+        max_tokens: 220,
         messages: [
           {
             role: "user",
             content: [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: img } },
+              {
+                type: "image_url",
+                image_url: { url: img, detail: "high" },
+              },
             ],
           },
         ],

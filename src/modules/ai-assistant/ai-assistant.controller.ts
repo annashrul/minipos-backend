@@ -57,6 +57,7 @@ export class AiAssistantController {
     const data = await this.service.normalizeSearchQuery(
       body.transcript,
       body.candidates ?? [],
+      body.alternatives ?? [],
     );
     return { data };
   }

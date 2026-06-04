@@ -1,18 +1,25 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ["log", "error", "warn", "debug"],
     // Raw body wajib untuk verifikasi HMAC signature webhook dari wa-service
     // (lihat WhatsappWebhookController). Tidak menonaktifkan JSON parsing —
     // Nest tetap parse + expose body, hanya menyimpan raw buffer di samping.
     rawBody: true,
   });
+
+  // Naikkan limit body JSON (default Express 100kb). Pencarian via FOTO mengirim
+  // gambar base64 (~beberapa ratus kB pada 768px). useBodyParser tetap menjaga
+  // rawBody untuk verifikasi HMAC webhook.
+  app.useBodyParser("json", { limit: "5mb" });
+  app.useBodyParser("urlencoded", { limit: "5mb", extended: true });
 
   app.setGlobalPrefix("api");
   app.useGlobalFilters(new AllExceptionsFilter());
