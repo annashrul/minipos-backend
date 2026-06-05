@@ -62,6 +62,7 @@ import { SubscriptionsModule } from "./modules/subscriptions/subscriptions.modul
 import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { ShiftsModule } from "./modules/shifts/shifts.module";
 import { StockModule } from "./modules/stock/stock.module";
+import { StockUsageModule } from "./modules/stock-usage/stock-usage.module";
 import { StockOpnameModule } from "./modules/stock-opname/stock-opname.module";
 import { StockTransfersModule } from "./modules/stock-transfers/stock-transfers.module";
 import { SuppliersModule } from "./modules/suppliers/suppliers.module";
@@ -144,6 +145,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     SettingsModule,
     ShiftsModule,
     StockModule,
+    StockUsageModule,
     StockOpnameModule,
     StockTransfersModule,
     SubscriptionsModule,

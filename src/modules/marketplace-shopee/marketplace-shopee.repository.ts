@@ -258,11 +258,20 @@ export class MarketplaceShopeeRepository {
     });
   }
 
-  async findProductCodeCollision(companyId: string, code: string) {
-    return this.prisma.product.findFirst({
-      where: { companyId, code },
-      select: { id: true },
-    });
+  // Cari produk berdasarkan kode TERMASUK yang soft-deleted. Wajib raw SQL —
+  // PrismaService proxy meng-inject `deletedAt: null` pada query model biasa,
+  // jadi findFirst TIDAK melihat produk yang sudah dihapus. Padahal unique
+  // constraint (companyId, code) tetap mencakup baris soft-deleted, sehingga
+  // create bisa gagal walau findFirst bilang "tidak ada". Raw SQL bypass proxy.
+  async findProductByCodeAnyState(companyId: string, code: string) {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ id: string; deletedAt: Date | null }>
+    >`
+      SELECT id, "deletedAt" FROM "products"
+      WHERE "companyId" = ${companyId} AND code = ${code}
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
   }
 
   async createProduct(data: Prisma.ProductUncheckedCreateInput & {
@@ -287,6 +296,26 @@ export class MarketplaceShopeeRepository {
     return this.prisma.branch.findMany({
       where: { companyId, isActive: true },
       select: { id: true },
+    });
+  }
+
+  // Samakan stok ke SEMUA row branch_stocks produk (stok Shopee shop-wide).
+  // Mencakup cabang non-aktif yang sudah punya row — supaya vw_product_branch
+  // (COALESCE(bs.quantity, p.stock)) tidak menampilkan qty lama.
+  async updateAllBranchStocksForProduct(productId: string, quantity: number) {
+    return this.prisma.branchStock.updateMany({
+      where: { productId },
+      data: { quantity },
+    });
+  }
+
+  // Update stok base SKU (unit & varian null) di product_branch_skus — sumber
+  // stok yang dibaca sebagian query list produk/POS. Tanpa ini, Shopee sync
+  // tidak mengubah angka yang tampil walau branch_stocks sudah benar.
+  async updateProductBranchSkuStock(productId: string, stock: number) {
+    return this.prisma.productBranchSku.updateMany({
+      where: { productId, unitId: null, variantId: null },
+      data: { stock },
     });
   }
 

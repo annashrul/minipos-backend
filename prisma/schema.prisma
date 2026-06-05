@@ -351,6 +351,7 @@ model Branch {
   stockTransfersFrom StockTransfer[]            @relation("TransferFrom")
   stockTransfersTo   StockTransfer[]            @relation("TransferTo")
   stockOpnames       StockOpname[]
+  stockUsages        StockUsage[]
   productPrices      BranchProductPrice[]
   branchStocks       BranchStock[]
   stockMovements     StockMovement[]
@@ -519,6 +520,7 @@ model Product {
   promoRewards        PromotionGetProduct[]       @relation("ProductPromoRewards")
   purchaseOrderItems  PurchaseOrderItem[]
   stockOpnameItems    StockOpnameItem[]
+  stockUsageItems     StockUsageItem[]
   branchPrices        BranchProductPrice[]
   branchStocks        BranchStock[]
   units               ProductUnit[]
@@ -1094,6 +1096,57 @@ model StockOpnameItem {
   @@index([stockOpnameId])
   @@index([productId])
   @@map("stock_opname_items")
+}
+
+// Pemakaian Barang (Goods Issue) — pengeluaran stok karena DIPAKAI/dikonsumsi
+// internal (mis. sparepart untuk perbaikan mesin), bukan dijual. Tidak ada
+// harga/customer/pembayaran. Stok berkurang via StockMovement MANUAL_OUT.
+model StockUsage {
+  id          String           @id @default(uuid())
+  // Unique per company — nomor dokumen pemakaian (mis. PMK-20260605-0001).
+  usageNumber String
+  branchId    String?
+  branch      Branch?          @relation(fields: [branchId], references: [id])
+  companyId   String?
+  // Nama peminta (mekanik/operator) — free text supaya tidak wajib master.
+  requestedBy String?
+  // Tujuan/keperluan: mesin / line produksi (untuk laporan konsumsi per mesin).
+  purpose     String?
+  // Nomor work order / perintah kerja (opsional).
+  woNumber    String?
+  notes       String?
+  // COMPLETED saat dibuat (langsung potong stok). DRAFT/CANCELLED utk masa depan.
+  status      String           @default("COMPLETED")
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  items       StockUsageItem[]
+
+  @@unique([companyId, usageNumber])
+  @@index([branchId])
+  @@index([companyId, createdAt])
+  @@map("stock_usages")
+}
+
+model StockUsageItem {
+  id           String     @id @default(uuid())
+  stockUsageId String
+  stockUsage   StockUsage @relation(fields: [stockUsageId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  variantId    String?
+  unitId       String?
+  rackId       String?
+  // Qty dalam satuan yang dipilih user.
+  quantity     Int
+  // Qty dalam satuan DASAR (untuk konsistensi ledger & laporan).
+  baseQuantity Int
+  notes        String?
+  createdAt    DateTime   @default(now())
+
+  @@index([stockUsageId])
+  @@index([productId])
+  @@map("stock_usage_items")
 }
 
 model StockTransfer {

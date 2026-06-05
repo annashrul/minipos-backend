@@ -149,7 +149,15 @@ export class StockService {
     companyId: string,
     userId: string,
     dto: AdjustStockDto,
+    // Override origin ledger — dipakai modul lain (mis. Pemakaian Barang) supaya
+    // movement tercatat sebagai refType-nya sendiri & ter-link ke dokumen.
+    opts?: { refType?: string; refId?: string },
   ): Promise<StockMovementResponse> {
+    const refType = opts?.refType ?? "manual_adjustment";
+    const refId = opts?.refId ?? null;
+    // refId untuk ledger rak: id dokumen (kalau ada), fallback ke reference user.
+    const refIdForLedger = refId ?? dto.reference ?? null;
+
     const product = await this.repo.findProduct(dto.productId, companyId);
     if (!product) throw new NotFoundException("Produk tidak ditemukan");
 
@@ -217,8 +225,8 @@ export class StockService {
             productId: dto.productId,
             qty: baseQuantity,
             rackId: dto.rackId ?? null,
-            refType: "manual_adjustment",
-            ...(dto.reference ? { refId: dto.reference } : {}),
+            refType,
+            ...(refIdForLedger ? { refId: refIdForLedger } : {}),
             userId,
             ...(dto.note ? { notes: dto.note } : {}),
             movementType: "MANUAL_IN",
@@ -242,8 +250,8 @@ export class StockService {
               productId: dto.productId,
               rackId: dto.rackId,
               qty: newQty,
-              refType: "manual_adjustment",
-              ...(dto.reference ? { refId: dto.reference } : {}),
+              refType,
+              ...(refIdForLedger ? { refId: refIdForLedger } : {}),
               userId,
               ...(dto.note ? { notes: dto.note } : {}),
               movementType: "MANUAL_OUT",
@@ -253,8 +261,8 @@ export class StockService {
               branchId,
               productId: dto.productId,
               qty: baseQuantity,
-              refType: "manual_adjustment",
-              ...(dto.reference ? { refId: dto.reference } : {}),
+              refType,
+              ...(refIdForLedger ? { refId: refIdForLedger } : {}),
               userId,
               ...(dto.note ? { notes: dto.note } : {}),
               movementType: "MANUAL_OUT",
@@ -340,7 +348,8 @@ export class StockService {
           quantity: baseQuantity,
           direction,
           balanceAfter,
-          refType: "manual_adjustment",
+          refType,
+          ...(refId ? { refId } : {}),
           ...(dto.reference ? { refNumber: dto.reference } : {}),
           note: dto.note ?? null,
           reference: dto.reference ?? null,

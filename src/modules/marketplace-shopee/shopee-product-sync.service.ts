@@ -45,6 +45,11 @@ export class ShopeeProductSyncService {
   }): Promise<void> {
     const { companyId, productId, name, sellingPrice, stock, imageUrl } =
       params;
+    // Diagnostik: catat stok yang ditarik dari Shopee & di-set ke produk.
+    // Bandingkan dengan stok lama untuk memastikan sync benar-benar mengubah.
+    this.logger.log(
+      `[shopee apply] product=${productId} setStock=${stock} setPrice=${sellingPrice}`,
+    );
     await this.repo.updateProduct(productId, {
       name: name.slice(0, 200),
       sellingPrice,
@@ -54,7 +59,18 @@ export class ShopeeProductSyncService {
     // Update default ProductUnit (kalau ada) — biar form edit nampilin harga
     // baru. Pakai updateMany supaya tidak error kalau belum ada default unit.
     await this.repo.updateProductUnitPrice(productId, sellingPrice);
-    // Update / create per-branch price + stock untuk semua cabang aktif.
+
+    // Samakan stok ke SEMUA sumber yang dibaca UI supaya angka yang tampil
+    // benar-benar ikut berubah (stok Shopee bersifat shop-wide):
+    //   1) Semua row branch_stocks yang sudah ada (termasuk cabang non-aktif).
+    //   2) Base SKU di product_branch_skus (dibaca list produk/POS).
+    // Tanpa ini, branch_stocks/SKU lama tetap menampilkan qty lama walau
+    // Product.stock sudah di-update.
+    await this.repo.updateAllBranchStocksForProduct(productId, stock);
+    await this.repo.updateProductBranchSkuStock(productId, stock);
+
+    // Update / create per-branch price + stock untuk semua cabang aktif
+    // (memastikan cabang aktif yang belum punya row tetap terisi).
     const branches = await this.repo.findActiveBranches(companyId);
     for (const b of branches) {
       await this.repo.upsertBranchProductPrice(b.id, productId, sellingPrice, 0);
@@ -200,62 +216,82 @@ export class ShopeeProductSyncService {
                 item.name + (m.name ? ` - ${m.name}` : "");
               const productCode =
                 skuForMatch || `SHOPEE-${itemIdStr}-${modelIdStr}`;
-              // Code wajib unique per company. Kalau collision (rare),
-              // tambah suffix random.
-              const codeCollision = await this.repo.findProductCodeCollision(companyId, productCode);
-              const finalCode = codeCollision
-                ? `${productCode}-${Math.random().toString(36).slice(2, 6)}`
-                : productCode;
               const sellingPriceVal = item.currentPrice ?? 0;
               const stockVal = m.stock ?? item.totalStock ?? 0;
-              const newProduct = await this.repo.createProduct({
-                companyId,
-                categoryId: importCategoryId,
-                code: finalCode,
-                name: productName.slice(0, 200),
-                purchasePrice: 0,
-                sellingPrice: sellingPriceVal,
-                stock: stockVal,
-                imageUrl: item.imageUrl,
-                itemType: "PRODUCT",
-                isActive: true,
-                // Default unit wajib supaya form edit UI bisa nampilkan
-                // harga (UI baca dari product_units, bukan Product.sellingPrice).
-                units: {
-                  create: {
-                    name: "pcs",
-                    conversionQty: 1,
-                    sellingPrice: sellingPriceVal,
-                    purchasePrice: 0,
-                    isDefault: true,
-                    sortOrder: 0,
-                  },
-                },
-              });
-              autoMatchProductId = newProduct.id;
-              createdProductCount++;
 
-              // Populate per-branch price + stock supaya tab "Harga & Stok"
-              // di product edit form tidak kosong. Skip kalau company belum
-              // punya branch (rare edge case).
-              const branches = await this.repo.findActiveBranches(companyId);
-              if (branches.length > 0) {
-                await this.repo.createManyBranchProductPrices(
-                  branches.map((b) => ({
-                    branchId: b.id,
-                    productId: newProduct.id,
-                    sellingPrice: sellingPriceVal,
-                    purchasePrice: 0,
-                  })),
+              // Cek apakah kode sudah dipakai produk lain — TERMASUK produk
+              // soft-deleted (unique constraint companyId+code mencakupnya).
+              // Kalau ada & sudah dihapus, REVIVE + pakai ulang daripada bikin
+              // duplikat berkode acak; ini juga mencegah error unique constraint.
+              const existingByCode =
+                await this.repo.findProductByCodeAnyState(
+                  companyId,
+                  productCode,
                 );
-                await this.repo.createManyBranchStocks(
-                  branches.map((b) => ({
-                    branchId: b.id,
-                    productId: newProduct.id,
-                    quantity: stockVal,
-                    minStock: 5,
-                  })),
-                );
+              if (existingByCode) {
+                if (existingByCode.deletedAt) {
+                  await this.repo.reviveProduct(existingByCode.id);
+                  revivedProductCount++;
+                }
+                autoMatchProductId = existingByCode.id;
+                await this.applyShopeeDataToProduct({
+                  companyId,
+                  productId: existingByCode.id,
+                  name: productName.slice(0, 200),
+                  sellingPrice: sellingPriceVal,
+                  stock: stockVal,
+                  imageUrl: item.imageUrl,
+                });
+              } else {
+                const newProduct = await this.repo.createProduct({
+                  companyId,
+                  categoryId: importCategoryId,
+                  code: productCode,
+                  name: productName.slice(0, 200),
+                  purchasePrice: 0,
+                  sellingPrice: sellingPriceVal,
+                  stock: stockVal,
+                  imageUrl: item.imageUrl,
+                  itemType: "PRODUCT",
+                  isActive: true,
+                  // Default unit wajib supaya form edit UI bisa nampilkan
+                  // harga (UI baca dari product_units, bukan Product.sellingPrice).
+                  units: {
+                    create: {
+                      name: "pcs",
+                      conversionQty: 1,
+                      sellingPrice: sellingPriceVal,
+                      purchasePrice: 0,
+                      isDefault: true,
+                      sortOrder: 0,
+                    },
+                  },
+                });
+                autoMatchProductId = newProduct.id;
+                createdProductCount++;
+
+                // Populate per-branch price + stock supaya tab "Harga & Stok"
+                // di product edit form tidak kosong. Skip kalau company belum
+                // punya branch (rare edge case).
+                const branches = await this.repo.findActiveBranches(companyId);
+                if (branches.length > 0) {
+                  await this.repo.createManyBranchProductPrices(
+                    branches.map((b) => ({
+                      branchId: b.id,
+                      productId: newProduct.id,
+                      sellingPrice: sellingPriceVal,
+                      purchasePrice: 0,
+                    })),
+                  );
+                  await this.repo.createManyBranchStocks(
+                    branches.map((b) => ({
+                      branchId: b.id,
+                      productId: newProduct.id,
+                      quantity: stockVal,
+                      minStock: 5,
+                    })),
+                  );
+                }
               }
             }
             await this.repo.upsertShopeeItem(
