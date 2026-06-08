@@ -130,6 +130,7 @@ export class PromotionsService {
         buyQty: dto.buyQty ?? null,
         getQty: dto.getQty ?? null,
         getProductId: getIds.length ? null : (dto.getProductId ?? null),
+        unitId: dto.unitId ?? null,
         voucherCode: dto.voucherCode ?? null,
         usageLimit: dto.usageLimit ?? null,
         description: dto.description ?? null,
@@ -196,6 +197,11 @@ export class PromotionsService {
     if (dto.getProductId !== undefined) data.getProductId = dto.getProductId;
     if (dto.getProductIds && dto.getProductIds.length > 0) {
       data.getProductId = null;
+    }
+    if (dto.unitId !== undefined) {
+      data.unit = dto.unitId
+        ? { connect: { id: dto.unitId } }
+        : { disconnect: true };
     }
     if (dto.voucherCode !== undefined) data.voucherCode = dto.voucherCode;
     if (dto.usageLimit !== undefined) data.usageLimit = dto.usageLimit;
@@ -373,6 +379,8 @@ function toPromotionResponse(
     buyQty: p.buyQty,
     getQty: p.getQty,
     getProductId: p.getProductId,
+    unitId: p.unitId,
+    unit: p.unit ? { id: p.unit.id, name: p.unit.name } : null,
     voucherCode: p.voucherCode,
     usageLimit: p.usageLimit,
     usageCount: p.usageCount,

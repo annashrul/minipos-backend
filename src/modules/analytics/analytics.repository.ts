@@ -512,6 +512,7 @@ export class AnalyticsRepository {
       include: {
         category: { select: { id: true, name: true } },
         product: { select: { id: true, name: true } },
+        unit: { select: { id: true, name: true } },
       },
     });
   }

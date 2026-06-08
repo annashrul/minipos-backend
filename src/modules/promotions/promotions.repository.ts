@@ -19,6 +19,8 @@ export const PROMOTION_SELECT = {
   buyQty: true,
   getQty: true,
   getProductId: true,
+  unitId: true,
+  unit: { select: { id: true, name: true } },
   voucherCode: true,
   usageLimit: true,
   usageCount: true,

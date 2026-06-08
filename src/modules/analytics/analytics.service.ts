@@ -515,6 +515,8 @@ export class AnalyticsService {
       buyQty: p.buyQty,
       getQty: p.getQty,
       getProductId: p.getProductId,
+      unitId: p.unitId,
+      unit: p.unit ? { id: p.unit.id, name: p.unit.name } : null,
       voucherCode: p.voucherCode,
       description: p.description,
       startDate: p.startDate.toISOString(),
@@ -583,7 +585,15 @@ export class AnalyticsService {
 
     for (const promo of promotions) {
       if (promo.minPurchase && subtotal < promo.minPurchase) continue;
-      const qualifiedItems = findQualifiedItems(promo);
+      let qualifiedItems = findQualifiedItems(promo);
+      // Promo menarget SATUAN spesifik → cocokkan PERSIS unitId baris cart.
+      // promo.unitId null = berlaku untuk semua satuan (backward-compat).
+      // Item satuan dasar (tanpa unitId) tidak akan cocok dengan promo unit.
+      if (promo.unitId) {
+        qualifiedItems = qualifiedItems.filter(
+          (item) => item.unitId === promo.unitId,
+        );
+      }
       if (qualifiedItems.length === 0) continue;
 
       if (promo.type === "DISCOUNT_PERCENT") {
@@ -602,6 +612,7 @@ export class AnalyticsService {
           type: promo.type,
           discountAmount: disc,
           appliedTo: promo.productId || promo.categoryId || "cart",
+          unitId: promo.unitId,
         });
         totalDiscount += disc;
       } else if (promo.type === "DISCOUNT_AMOUNT") {
@@ -613,6 +624,7 @@ export class AnalyticsService {
           type: promo.type,
           discountAmount: disc,
           appliedTo: promo.productId || promo.categoryId || "cart",
+          unitId: promo.unitId,
         });
         totalDiscount += disc;
       } else if (promo.type === "BUY_X_GET_Y") {
@@ -627,11 +639,13 @@ export class AnalyticsService {
         //   (item qualified pertama) supaya hadiah tidak dobel & lineId gift di
         //   frontend (`gift:promoId:giftProductId`) tidak bentrok.
         const isSameProductGift = !promo.getProductId;
-        const buyItems = promo.productId
-          ? (itemsByProductId.get(promo.productId) ?? []).slice(0, 1)
-          : isSameProductGift
-            ? qualifiedItems
-            : qualifiedItems.slice(0, 1);
+        // qualifiedItems sudah terfilter productId + unitId. Untuk hadiah =
+        // produk yang dibeli & scope kategori/global → per-produk; selain itu
+        // (product-specific atau hadiah produk tetap) → cukup item pertama.
+        const buyItems =
+          promo.productId || !isSameProductGift
+            ? qualifiedItems.slice(0, 1)
+            : qualifiedItems;
         for (const buyItem of buyItems) {
           if (!buyItem || buyItem.quantity < buyQty) continue;
           const multiplier = Math.floor(buyItem.quantity / buyQty);
@@ -656,6 +670,7 @@ export class AnalyticsService {
             type: promo.type,
             discountAmount: 0,
             appliedTo: buyItem.productId,
+            unitId: promo.unitId,
             giftProductId: targetProductId,
             giftProductName: giftName,
             giftProductCode: giftInfo?.code ?? null,

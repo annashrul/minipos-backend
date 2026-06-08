@@ -44,6 +44,7 @@ export const CreatePromotionSchema = z
     buyQty: z.number().int().min(1).nullable().optional(),
     getQty: z.number().int().min(1).nullable().optional(),
     getProductId: z.string().nullable().optional(),
+    unitId: z.string().nullable().optional(),
     voucherCode: z.string().nullable().optional(),
     usageLimit: z.number().int().min(1).nullable().optional(),
     description: z.string().nullable().optional(),
@@ -92,6 +93,7 @@ export const UpdatePromotionSchema = z.object({
   buyQty: z.number().int().min(1).nullable().optional(),
   getQty: z.number().int().min(1).nullable().optional(),
   getProductId: z.string().nullable().optional(),
+  unitId: z.string().nullable().optional(),
   voucherCode: z.string().nullable().optional(),
   usageLimit: z.number().int().min(1).nullable().optional(),
   description: z.string().nullable().optional(),
@@ -125,6 +127,8 @@ export type PromotionResponse = {
   buyQty: number | null;
   getQty: number | null;
   getProductId: string | null;
+  unitId: string | null;
+  unit: { id: string; name: string } | null;
   voucherCode: string | null;
   usageLimit: number | null;
   usageCount: number;

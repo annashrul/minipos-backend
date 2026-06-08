@@ -213,6 +213,9 @@ export const PromoCartItemSchema = z.object({
   productId: z.string(),
   productName: z.string(),
   categoryId: z.string().optional(),
+  // Satuan baris cart. Dipakai engine untuk mencocokkan promo yang menarget
+  // satuan spesifik (exact match). Item satuan dasar (tanpa unit) → undefined.
+  unitId: z.string().optional(),
   quantity: z.number(),
   unitPrice: z.number(),
   subtotal: z.number(),
@@ -266,6 +269,8 @@ export type ActivePromotionResponse = {
   buyQty: number | null;
   getQty: number | null;
   getProductId: string | null;
+  unitId: string | null;
+  unit: { id: string; name: string } | null;
   voucherCode: string | null;
   description: string | null;
   startDate: string;
@@ -278,6 +283,9 @@ export type AppliedPromoResponse = {
   type: string;
   discountAmount: number;
   appliedTo: string;
+  /** Satuan target promo (null = semua satuan). Dipakai frontend untuk
+   *  mencocokkan promo HANYA ke baris cart dengan satuan ini. */
+  unitId?: string | null;
   /** Untuk BUY_X_GET_Y: produk hadiah yang akan ditambahkan ke cart. */
   giftProductId?: string | null;
   giftProductName?: string | null;

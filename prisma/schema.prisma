@@ -573,6 +573,7 @@ model ProductUnit {
   branchSkus    ProductBranchSku[]
   purchaseItems PurchaseOrderItem[]
   stockMovements StockMovement[]
+  promotions    Promotion[]
 
   @@unique([productId, name])
   @@index([productId])
@@ -1549,6 +1550,11 @@ model Promotion {
   buyQty          Int? // BUY_X_GET_Y: buy this many
   getQty          Int? // BUY_X_GET_Y: get this many free
   getProductId    String? // BUY_X_GET_Y: free product id (null = same product)
+  // Promo spesifik ke 1 SATUAN produk (mis. hanya satuan "bungkus"). null =
+  // berlaku untuk semua satuan produk (backward-compat). Hanya relevan saat
+  // scope="product" (productId di-set).
+  unitId          String?
+  unit            ProductUnit?              @relation(fields: [unitId], references: [id])
   voucherCode     String?                   @unique
   usageLimit      Int?
   usageCount      Int                       @default(0)
@@ -1577,6 +1583,7 @@ model Promotion {
   @@index([type])
   @@index([productId])
   @@index([categoryId])
+  @@index([unitId])
   @@map("promotions")
 }
 
