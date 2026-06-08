@@ -715,4 +715,349 @@ export class AiAssistantRepository {
       branchId ?? null,
     );
   }
+
+  // ── Transaksi terakhir (terbaru) ─────────────────────────────────
+
+  async findRecentTransactions(
+    companyId: string | null,
+    limit: number,
+    branchId?: string,
+  ) {
+    return this.prisma.transaction.findMany({
+      where: {
+        status: "COMPLETED",
+        ...(companyId ? { user: { companyId } } : {}),
+        ...(branchId ? { branchId } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        invoiceNumber: true,
+        invoiceDisplayNumber: true,
+        createdAt: true,
+        grandTotal: true,
+        paymentMethod: true,
+        user: { select: { name: true } },
+        branch: { select: { name: true } },
+        customer: { select: { name: true } },
+        items: {
+          select: { productName: true, quantity: true, subtotal: true },
+        },
+      },
+    });
+  }
+
+  // ── Ringkasan hutang / piutang ───────────────────────────────────
+
+  // Rekap satu jenis debt (PAYABLE=hutang / RECEIVABLE=piutang) yang BELUM
+  // lunas: total sisa, jumlah, yang jatuh tempo, dan party teratas.
+  async debtSummary(companyId: string | null, type: "PAYABLE" | "RECEIVABLE") {
+    const now = new Date();
+    const base: Prisma.DebtWhereInput = {
+      type,
+      status: { not: "PAID" },
+      ...(companyId ? { companyId } : {}),
+    };
+    const [agg, overdue, top] = await Promise.all([
+      this.prisma.debt.aggregate({
+        where: base,
+        _sum: { remainingAmount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.debt.aggregate({
+        where: { ...base, dueDate: { lt: now } },
+        _sum: { remainingAmount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.debt.groupBy({
+        by: ["partyName"],
+        where: base,
+        _sum: { remainingAmount: true },
+        orderBy: { _sum: { remainingAmount: "desc" } },
+        take: 5,
+      }),
+    ]);
+    return {
+      totalRemaining: agg._sum.remainingAmount || 0,
+      count: agg._count._all,
+      overdueAmount: overdue._sum.remainingAmount || 0,
+      overdueCount: overdue._count._all,
+      topParties: top.map((t) => ({
+        name: t.partyName,
+        remaining: t._sum.remainingAmount || 0,
+      })),
+    };
+  }
+
+  // ── Produk stok terbanyak (overstock) ────────────────────────────
+
+  async findHighStock(companyId: string | null, limit: number) {
+    return this.prisma.product.findMany({
+      where: { isActive: true, ...(companyId ? { companyId } : {}) },
+      orderBy: { stock: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        stock: true,
+        unit: true,
+        sellingPrice: true,
+        category: { select: { name: true } },
+      },
+    });
+  }
+
+  // ── Business intelligence: pelanggan ─────────────────────────────
+
+  // Pelanggan dengan belanja terbanyak dalam periode.
+  async topCustomersRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    limit: number,
+  ): Promise<
+    {
+      name: string;
+      memberLevel: string;
+      txCount: bigint;
+      revenue: number;
+    }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT c.name, c."memberLevel",
+             COUNT(t.id)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN customers c ON c.id = t."customerId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR c."companyId" = $3)
+      GROUP BY c.name, c."memberLevel"
+      ORDER BY revenue DESC
+      LIMIT $4
+      `,
+      from,
+      to,
+      companyId,
+      limit,
+    );
+  }
+
+  // Insight pelanggan: total, baru, aktif, repeat, rata-rata belanja periode.
+  async customerInsightsRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+  ): Promise<{ active: bigint; repeat: bigint; avgSpend: number }[]> {
+    return this.prisma.$queryRawUnsafe(
+      `
+      WITH cust AS (
+        SELECT t."customerId" as id, COUNT(*)::int as c,
+               SUM(t."grandTotal")::float as spend
+        FROM transactions t
+        JOIN customers cu ON cu.id = t."customerId"
+        WHERE t.status = 'COMPLETED' AND t."customerId" IS NOT NULL
+          AND t."createdAt" >= $1 AND t."createdAt" <= $2
+          AND ($3::text IS NULL OR cu."companyId" = $3)
+        GROUP BY t."customerId"
+      )
+      SELECT COUNT(*)::bigint as active,
+             COUNT(*) FILTER (WHERE c >= 2)::bigint as repeat,
+             COALESCE(AVG(spend), 0)::float as "avgSpend"
+      FROM cust
+      `,
+      from,
+      to,
+      companyId,
+    );
+  }
+
+  async countCustomers(companyId: string | null, from?: Date, to?: Date) {
+    return this.prisma.customer.count({
+      where: {
+        ...(companyId ? { companyId } : {}),
+        ...(from || to
+          ? {
+              createdAt: {
+                ...(from ? { gte: from } : {}),
+                ...(to ? { lte: to } : {}),
+              },
+            }
+          : {}),
+      },
+    });
+  }
+
+  // ── Business intelligence: inventaris ────────────────────────────
+
+  // Nilai inventaris: modal (stok×harga beli) & potensi jual (stok×harga jual).
+  async inventoryValueRaw(
+    companyId: string | null,
+  ): Promise<
+    {
+      costValue: number;
+      retailValue: number;
+      skuCount: bigint;
+      totalUnits: number;
+    }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT COALESCE(SUM(p.stock * p."purchasePrice"), 0)::float as "costValue",
+             COALESCE(SUM(p.stock * p."sellingPrice"), 0)::float as "retailValue",
+             COUNT(*)::bigint as "skuCount",
+             COALESCE(SUM(p.stock), 0)::float as "totalUnits"
+      FROM products p
+      WHERE p."isActive" = true
+        AND ($1::text IS NULL OR p."companyId" = $1)
+      `,
+      companyId,
+    );
+  }
+
+  // Dead stock: produk yang TIDAK PERNAH terjual sama sekali (seumur hidup).
+  async deadStockRaw(
+    companyId: string | null,
+    limit: number,
+  ): Promise<
+    {
+      name: string;
+      code: string;
+      stock: number;
+      unit: string;
+      purchasePrice: number;
+      categoryName: string | null;
+    }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT p.name, p.code, p.stock, p.unit, p."purchasePrice",
+             c.name as "categoryName"
+      FROM products p
+      LEFT JOIN categories c ON c.id = p."categoryId"
+      WHERE p."isActive" = true
+        AND ($1::text IS NULL OR p."companyId" = $1)
+        AND NOT EXISTS (
+          SELECT 1 FROM transaction_items ti WHERE ti."productId" = p.id
+        )
+      ORDER BY (p.stock * p."purchasePrice") DESC
+      LIMIT $2
+      `,
+      companyId,
+      limit,
+    );
+  }
+
+  // ── Business intelligence: produk paling untung ──────────────────
+
+  async productProfitRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+    limit: number,
+  ): Promise<
+    {
+      name: string;
+      code: string;
+      revenue: number;
+      cogs: number;
+      qty: number;
+    }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT p.name, p.code,
+             COALESCE(SUM(ti.subtotal), 0)::float as revenue,
+             COALESCE(SUM(COALESCE(ti."baseQty", ti.quantity * ti."conversionQty") * p."purchasePrice"), 0)::float as cogs,
+             COALESCE(SUM(ti.quantity), 0)::float as qty
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti."transactionId"
+      JOIN products p ON p.id = ti."productId"
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR u."companyId" = $3)
+      GROUP BY p.name, p.code
+      ORDER BY (COALESCE(SUM(ti.subtotal), 0) - COALESCE(SUM(COALESCE(ti."baseQty", ti.quantity * ti."conversionQty") * p."purchasePrice"), 0)) DESC
+      LIMIT $4
+      `,
+      from,
+      to,
+      companyId,
+      limit,
+    );
+  }
+
+  // ── Business intelligence: jam & hari tersibuk ───────────────────
+
+  async peakHoursRaw(
+    companyId: string | null,
+    since: Date,
+  ): Promise<{ hour: number; txCount: bigint; revenue: number }[]> {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'Asia/Jakarta')::int as hour,
+             COUNT(*)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+        AND ($2::text IS NULL OR u."companyId" = $2)
+      GROUP BY 1 ORDER BY 1
+      `,
+      since,
+      companyId,
+    );
+  }
+
+  async peakDaysRaw(
+    companyId: string | null,
+    since: Date,
+  ): Promise<{ dow: number; txCount: bigint; revenue: number }[]> {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'Asia/Jakarta')::int as dow,
+             COUNT(*)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+        AND ($2::text IS NULL OR u."companyId" = $2)
+      GROUP BY 1 ORDER BY 1
+      `,
+      since,
+      companyId,
+    );
+  }
+
+  // ── Business intelligence: perbandingan cabang ───────────────────
+
+  async branchComparisonRaw(
+    companyId: string | null,
+    from: Date,
+    to: Date,
+  ): Promise<
+    { name: string; txCount: bigint; revenue: number }[]
+  > {
+    return this.prisma.$queryRawUnsafe(
+      `
+      SELECT b.name,
+             COUNT(t.id)::bigint as "txCount",
+             COALESCE(SUM(t."grandTotal"), 0)::float as revenue
+      FROM transactions t
+      JOIN branches b ON b.id = t."branchId"
+      JOIN users u ON u.id = t."userId"
+      WHERE t.status = 'COMPLETED'
+        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND ($3::text IS NULL OR u."companyId" = $3)
+      GROUP BY b.name
+      ORDER BY revenue DESC
+      `,
+      from,
+      to,
+      companyId,
+    );
+  }
 }

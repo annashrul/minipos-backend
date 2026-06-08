@@ -1,15 +1,27 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { AiChatMessageDto, AiChatResponse } from "./dto/ai-assistant.dto";
+import type {
+  AiChatDataBlock,
+  AiChatMessageDto,
+  AiChatResponse,
+} from "./dto/ai-assistant.dto";
 import Groq from "groq-sdk";
 import { AiAssistantToolsService } from "./ai-assistant-tools.service";
 import { AiAssistantRepository } from "./ai-assistant.repository";
 
-// Pola jawaban "tidak terjawab" — AI merespons sopan tapi tidak punya
-// data/akses. Dipakai untuk menandai status UNANSWERED di audit log supaya
-// owner bisa lihat pertanyaan yang belum bisa dijawab AI.
-const UNANSWERED_RE =
-  /tidak (punya akses|bisa|dapat|tahu|menemukan|tersedia)|belum (bisa|ada)|tidak ada data|di luar (kemampuan|akses)|maaf,?\s*(saya|aku)?\s*tidak/i;
+// Pola PENOLAKAN SEJATI — AI menolak / mengaku tidak punya akses / tidak
+// mampu menjawab. HANYA pola ini yang dihitung UNANSWERED di audit log.
+//
+// PENTING: laporan DATA KOSONG yang valid (mis. "Rp 0", "belum ada penjualan
+// pada periode ini", "tidak ada transaksi hari ini", "semua meja kosong")
+// BUKAN penolakan — itu jawaban yang SAH (lihat aturan #3 di system prompt) dan
+// harus tetap ANSWERED. Regex lama menandai jawaban-jawaban valid itu sebagai
+// UNANSWERED (false positive) sehingga audit log penuh "pertanyaan tidak
+// terjawab" yang sebenarnya SUDAH dijawab benar. Karena itu pola umum seperti
+// "belum ada", "tidak ada data", "tidak menemukan", "maaf...tidak" DIHAPUS —
+// hanya frasa penolakan eksplisit yang disisakan.
+const REFUSAL_RE =
+  /belum bisa menjawab|tidak (bisa|dapat) menjawab|tidak (punya|memiliki) akses|di luar (kemampuan|akses)|bukan kemampuan saya|tidak dapat (mengakses|membantu dengan)/i;
 
 // OpenAI-compatible tool definitions for Groq
 const TOOLS: Groq.Chat.ChatCompletionTool[] = [
@@ -60,7 +72,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today/yesterday/week/month/year ('kemarin'=yesterday)",
+            description:
+              "today/yesterday/week/last_week/month/last_month/year/last_year ('kemarin'=yesterday, 'bulan lalu'=last_month)",
           },
           branchId: { type: "string", description: "ID cabang" },
         },
@@ -90,7 +103,8 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           period: {
             type: "string",
-            description: "today/yesterday/week/month ('kemarin'=yesterday)",
+            description:
+              "today/yesterday/week/last_week/month/last_month ('kemarin'=yesterday, 'bulan lalu'=last_month)",
           },
         },
       },
@@ -241,7 +255,7 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
           period: {
             type: "string",
             description:
-              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month). 'kemarin'=yesterday, 'bulan lalu'=last_month, 'minggu lalu'=last_week, 'tahun lalu'=last_year",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
         },
@@ -260,7 +274,7 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
           period: {
             type: "string",
             description:
-              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month). 'kemarin'=yesterday, 'bulan lalu'=last_month, 'minggu lalu'=last_week, 'tahun lalu'=last_year",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
         },
@@ -293,7 +307,7 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
           period: {
             type: "string",
             description:
-              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month). 'kemarin'=yesterday, 'bulan lalu'=last_month, 'minggu lalu'=last_week, 'tahun lalu'=last_year",
           },
           limit: { type: "number", description: "Jumlah meja (default 10)" },
         },
@@ -330,9 +344,183 @@ const TOOLS: Groq.Chat.ChatCompletionTool[] = [
           period: {
             type: "string",
             description:
-              "today / yesterday / week / month / year (default month). 'kemarin' = yesterday",
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month). 'kemarin'=yesterday, 'bulan lalu'=last_month, 'minggu lalu'=last_week, 'tahun lalu'=last_year",
           },
           branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_recent_transactions",
+      description:
+        "Transaksi/penjualan TERAKHIR (terbaru) beserta nomor invoice, jam, total, metode bayar, dan item utamanya. WAJIB dipakai saat user nanya 'invoice/nota terakhir', 'transaksi terakhir', 'penjualan terakhir', 'produk apa yang terakhir terjual', 'barang terakhir laku', 'omzet penjualan terakhir'.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Jumlah transaksi terbaru (default 5)",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_debt_summary",
+      description:
+        "Ringkasan HUTANG (payable — kita berhutang ke supplier/lain) dan PIUTANG (receivable — customer/lain berhutang ke kita) yang BELUM lunas: total sisa, jumlah, yang jatuh tempo, dan party teratas. WAJIB dipakai saat user nanya 'total hutang saya', 'berapa hutang', 'hutang ke supplier', 'piutang', 'tagihan belum lunas', 'siapa yang belum bayar', 'utang jatuh tempo'.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_high_stock",
+      description:
+        "Produk dengan STOK TERBANYAK (paling banyak / menumpuk / overstock). Kebalikan dari get_low_stock. Dipakai saat user nanya 'produk stok masih banyak', 'stok paling banyak', 'barang menumpuk', 'produk overstock', 'stok berlebih'.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Jumlah produk (default 10)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_business_growth",
+      description:
+        "PERTUMBUHAN bisnis: omzet, laba, dan jumlah transaksi periode ini DIBANDING periode sebelumnya yang setara, lengkap dengan persentase naik/turun. WAJIB dipakai saat user nanya 'bisnis saya tumbuh berapa persen', 'lagi naik atau turun', 'pertumbuhan omzet', 'perkembangan bisnis', 'dibanding bulan/tahun lalu gimana', 'maju atau mundur'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description:
+              "Periode SEKARANG yang dibanding ke periode sebelumnya: today / yesterday / week / month / year (default month). 'bulan ini vs bulan lalu' = month; 'tahun ini vs tahun lalu' = year",
+          },
+          branchId: { type: "string", description: "ID cabang (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_top_customers",
+      description:
+        "Pelanggan dengan BELANJA TERBANYAK dalam periode (nama, level member, jumlah transaksi, total belanja). WAJIB dipakai saat user nanya 'siapa pelanggan terbaik', 'pelanggan paling loyal', 'customer paling banyak belanja', 'pelanggan top', 'siapa yang paling sering beli'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description:
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month)",
+          },
+          limit: { type: "number", description: "Jumlah pelanggan (default 10)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_customer_insights",
+      description:
+        "Insight PELANGGAN: total pelanggan, pelanggan BARU di periode, pelanggan AKTIF (yang bertransaksi), jumlah pelanggan repeat (beli >1x), repeat-rate %, dan rata-rata belanja per pelanggan. WAJIB dipakai saat user nanya 'berapa pelanggan saya', 'pelanggan baru bulan ini', 'berapa yang balik lagi', 'retensi pelanggan', 'perkembangan pelanggan', 'rata-rata belanja customer'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description:
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_inventory_value",
+      description:
+        "NILAI INVENTARIS: total modal yang nyangkut di stok (stok×harga beli), potensi omzet bila semua terjual (stok×harga jual), potensi laba, jumlah SKU, dan total unit. WAJIB dipakai saat user nanya 'berapa nilai stok saya', 'berapa modal di gudang', 'nilai inventaris', 'aset stok', 'uang yang nyangkut di barang'.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_dead_stock",
+      description:
+        "DEAD STOCK: produk yang TIDAK PERNAH terjual SAMA SEKALI (seumur hidup, beda dari slow-moving), beserta modal yang nyangkut di tiap produk. WAJIB dipakai saat user nanya 'produk apa yang ga pernah laku', 'barang mati', 'stok mati', 'produk tidak pernah terjual', 'barang yang cuma jadi pajangan'.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Jumlah produk (default 15)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_product_profit_ranking",
+      description:
+        "Produk PALING MENGUNTUNGKAN by laba kotor dalam periode (qty terjual, omzet, laba, margin %). WAJIB dipakai saat user nanya 'produk apa yang paling cuan', 'produk paling untung', 'margin tertinggi', 'produk penyumbang laba terbesar', 'barang apa yang paling menguntungkan'. (Beda dari get_top_products yang by KUANTITAS, ini by LABA.)",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description:
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month)",
+          },
+          limit: { type: "number", description: "Jumlah produk (default 10)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_peak_hours",
+      description:
+        "JAM & HARI paling RAMAI (berdasarkan jumlah transaksi & omzet, N hari terakhir, zona Asia/Jakarta). WAJIB dipakai saat user nanya 'jam berapa toko paling ramai', 'hari apa paling ramai', 'kapan jam sibuk', 'peak hour', 'jam rame buat atur shift karyawan'.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "Analisa berapa hari ke belakang (default 30)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_branch_comparison",
+      description:
+        "Perbandingan performa antar CABANG dalam periode (omzet & jumlah transaksi per cabang, diurutkan). WAJIB dipakai saat user nanya 'cabang mana yang paling bagus', 'bandingkan cabang', 'cabang paling ramai', 'performa tiap cabang', 'outlet mana yang paling laku'.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: {
+            type: "string",
+            description:
+              "today / yesterday / week / last_week / month / last_month / year / last_year (default month)",
+          },
         },
       },
     },
@@ -403,7 +591,7 @@ export class AiAssistantService {
     const errorMessage = result.error ?? null;
     let status: "ERROR" | "UNANSWERED" | "ANSWERED";
     if (errorMessage) status = "ERROR";
-    else if (answer && UNANSWERED_RE.test(answer)) status = "UNANSWERED";
+    else if (answer && REFUSAL_RE.test(answer)) status = "UNANSWERED";
     else status = "ANSWERED";
 
     await this.repo.createConversationLog({
@@ -531,6 +719,55 @@ export class AiAssistantService {
           return await this.tools.executeGetProfitSummary(
             auth,
             input as { period?: string; branchId?: string },
+          );
+        case "get_recent_transactions":
+          return await this.tools.executeGetRecentTransactions(
+            auth,
+            input as { limit?: number; branchId?: string },
+          );
+        case "get_debt_summary":
+          return await this.tools.executeGetDebtSummary(auth);
+        case "get_high_stock":
+          return await this.tools.executeGetHighStock(
+            auth,
+            input as { limit?: number },
+          );
+        case "get_business_growth":
+          return await this.tools.executeGetBusinessGrowth(
+            auth,
+            input as { period?: string; branchId?: string },
+          );
+        case "get_top_customers":
+          return await this.tools.executeGetTopCustomers(
+            auth,
+            input as { period?: string; limit?: number },
+          );
+        case "get_customer_insights":
+          return await this.tools.executeGetCustomerInsights(
+            auth,
+            input as { period?: string },
+          );
+        case "get_inventory_value":
+          return await this.tools.executeGetInventoryValue(auth);
+        case "get_dead_stock":
+          return await this.tools.executeGetDeadStock(
+            auth,
+            input as { limit?: number },
+          );
+        case "get_product_profit_ranking":
+          return await this.tools.executeGetProductProfitRanking(
+            auth,
+            input as { period?: string; limit?: number },
+          );
+        case "get_peak_hours":
+          return await this.tools.executeGetPeakHours(
+            auth,
+            input as { days?: number },
+          );
+        case "get_branch_comparison":
+          return await this.tools.executeGetBranchComparison(
+            auth,
+            input as { period?: string },
           );
         default:
           return { error: `Tool '${name}' not found` };
@@ -730,6 +967,7 @@ ATURAN KETAT:
    (a) TIDAK ADA tool yang cocok untuk pertanyaan -> jawab "Maaf, saya belum bisa menjawab pertanyaan itu."
    (b) Tool SUDAH dipanggil tapi hasilnya KOSONG / nol / array kosong -> JANGAN bilang "tidak punya akses". Sampaikan apa adanya bahwa datanya nihil, mis. "Tidak ada produk dengan stok menipis saat ini", "Belum ada penjualan pada periode itu", "Semua meja kosong". Angka 0 / data kosong adalah jawaban yang VALID dan harus disampaikan dengan jelas, BUKAN ditolak.
 4. Bahasa Indonesia, ringkas, langsung ke jawabannya. JANGAN bertele-tele.
+4b. PENTING: hasil tool (daftar produk, tabel penjualan, dll) OTOMATIS ditampilkan ke user sebagai TABEL/KARTU visual di bawah jawabanmu. Jadi JANGAN menyalin ulang seluruh daftar/angka baris-per-baris di teks. Cukup beri 1-2 kalimat ringkasan/insight (mis. "Produk terlaris dipimpin X dengan 120 terjual. Berikut detailnya:") lalu biarkan tabel yang menampilkan rinciannya. Untuk pertanyaan angka tunggal (mis. total penjualan), tetap sebutkan angkanya di teks.
 5. Format angka uang dengan Rp (contoh: Rp 150.000)
 6. WAJIB pakai find_product_location saat user nanya LOKASI/POSISI produk ("dimana", "rak mana", "ada di mana", "letak", "cariin")
 7. WAJIB pakai lookup_rack_contents saat user nanya ISI RAK ("apa isi rak X", "produk apa di rak Y", "tampilkan rak Z")
@@ -740,11 +978,22 @@ ATURAN KETAT:
 12. Pertanyaan soal MEJA: kondisi/kosong/terisi sekarang -> get_table_status; meja paling ramai (periode) -> get_busiest_tables
 13. Pertanyaan soal TREN / hari paling ramai -> get_sales_trend; soal LABA/UNTUNG/MARGIN -> get_profit_summary
 14. Untuk semua tool periode, default "month" kalau user tidak sebut. Format uang Rp. Saat laba, sebutkan bahwa angkanya ESTIMASI (sesuai field note).
-15. PEMETAAN PERIODE waktu (parameter period) WAJIB dari kata user:
-    "hari ini"->today, "kemarin"/"hari kemarin"->yesterday, "minggu ini"/"7 hari"->week, "bulan ini"->month, "tahun ini"->year.
-    Kalau user bilang "kemarin", WAJIB panggil tool dengan period="yesterday" — JANGAN balik nanya periode.
+15. PEMETAAN PERIODE waktu (parameter period) WAJIB dari kata user — JANGAN PERNAH balik nanya periode, langsung panggil tool:
+    "hari ini"->today, "kemarin"/"hari kemarin"->yesterday, "minggu ini"/"7 hari"->week, "minggu lalu"/"pekan lalu"->last_week, "bulan ini"->month, "bulan lalu"/"bulan kemarin"->last_month, "tahun ini"->year, "tahun lalu"->last_year.
+    Kalau user bilang "kemarin", WAJIB panggil tool dengan period="yesterday". Kalau "bulan lalu", WAJIB period="last_month". JANGAN balik nanya.
 16. Untuk pertanyaan "siapa kasir yang jaga (kemarin/hari ini/...)", pakai get_cashier_performance dengan period yang sesuai, lalu sebutkan nama-nama kasir yang ada transaksinya.
 17. BAHAN BAKU vs PRODUK JADI: ada 2 jenis item (field itemType). Bahan baku (mis. beras, gula, kopi bubuk) tidak dijual langsung — terpakai lewat resep saat produk jadi (mis. Nasi Padang) terjual. get_slow_products SUDAH recipe-aware (bahan baku yg terpakai via resep tidak masuk slow-moving). Saat menjawab slow-moving, BEDAKAN dan beri label: "Produk jadi" vs "Bahan baku", dan jangan menyarankan menghentikan bahan baku yang sebenarnya terpakai di resep.
+18. Pertanyaan soal TRANSAKSI/PENJUALAN TERAKHIR ("invoice terakhir", "nomor nota terakhir", "transaksi terakhir", "penjualan terakhir", "produk apa yang terakhir terjual", "barang terakhir laku") -> WAJIB pakai get_recent_transactions. Sebutkan no invoice, jam, total, dan item utamanya.
+19. LARANGAN KERAS: kalau kamu SUDAH memanggil tool apapun, DILARANG menjawab "tidak punya akses" / "belum bisa menjawab". Tool = kamu PUNYA akses. Hasil kosong/nol tetap dilaporkan apa adanya (aturan #3b), BUKAN ditolak.
+20. Pertanyaan soal HUTANG / PIUTANG / UTANG / TAGIHAN belum lunas ("total hutang saya", "berapa hutang ke supplier", "piutang", "siapa yang belum bayar", "jatuh tempo") -> WAJIB pakai get_debt_summary. "hutang/utang saya" = payable; "piutang" = receivable. Sebutkan total sisa, jumlah, dan yang jatuh tempo.
+21. Pertanyaan soal STOK BANYAK / overstock / menumpuk ("produk stok masih banyak", "stok paling banyak", "barang menumpuk") -> WAJIB pakai get_high_stock (BUKAN get_low_stock). get_low_stock hanya untuk stok menipis/habis.
+
+PERKEMBANGAN BISNIS (owner-level — pikirkan seperti pemilik usaha):
+22. PERTUMBUHAN / naik-turun / "perkembangan bisnis" / "dibanding bulan-tahun lalu" -> get_business_growth. Sebutkan omzet & laba sekarang vs sebelumnya + % naik/turun, beri kesimpulan singkat (tumbuh sehat / melambat / turun).
+23. PELANGGAN: "pelanggan terbaik/loyal/top belanja" -> get_top_customers. "berapa pelanggan / pelanggan baru / repeat / retensi / rata-rata belanja" -> get_customer_insights.
+24. INVENTARIS: "nilai stok / modal di gudang / aset stok" -> get_inventory_value. "produk tak pernah laku / barang mati / dead stock" -> get_dead_stock (BEDA dari get_slow_products: dead = NOL penjualan seumur hidup).
+25. LABA per produk: "produk paling cuan / margin tertinggi / penyumbang laba" -> get_product_profit_ranking (by LABA, beda dari get_top_products yang by KUANTITAS). JAM/HARI ramai ("jam sibuk", "hari paling ramai", buat atur shift) -> get_peak_hours. CABANG ("cabang mana paling bagus", "bandingkan outlet") -> get_branch_comparison.
+26. Kalau pertanyaan owner luas/strategis ("gimana bisnis saya", "kasih analisa", "apa yang perlu saya perbaiki"), boleh panggil BEBERAPA tool sekaligus (mis. get_business_growth + get_top_products + get_low_stock + get_customer_insights) lalu rangkum jadi insight + rekomendasi ringkas yang actionable.
 
 CONTOH ALUR:
 - "Gimana penjualan bulan ini?" -> get_dashboard_overview(month) -> sebut omzet, jml transaksi, rata-rata, naik/turun vs bulan lalu
@@ -780,6 +1029,8 @@ Info user: ${auth.userName} (${auth.role})`;
       messages[messages.length - 1]?.content ??
       "";
     const toolsUsed: string[] = [];
+    // Data terstruktur dari tiap tool, untuk dirender jadi tabel/kartu di FE.
+    const blocks: AiChatDataBlock[] = [];
     const startedAt = Date.now();
 
     if (!apiKey) {
@@ -909,11 +1160,15 @@ Info user: ${auth.userName} (${auth.role})`;
               return {
                 tool_call_id: toolCall.id,
                 content: JSON.stringify(result),
+                tool: toolCall.function.name,
+                data: result as unknown,
               };
             } catch {
               return {
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({ error: "Gagal menjalankan tool" }),
+                tool: toolCall.function.name,
+                data: undefined as unknown,
               };
             }
           }),
@@ -924,6 +1179,14 @@ Info user: ${auth.userName} (${auth.role})`;
             tool_call_id: r.tool_call_id,
             content: r.content,
           });
+          // Simpan data tool untuk render kaya di FE — lewati hasil error.
+          const isError =
+            r.data != null &&
+            typeof r.data === "object" &&
+            "error" in (r.data as Record<string, unknown>);
+          if (r.data !== undefined && !isError) {
+            blocks.push({ tool: r.tool, data: r.data });
+          }
         }
 
         response = await callModel(chatMessages);
@@ -931,8 +1194,36 @@ Info user: ${auth.userName} (${auth.role})`;
         iterations++;
       }
 
-      const text = response.choices[0]?.message.content;
-      result = { response: text || "Maaf, tidak bisa memproses permintaan." };
+      let text = response.choices[0]?.message.content;
+
+      // KOREKSI penolakan-palsu: model (terutama gpt-oss-20b @ reasoning low)
+      // kadang menjawab "tidak punya akses" / "belum bisa menjawab" PADAHAL
+      // tool SUDAH dipanggil dan hasilnya ada di context. Itu pelanggaran
+      // aturan #3b. Kalau terdeteksi, paksa SATU giliran lagi untuk menjawab
+      // dari hasil tool. Hanya jalan di jalur gagal — happy-path tak terdampak.
+      if (text && toolsUsed.length > 0 && REFUSAL_RE.test(text)) {
+        this.logger.warn(
+          `[AI Assistant] Penolakan-palsu setelah tool (${toolsUsed.join(", ")}) — retry koreksi`,
+        );
+        chatMessages.push({ role: "assistant", content: text });
+        chatMessages.push({
+          role: "user",
+          content:
+            'Kamu SUDAH memanggil tool dan hasilnya ADA di pesan "tool" di atas. WAJIB jawab pertanyaanku memakai data tool tersebut. Kalau hasil tool kosong / nol / array kosong, sampaikan APA ADANYA (mis. "Tidak ada produk dengan stok menipis", "Rp 0", "Belum ada transaksi pada periode itu", "Semua meja kosong") — DILARANG bilang "tidak punya akses" atau "belum bisa menjawab".',
+        });
+        try {
+          const retry = await callModel(chatMessages);
+          const retryText = retry.choices[0]?.message.content;
+          if (retryText && retryText.trim()) text = retryText;
+        } catch {
+          // pertahankan jawaban awal kalau retry gagal
+        }
+      }
+
+      result = {
+        response: text || "Maaf, tidak bisa memproses permintaan.",
+        ...(blocks.length > 0 ? { blocks } : {}),
+      };
     } catch (err) {
       this.logger.error(
         `[AI Assistant] ${(err as Error).message}`,

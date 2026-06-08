@@ -11,9 +11,18 @@ export const AiChatRequestSchema = z.object({
 });
 export type AiChatRequestDto = z.infer<typeof AiChatRequestSchema>;
 
+// Blok data terstruktur hasil tool — dikirim ke frontend supaya jawaban bisa
+// dirender sebagai tabel/kartu (bukan cuma teks). `tool` = nama tool yang
+// menghasilkan, `data` = hasil mentah tool itu.
+export type AiChatDataBlock = {
+  tool: string;
+  data: unknown;
+};
+
 export type AiChatResponse = {
   response?: string;
   error?: string;
+  blocks?: AiChatDataBlock[];
 };
 
 // Normalisasi hasil voice-to-text -> kata kunci pencarian yang benar.

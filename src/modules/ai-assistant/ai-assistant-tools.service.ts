@@ -25,6 +25,17 @@ function paymentLabel(m: string): string {
   return map[m] || m;
 }
 
+// Nama hari (index = EXTRACT(DOW): 0=Minggu ... 6=Sabtu).
+const DAY_NAMES = [
+  "Minggu",
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jumat",
+  "Sabtu",
+];
+
 @Injectable()
 export class AiAssistantToolsService {
   private readonly logger = new Logger(AiAssistantToolsService.name);
@@ -522,11 +533,35 @@ export class AiAssistantToolsService {
       prevStart = new Date(now);
       prevStart.setDate(now.getDate() - 14);
       label = "7 hari terakhir";
+    } else if (period === "last_week") {
+      // Minggu lalu: [14 hari lalu, 7 hari lalu).
+      end = new Date(now);
+      end.setDate(now.getDate() - 7);
+      start = new Date(now);
+      start.setDate(now.getDate() - 14);
+      prevEnd = start;
+      prevStart = new Date(now);
+      prevStart.setDate(now.getDate() - 21);
+      label = "minggu lalu";
+    } else if (period === "last_month") {
+      // Bulan lalu: [1 bulan lalu tgl 1, bulan ini tgl 1).
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      end = new Date(now.getFullYear(), now.getMonth(), 1);
+      prevStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      prevEnd = start;
+      label = "bulan lalu";
     } else if (period === "year") {
       start = new Date(now.getFullYear(), 0, 1);
       prevStart = new Date(now.getFullYear() - 1, 0, 1);
       prevEnd = start;
       label = "tahun ini";
+    } else if (period === "last_year") {
+      // Tahun lalu: [1 Jan tahun lalu, 1 Jan tahun ini).
+      start = new Date(now.getFullYear() - 1, 0, 1);
+      end = new Date(now.getFullYear(), 0, 1);
+      prevStart = new Date(now.getFullYear() - 2, 0, 1);
+      prevEnd = start;
+      label = "tahun lalu";
     } else {
       start = new Date(now.getFullYear(), now.getMonth(), 1);
       prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -767,6 +802,277 @@ export class AiAssistantToolsService {
       marginPercent:
         revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0,
       transactions: Number(row?.txCount || 0),
+    };
+  }
+
+  // Transaksi/penjualan TERAKHIR (terbaru) — untuk "invoice terakhir",
+  // "transaksi terakhir", "produk apa yang terakhir terjual".
+  async executeGetRecentTransactions(
+    auth: AuthContext,
+    input: { limit?: number; branchId?: string },
+  ) {
+    const limit = Math.min(input.limit || 5, 20);
+    const rows = await this.repo.findRecentTransactions(
+      auth.companyId,
+      limit,
+      input.branchId,
+    );
+
+    return rows.map((t) => ({
+      invoiceNumber: t.invoiceDisplayNumber || t.invoiceNumber,
+      date: t.createdAt,
+      grandTotal: t.grandTotal,
+      paymentMethod: paymentLabel(t.paymentMethod),
+      cashier: t.user?.name || null,
+      branch: t.branch?.name || null,
+      customer: t.customer?.name || null,
+      itemCount: t.items.length,
+      items: t.items.map((i) => ({
+        name: i.productName,
+        quantity: i.quantity,
+        subtotal: i.subtotal,
+      })),
+    }));
+  }
+
+  // Ringkasan HUTANG (payable) & PIUTANG (receivable) yang belum lunas.
+  // Selalu kembalikan keduanya — AI memilih sesuai pertanyaan user.
+  async executeGetDebtSummary(auth: AuthContext) {
+    const [payable, receivable] = await Promise.all([
+      this.repo.debtSummary(auth.companyId, "PAYABLE"),
+      this.repo.debtSummary(auth.companyId, "RECEIVABLE"),
+    ]);
+    return {
+      note: "payable = HUTANG (kita berhutang ke supplier/lain). receivable = PIUTANG (customer/lain berhutang ke kita). Angka = total sisa yang BELUM lunas.",
+      payable,
+      receivable,
+    };
+  }
+
+  // Produk dengan STOK TERBANYAK (overstock / menumpuk).
+  async executeGetHighStock(auth: AuthContext, input: { limit?: number }) {
+    const limit = Math.min(input.limit || 10, 50);
+    const rows = await this.repo.findHighStock(auth.companyId, limit);
+    return rows.map((p) => ({
+      name: p.name,
+      code: p.code,
+      stock: p.stock,
+      unit: p.unit,
+      sellingPrice: p.sellingPrice,
+      category: p.category?.name || "Tanpa Kategori",
+    }));
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // BUSINESS INTELLIGENCE — perkembangan bisnis (owner-level)
+  // ───────────────────────────────────────────────────────────────────
+
+  // Pertumbuhan: omzet/laba/transaksi periode ini vs periode SEBELUMNYA.
+  async executeGetBusinessGrowth(
+    auth: AuthContext,
+    input: { period?: string; branchId?: string },
+  ) {
+    const { start, end, prevStart, prevEnd, label } = this.resolvePeriod(
+      input.period,
+    );
+    const [[cur], [prev]] = await Promise.all([
+      this.repo.profitSummaryRaw(auth.companyId, start, end, input.branchId),
+      this.repo.profitSummaryRaw(
+        auth.companyId,
+        prevStart,
+        prevEnd,
+        input.branchId,
+      ),
+    ]);
+    const curRev = cur?.revenue || 0;
+    const prevRev = prev?.revenue || 0;
+    const curProfit = curRev - (cur?.cogs || 0);
+    const prevProfit = prevRev - (prev?.cogs || 0);
+    const curTx = Number(cur?.txCount || 0);
+    const prevTx = Number(prev?.txCount || 0);
+    const pct = (c: number, p: number) =>
+      p > 0 ? Math.round(((c - p) / p) * 1000) / 10 : c > 0 ? 100 : 0;
+
+    return {
+      period: label,
+      note: "Pertumbuhan membandingkan periode ini dengan periode SEBELUMNYA yang setara. Laba ESTIMASI (COGS = harga beli produk saat ini).",
+      current: { revenue: curRev, grossProfit: curProfit, transactions: curTx },
+      previous: {
+        revenue: prevRev,
+        grossProfit: prevProfit,
+        transactions: prevTx,
+      },
+      growth: {
+        revenuePercent: pct(curRev, prevRev),
+        profitPercent: pct(curProfit, prevProfit),
+        transactionPercent: pct(curTx, prevTx),
+      },
+    };
+  }
+
+  // Pelanggan dengan belanja terbanyak dalam periode.
+  async executeGetTopCustomers(
+    auth: AuthContext,
+    input: { period?: string; limit?: number },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const limit = Math.min(input.limit || 10, 25);
+    const rows = await this.repo.topCustomersRaw(
+      auth.companyId,
+      start,
+      end,
+      limit,
+    );
+    return {
+      period: label,
+      customers: rows.map((r, i) => ({
+        rank: i + 1,
+        name: r.name,
+        memberLevel: r.memberLevel,
+        transactions: Number(r.txCount),
+        revenue: r.revenue,
+      })),
+    };
+  }
+
+  // Insight pelanggan: total, baru, aktif, repeat-rate, rata-rata belanja.
+  async executeGetCustomerInsights(
+    auth: AuthContext,
+    input: { period?: string },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const [insightRows, total, newCount] = await Promise.all([
+      this.repo.customerInsightsRaw(auth.companyId, start, end),
+      this.repo.countCustomers(auth.companyId),
+      this.repo.countCustomers(auth.companyId, start, end),
+    ]);
+    const ins = insightRows[0];
+    const active = Number(ins?.active || 0);
+    const repeat = Number(ins?.repeat || 0);
+    return {
+      period: label,
+      totalCustomers: total,
+      newCustomers: newCount,
+      activeCustomers: active,
+      repeatCustomers: repeat,
+      repeatRatePercent:
+        active > 0 ? Math.round((repeat / active) * 1000) / 10 : 0,
+      avgSpendPerCustomer: Math.round(ins?.avgSpend || 0),
+    };
+  }
+
+  // Nilai inventaris: modal (stok×beli) & potensi omzet (stok×jual).
+  async executeGetInventoryValue(auth: AuthContext) {
+    const [r] = await this.repo.inventoryValueRaw(auth.companyId);
+    const costValue = r?.costValue || 0;
+    const retailValue = r?.retailValue || 0;
+    return {
+      note: "costValue = modal yang nyangkut di stok (stok×harga beli). retailValue = potensi omzet kalau semua terjual (stok×harga jual). potentialProfit = selisihnya.",
+      costValue,
+      retailValue,
+      potentialProfit: retailValue - costValue,
+      skuCount: Number(r?.skuCount || 0),
+      totalUnits: r?.totalUnits || 0,
+    };
+  }
+
+  // Dead stock: produk yang TIDAK PERNAH terjual sama sekali (seumur hidup).
+  async executeGetDeadStock(auth: AuthContext, input: { limit?: number }) {
+    const limit = Math.min(input.limit || 15, 50);
+    const rows = await this.repo.deadStockRaw(auth.companyId, limit);
+    return rows.map((p) => ({
+      name: p.name,
+      code: p.code,
+      stock: p.stock,
+      unit: p.unit,
+      tiedCapital: Math.round(p.stock * p.purchasePrice),
+      category: p.categoryName || "Tanpa Kategori",
+    }));
+  }
+
+  // Produk paling MENGUNTUNGKAN (by laba kotor) dalam periode.
+  async executeGetProductProfitRanking(
+    auth: AuthContext,
+    input: { period?: string; limit?: number },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const limit = Math.min(input.limit || 10, 25);
+    const rows = await this.repo.productProfitRaw(
+      auth.companyId,
+      start,
+      end,
+      limit,
+    );
+    return {
+      period: label,
+      note: "Laba ESTIMASI (COGS = harga beli produk saat ini).",
+      products: rows.map((r, i) => {
+        const profit = r.revenue - r.cogs;
+        return {
+          rank: i + 1,
+          name: r.name,
+          code: r.code,
+          qtySold: r.qty,
+          revenue: r.revenue,
+          grossProfit: profit,
+          marginPercent:
+            r.revenue > 0 ? Math.round((profit / r.revenue) * 1000) / 10 : 0,
+        };
+      }),
+    };
+  }
+
+  // Jam & hari paling ramai (N hari terakhir).
+  async executeGetPeakHours(auth: AuthContext, input: { days?: number }) {
+    const days = input.days || 30;
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const [hours, daysRows] = await Promise.all([
+      this.repo.peakHoursRaw(auth.companyId, since),
+      this.repo.peakDaysRaw(auth.companyId, since),
+    ]);
+    const byHour = hours.map((h) => ({
+      hour: h.hour,
+      label: `${String(h.hour).padStart(2, "0")}:00`,
+      transactions: Number(h.txCount),
+      revenue: h.revenue,
+    }));
+    const byDay = daysRows.map((d) => ({
+      dow: d.dow,
+      day: DAY_NAMES[d.dow] || String(d.dow),
+      transactions: Number(d.txCount),
+      revenue: d.revenue,
+    }));
+    const busiestHour = byHour.reduce<(typeof byHour)[number] | null>(
+      (best, h) => (best == null || h.transactions > best.transactions ? h : best),
+      null,
+    );
+    const busiestDay = byDay.reduce<(typeof byDay)[number] | null>(
+      (best, d) => (best == null || d.transactions > best.transactions ? d : best),
+      null,
+    );
+    return { analyzedDays: days, busiestHour, busiestDay, byHour, byDay };
+  }
+
+  // Perbandingan performa antar CABANG dalam periode.
+  async executeGetBranchComparison(
+    auth: AuthContext,
+    input: { period?: string },
+  ) {
+    const { start, end, label } = this.resolvePeriod(input.period);
+    const rows = await this.repo.branchComparisonRaw(
+      auth.companyId,
+      start,
+      end,
+    );
+    return {
+      period: label,
+      branches: rows.map((r, i) => ({
+        rank: i + 1,
+        name: r.name,
+        transactions: Number(r.txCount),
+        revenue: r.revenue,
+      })),
     };
   }
 }
