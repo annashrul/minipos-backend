@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { SentryModule } from "@sentry/nestjs/setup";
 import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
@@ -84,6 +85,8 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
 
 @Module({
   imports: [
+    // Sentry — request isolation & integrasi Nest. Init-nya di src/instrument.ts.
+    SentryModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [".env"],

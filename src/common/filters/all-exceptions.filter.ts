@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from "@nestjs/common";
+import * as Sentry from "@sentry/nestjs";
 import { ZodError } from "zod";
 import type { Response } from "express";
 
@@ -39,14 +40,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const response = exception.getResponse();
       const { code, message, details } = this.mapHttpException(status, response);
+      // Lapor ke Sentry HANYA error server (5xx); 4xx (validasi/auth/not-found)
+      // adalah perilaku normal, jangan dijadikan noise.
+      if (status >= 500) Sentry.captureException(exception);
       res.status(status).json({
         error: { code, message, ...(details !== undefined ? { details } : {}) },
       } satisfies ErrorBody);
       return;
     }
 
+    // Error tak terduga (bukan HttpException/ZodError) → 500 + lapor Sentry.
     const err = exception as Error | undefined;
     this.logger.error(err?.stack ?? String(exception));
+    Sentry.captureException(exception);
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {
         code: "INTERNAL_ERROR",

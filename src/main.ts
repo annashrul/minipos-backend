@@ -1,3 +1,5 @@
+// WAJIB paling atas — inisialisasi Sentry sebelum modul/instrumentation lain.
+import "./instrument";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "@nestjs/common";
