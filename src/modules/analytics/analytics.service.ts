@@ -618,12 +618,25 @@ export class AnalyticsService {
       } else if (promo.type === "BUY_X_GET_Y") {
         const buyQty = promo.buyQty || 1;
         const getQty = promo.getQty || 1;
-        const buyItem = promo.productId
-          ? itemsByProductId.get(promo.productId)?.[0]
-          : qualifiedItems[0];
-        if (buyItem && buyItem.quantity >= buyQty) {
+        // Tentukan item pemicu promo:
+        // - Promo product-specific → hanya produk itu.
+        // - Scope kategori/global DENGAN hadiah = produk yang dibeli
+        //   (getProductId kosong) → terapkan PER-PRODUK ke setiap item yang
+        //   qualified (mis. beli 2 roti gratis 1 roti, beli 2 kue gratis 1 kue).
+        // - Scope kategori/global DENGAN hadiah produk TETAP → cukup sekali
+        //   (item qualified pertama) supaya hadiah tidak dobel & lineId gift di
+        //   frontend (`gift:promoId:giftProductId`) tidak bentrok.
+        const isSameProductGift = !promo.getProductId;
+        const buyItems = promo.productId
+          ? (itemsByProductId.get(promo.productId) ?? []).slice(0, 1)
+          : isSameProductGift
+            ? qualifiedItems
+            : qualifiedItems.slice(0, 1);
+        for (const buyItem of buyItems) {
+          if (!buyItem || buyItem.quantity < buyQty) continue;
           const multiplier = Math.floor(buyItem.quantity / buyQty);
           const freeItems = multiplier * getQty;
+          if (freeItems <= 0) continue;
           const targetProductId = promo.getProductId || buyItem.productId;
           const targetItem = itemsByProductId.get(targetProductId)?.[0];
           const giftInfo = giftProductInfoMap.get(targetProductId);
@@ -633,7 +646,6 @@ export class AnalyticsService {
             targetItem?.unitPrice ||
             giftInfo?.sellingPrice ||
             buyItem.unitPrice;
-          if (freeItems <= 0) continue;
           // BUY_X_GET_Y: hadiah ditambahkan ke cart sebagai line dengan
           // unitPrice=0 (frontend rebuild). Karena gift line gratis, NO
           // monetary discount diperlukan — discountAmount = 0. Promo info
