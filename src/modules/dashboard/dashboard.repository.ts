@@ -69,7 +69,7 @@ export class DashboardRepository {
              COALESCE(SUM("grandTotal"), 0) as total,
              COUNT(*)::bigint as count
       FROM transactions
-      WHERE "createdAt" >= $1
+      WHERE ("createdAt" AT TIME ZONE 'UTC') >= $1
         AND status = 'COMPLETED'
         ${branchCondition}
       GROUP BY ${dayExpr}
@@ -100,7 +100,7 @@ export class DashboardRepository {
              COALESCE(SUM("grandTotal"), 0) as total,
              COUNT(*)::bigint as count
       FROM transactions
-      WHERE "createdAt" >= $1
+      WHERE ("createdAt" AT TIME ZONE 'UTC') >= $1
         AND "status" = 'COMPLETED'
         ${branchCondition}
       GROUP BY EXTRACT(YEAR FROM "createdAt"), EXTRACT(MONTH FROM "createdAt")
@@ -134,8 +134,8 @@ export class DashboardRepository {
         COUNT(*)::int as count
       FROM transactions t
       JOIN users u ON u.id = t."userId"
-      WHERE t."createdAt" >= $1
-        AND t."createdAt" < $2
+      WHERE (t."createdAt" AT TIME ZONE 'UTC') >= $1
+        AND (t."createdAt" AT TIME ZONE 'UTC') < $2
         AND t.status = 'COMPLETED'
         ${branchCondition}
       GROUP BY u.id, u.name
@@ -172,8 +172,8 @@ export class DashboardRepository {
       JOIN transactions t ON t.id = ti."transactionId"
       JOIN products p ON p.id = ti."productId"
       LEFT JOIN categories c ON c.id = p."categoryId"
-      WHERE t."createdAt" >= $1
-        AND t."createdAt" < $2
+      WHERE (t."createdAt" AT TIME ZONE 'UTC') >= $1
+        AND (t."createdAt" AT TIME ZONE 'UTC') < $2
         AND t.status = 'COMPLETED'
         ${branchCondition}
       GROUP BY c.name
@@ -206,8 +206,14 @@ export class DashboardRepository {
              COALESCE(SUM("grandTotal"), 0) as total,
              COUNT(*)::bigint as count
       FROM transactions
-      WHERE "createdAt" >= $1
-        AND "createdAt" < $2
+      -- Bandingkan sebagai instant ABSOLUT (timestamptz) supaya hasil TIDAK
+      -- bergantung timezone session DB. Kolom createdAt = timestamp without
+      -- time zone (UTC naif); AT TIME ZONE 'UTC' menjadikannya timestamptz agar
+      -- setara dgn parameter Date. Tanpa ini, di session non-UTC (mis. pooler
+      -- Supabase = Asia/Jakarta) perbandingan bergeser +7 jam sehingga
+      -- penjualan 00:00-07:00 WIB hilang dari rentang "hari ini".
+      WHERE ("createdAt" AT TIME ZONE 'UTC') >= $1
+        AND ("createdAt" AT TIME ZONE 'UTC') < $2
         AND "status" = 'COMPLETED'
         ${branchCondition}
       GROUP BY EXTRACT(HOUR FROM (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '${safeTz}'))
@@ -245,7 +251,7 @@ export class DashboardRepository {
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti."transactionId"
       JOIN products p ON p.id = ti."productId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1 AND t."createdAt" < $2
+      WHERE t.status = 'COMPLETED' AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') < $2
         ${profitBranchCond}
       `,
       ...profitParams,

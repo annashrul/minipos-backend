@@ -257,7 +257,7 @@ export class AiAssistantRepository {
       JOIN users u ON u.id = t."userId"
       JOIN recipes r ON r."productId" = ti."productId"
       JOIN recipe_ingredients ri ON ri."recipeId" = r.id
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+      WHERE t.status = 'COMPLETED' AND (t."createdAt" AT TIME ZONE 'UTC') >= $1
         AND ($2::text IS NULL OR u."companyId" = $2)
       `,
       since,
@@ -461,7 +461,7 @@ export class AiAssistantRepository {
       JOIN users u ON u.id = t."userId"
       JOIN products p ON p.id = ti."productId"
       LEFT JOIN categories c ON c.id = p."categoryId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+      WHERE t.status = 'COMPLETED' AND (t."createdAt" AT TIME ZONE 'UTC') >= $1
         AND ($2::text IS NULL OR u."companyId" = $2)
       GROUP BY c.name
       ORDER BY revenue DESC
@@ -642,7 +642,7 @@ export class AiAssistantRepository {
       JOIN users u ON u.id = t."userId"
       LEFT JOIN branches b ON b.id = rt."branchId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR u."companyId" = $3)
       GROUP BY rt.number, rt.name, rt.section, b.name
       ORDER BY revenue DESC
@@ -673,7 +673,7 @@ export class AiAssistantRepository {
       FROM transactions t
       JOIN users u ON u.id = t."userId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR u."companyId" = $3)
         AND ($4::text IS NULL OR t."branchId" = $4)
       GROUP BY 1
@@ -705,7 +705,7 @@ export class AiAssistantRepository {
       JOIN products p ON p.id = ti."productId"
       JOIN users u ON u.id = t."userId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR u."companyId" = $3)
         AND ($4::text IS NULL OR t."branchId" = $4)
       `,
@@ -832,7 +832,7 @@ export class AiAssistantRepository {
       FROM transactions t
       JOIN customers c ON c.id = t."customerId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR c."companyId" = $3)
       GROUP BY c.name, c."memberLevel"
       ORDER BY revenue DESC
@@ -859,7 +859,7 @@ export class AiAssistantRepository {
         FROM transactions t
         JOIN customers cu ON cu.id = t."customerId"
         WHERE t.status = 'COMPLETED' AND t."customerId" IS NOT NULL
-          AND t."createdAt" >= $1 AND t."createdAt" <= $2
+          AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
           AND ($3::text IS NULL OR cu."companyId" = $3)
         GROUP BY t."customerId"
       )
@@ -977,7 +977,7 @@ export class AiAssistantRepository {
       JOIN products p ON p.id = ti."productId"
       JOIN users u ON u.id = t."userId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR u."companyId" = $3)
       GROUP BY p.name, p.code
       ORDER BY (COALESCE(SUM(ti.subtotal), 0) - COALESCE(SUM(COALESCE(ti."baseQty", ti.quantity * ti."conversionQty") * p."purchasePrice"), 0)) DESC
@@ -1003,7 +1003,7 @@ export class AiAssistantRepository {
              COALESCE(SUM(t."grandTotal"), 0)::float as revenue
       FROM transactions t
       JOIN users u ON u.id = t."userId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+      WHERE t.status = 'COMPLETED' AND (t."createdAt" AT TIME ZONE 'UTC') >= $1
         AND ($2::text IS NULL OR u."companyId" = $2)
       GROUP BY 1 ORDER BY 1
       `,
@@ -1023,7 +1023,7 @@ export class AiAssistantRepository {
              COALESCE(SUM(t."grandTotal"), 0)::float as revenue
       FROM transactions t
       JOIN users u ON u.id = t."userId"
-      WHERE t.status = 'COMPLETED' AND t."createdAt" >= $1
+      WHERE t.status = 'COMPLETED' AND (t."createdAt" AT TIME ZONE 'UTC') >= $1
         AND ($2::text IS NULL OR u."companyId" = $2)
       GROUP BY 1 ORDER BY 1
       `,
@@ -1050,7 +1050,7 @@ export class AiAssistantRepository {
       JOIN branches b ON b.id = t."branchId"
       JOIN users u ON u.id = t."userId"
       WHERE t.status = 'COMPLETED'
-        AND t."createdAt" >= $1 AND t."createdAt" <= $2
+        AND (t."createdAt" AT TIME ZONE 'UTC') >= $1 AND (t."createdAt" AT TIME ZONE 'UTC') <= $2
         AND ($3::text IS NULL OR u."companyId" = $3)
       GROUP BY b.name
       ORDER BY revenue DESC
