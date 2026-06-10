@@ -49,10 +49,14 @@ export class TransactionsService implements OnModuleInit {
 
   // ─── List / Detail / Stats ────────────────────────────────────────
 
-  async list(
+  // Bangun where + orderBy dari filter — dipakai bersama oleh list & export.
+  private buildWhereOrderBy(
     companyId: string,
     query: ListTransactionsQueryDto,
-  ): Promise<TransactionListResponse> {
+  ): {
+    where: Prisma.TransactionWhereInput;
+    orderBy: Prisma.TransactionOrderByWithRelationInput;
+  } {
     const {
       search,
       status,
@@ -62,8 +66,6 @@ export class TransactionsService implements OnModuleInit {
       customerId,
       from,
       to,
-      page,
-      perPage,
       sortBy,
       sortDir,
     } = query;
@@ -106,6 +108,15 @@ export class TransactionsService implements OnModuleInit {
           break;
       }
     }
+    return { where, orderBy };
+  }
+
+  async list(
+    companyId: string,
+    query: ListTransactionsQueryDto,
+  ): Promise<TransactionListResponse> {
+    const { page, perPage } = query;
+    const { where, orderBy } = this.buildWhereOrderBy(companyId, query);
 
     const [rows, total] = await Promise.all([
       this.repo.findMany(where, orderBy, (page - 1) * perPage, perPage),
@@ -113,6 +124,17 @@ export class TransactionsService implements OnModuleInit {
     ]);
 
     return paginate(rows.map(toTransactionResponse), total, page, perPage);
+  }
+
+  // Export: SATU query mengembalikan semua transaksi yang cocok filter BESERTA
+  // item-nya (tanpa paginasi & tanpa N+1). Dibatasi 10.000 baris sebagai pengaman.
+  async exportAll(
+    companyId: string,
+    query: ListTransactionsQueryDto,
+  ): Promise<TransactionDetailResponse[]> {
+    const { where, orderBy } = this.buildWhereOrderBy(companyId, query);
+    const rows = await this.repo.findManyDetailed(where, orderBy, 10000);
+    return rows.map(toTransactionDetailResponse);
   }
 
   async findById(

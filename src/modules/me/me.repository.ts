@@ -86,6 +86,10 @@ export class MeRepository {
         plan: true,
         planExpiresAt: true,
         businessUnit: true,
+        address: true,
+        phone: true,
+        email: true,
+        logo: true,
       },
     });
   }

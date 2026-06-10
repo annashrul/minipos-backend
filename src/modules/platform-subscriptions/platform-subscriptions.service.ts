@@ -15,6 +15,7 @@ import type {
   PlatformCompanyResponse,
   PlatformSubscriptionResponse,
   PlatformSubscriptionStatsResponse,
+  UpdatePlatformCompanyDto,
 } from "./dto/platform-subscriptions.dto";
 import {
   PlatformSubscriptionsRepository,
@@ -314,6 +315,142 @@ export class PlatformSubscriptionsService {
     const companies = await this.repo.findCompanies(where);
     return companies.map(toCompanyResponse);
   }
+
+  // Update info tenant (nama, mode bisnis, telp, alamat) & status aktif.
+  // Saat isActive di-toggle, status semua user tenant ikut disinkronkan supaya
+  // login terblokir/terbuka.
+  async updateCompany(
+    id: string,
+    dto: UpdatePlatformCompanyDto,
+  ): Promise<{ success: true }> {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException("Tenant tidak ditemukan");
+
+    const data: Prisma.CompanyUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.businessUnit !== undefined) data.businessUnit = dto.businessUnit;
+    if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.address !== undefined) data.address = dto.address;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.company.update({ where: { id }, data });
+      if (dto.isActive !== undefined) {
+        await tx.user.updateMany({
+          where: { companyId: id },
+          data: { isActive: dto.isActive },
+        });
+      }
+    });
+    return { success: true };
+  }
+
+  // HARD DELETE tenant — hapus company + SELURUH datanya secara permanen.
+  // Rencana hapus dibangun runtime dari graf FK (information_schema) supaya
+  // otomatis mengikuti perubahan skema. FK enforcement dimatikan via
+  // `session_replication_role=replica` dalam transaksi, jadi hapus aman tanpa
+  // mempersoalkan urutan FK; tiap tabel difilter ke company (langsung via
+  // companyId, atau via subquery ke parent yang scoped).
+  async hardDeleteCompany(id: string): Promise<{ success: true }> {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException("Tenant tidak ditemukan");
+
+    const baseRows = await this.prisma.$queryRawUnsafe<{ t: string }[]>(
+      `SELECT table_name AS t FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`,
+    );
+    const baseTables = new Set(baseRows.map((r) => r.t));
+    const directRows = await this.prisma.$queryRawUnsafe<{ t: string }[]>(
+      `SELECT table_name AS t FROM information_schema.columns
+       WHERE column_name = 'companyId' AND table_schema = 'public'`,
+    );
+    const direct = new Set(
+      directRows.map((r) => r.t).filter((t) => baseTables.has(t)),
+    );
+    const fkRows = await this.prisma.$queryRawUnsafe<
+      { child: string; fkcol: string; parent: string }[]
+    >(
+      `SELECT tc.table_name AS child, kcu.column_name AS fkcol, ccu.table_name AS parent
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+       JOIN information_schema.constraint_column_usage ccu
+         ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+       WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`,
+    );
+    const edges = new Map<string, { fkcol: string; parent: string }[]>();
+    for (const f of fkRows) {
+      if (f.child === f.parent) continue;
+      if (!baseTables.has(f.child) || !baseTables.has(f.parent)) continue;
+      const arr = edges.get(f.child) ?? [];
+      arr.push({ fkcol: f.fkcol, parent: f.parent });
+      edges.set(f.child, arr);
+    }
+
+    // scoped = direct + tabel yang transitif terhubung ke company.
+    const scoped = new Set(direct);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [child, es] of edges) {
+        if (scoped.has(child)) continue;
+        if (es.some((e) => scoped.has(e.parent))) {
+          scoped.add(child);
+          changed = true;
+        }
+      }
+    }
+
+    const buildWhere = (t: string, seen: Set<string>): string | null => {
+      if (direct.has(t)) return `"companyId" = $1`;
+      for (const e of edges.get(t) ?? []) {
+        if (!scoped.has(e.parent) || seen.has(e.parent)) continue;
+        const pw = buildWhere(e.parent, new Set([...seen, t]));
+        if (pw) {
+          return `"${e.fkcol}" IN (SELECT "id" FROM "${e.parent}" WHERE ${pw})`;
+        }
+      }
+      return null;
+    };
+
+    // Urutan: anak sebelum induk (post-order pada graf parent).
+    const order: string[] = [];
+    const visited = new Set<string>();
+    const visit = (t: string) => {
+      if (visited.has(t)) return;
+      visited.add(t);
+      for (const [c, es] of edges) {
+        if (scoped.has(c) && es.some((e) => e.parent === t)) visit(c);
+      }
+      order.push(t);
+    };
+    for (const t of scoped) visit(t);
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SET LOCAL session_replication_role = 'replica'`,
+        );
+        for (const t of order) {
+          const w = buildWhere(t, new Set());
+          if (!w) continue;
+          await tx.$executeRawUnsafe(`DELETE FROM "${t}" WHERE ${w}`, id);
+        }
+        await tx.$executeRawUnsafe(
+          `DELETE FROM "companies" WHERE "id" = $1`,
+          id,
+        );
+      },
+      { timeout: 120000 },
+    );
+    return { success: true };
+  }
 }
 
 function toPlatformSubscription(
@@ -344,6 +481,9 @@ function toCompanyResponse(c: RawPlatformCompany): PlatformCompanyResponse {
     name: c.name,
     slug: c.slug,
     email: c.email,
+    phone: c.phone,
+    address: c.address,
+    businessUnit: c.businessUnit,
     plan: c.plan,
     planExpiresAt: c.planExpiresAt ? c.planExpiresAt.toISOString() : null,
     isActive: c.isActive,

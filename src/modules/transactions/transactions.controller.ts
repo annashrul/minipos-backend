@@ -63,6 +63,19 @@ export class TransactionsController {
     return { data };
   }
 
+  @Get("export")
+  @RequireAccess("transactions", "view")
+  @ApiOperation({ summary: "Export transactions with items (single response)" })
+  @ApiZodQuery(ListTransactionsQuerySchema)
+  async exportAll(
+    @CurrentCompany() companyId: string,
+    @Query(new ZodValidationPipe(ListTransactionsQuerySchema))
+    query: ListTransactionsQueryDto,
+  ) {
+    const data = await this.transactions.exportAll(companyId, query);
+    return { data };
+  }
+
   @Get(":id")
   @RequireAccess("transactions", "view")
   @ApiOperation({ summary: "Get transaction by ID" })

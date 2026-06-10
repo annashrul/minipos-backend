@@ -109,6 +109,21 @@ export class TransactionsRepository {
     return this.prisma.transaction.count({ where });
   }
 
+  // Export: ambil transaksi BESERTA item & payment dalam satu query (tanpa
+  // paginasi). `take` membatasi jumlah baris sebagai pengaman.
+  findManyDetailed(
+    where: Prisma.TransactionWhereInput,
+    orderBy: Prisma.TransactionOrderByWithRelationInput,
+    take: number,
+  ) {
+    return this.prisma.transaction.findMany({
+      where,
+      select: TX_DETAIL_SELECT,
+      orderBy,
+      take,
+    });
+  }
+
   // ── Find by id ──────────────────────────────────────────────────
 
   findById(companyId: string, id: string) {

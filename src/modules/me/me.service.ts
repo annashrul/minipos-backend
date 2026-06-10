@@ -129,6 +129,10 @@ export class MeService {
     plan: string;
     planExpiresAt: string | null;
     businessUnit: string;
+    address: string | null;
+    phone: string | null;
+    email: string | null;
+    logo: string | null;
   }> {
     const company = await this.repo.findCompanyById(companyId);
     return {
@@ -138,6 +142,10 @@ export class MeService {
       plan: company?.plan ?? "FREE",
       planExpiresAt: company?.planExpiresAt?.toISOString() ?? null,
       businessUnit: company?.businessUnit ?? "RETAIL",
+      address: company?.address ?? null,
+      phone: company?.phone ?? null,
+      email: company?.email ?? null,
+      logo: company?.logo ?? null,
     };
   }
 

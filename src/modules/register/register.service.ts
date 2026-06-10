@@ -44,7 +44,12 @@ export class RegisterService {
 
   async registerCompany(
     dto: RegisterCompanyDto,
+    opts?: { autoActivate?: boolean },
   ): Promise<RegisterCompanyResponse> {
+    // autoActivate = tenant dibuat oleh PLATFORM OWNER (jalur internal, bukan
+    // self-register publik). User admin langsung phoneVerified=true & TIDAK
+    // kirim OTP — tenant aktif & bisa login segera.
+    const autoActivate = opts?.autoActivate === true;
     const email = dto.email.trim().toLowerCase();
     const phone = normalizePhone(dto.phone);
 
@@ -54,7 +59,9 @@ export class RegisterService {
       where: { email },
     });
     if (existingByEmail) {
-      if (!existingByEmail.phoneVerified) {
+      // Jalur publik: user belum verified → kirim ulang OTP. Jalur platform
+      // (autoActivate) selalu tolak duplikat — admin buat tenant baru.
+      if (!existingByEmail.phoneVerified && !autoActivate) {
         await this.sendNewOtp(phone);
         return { status: "needs_verification", phone };
       }
@@ -65,7 +72,7 @@ export class RegisterService {
       where: { phone },
     });
     if (existingByPhone) {
-      if (!existingByPhone.phoneVerified) {
+      if (!existingByPhone.phoneVerified && !autoActivate) {
         await this.sendNewOtp(phone);
         return { status: "needs_verification", phone };
       }
@@ -113,7 +120,7 @@ export class RegisterService {
           companyId: company.id,
           branchId: branch.id,
           emailVerified: true,
-          phoneVerified: false,
+          phoneVerified: autoActivate,
         },
       });
 
@@ -194,7 +201,12 @@ export class RegisterService {
       });
     }
 
-    // Kirim OTP setelah company ter-create supaya user bisa lanjut verifikasi.
+    // Jalur platform: tenant langsung aktif, tanpa OTP.
+    if (autoActivate) {
+      return { status: "created" };
+    }
+
+    // Jalur publik: kirim OTP supaya user lanjut verifikasi.
     await this.sendNewOtp(phone);
 
     return { status: "needs_verification", phone };

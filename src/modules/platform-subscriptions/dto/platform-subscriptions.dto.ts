@@ -52,6 +52,18 @@ export type ListPlatformCompaniesQueryDto = z.infer<
   typeof ListPlatformCompaniesQuerySchema
 >;
 
+// Update info tenant (platform owner). Semua field opsional (partial update).
+export const UpdatePlatformCompanySchema = z.object({
+  name: z.string().min(1, "Nama perusahaan wajib diisi").optional(),
+  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"]).optional(),
+  phone: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdatePlatformCompanyDto = z.infer<
+  typeof UpdatePlatformCompanySchema
+>;
+
 export type PlatformSubscriptionResponse = SubscriptionResponse & {
   companyName: string;
   companySlug: string;
@@ -64,6 +76,9 @@ export type PlatformCompanyResponse = {
   name: string;
   slug: string;
   email: string | null;
+  phone: string | null;
+  address: string | null;
+  businessUnit: string;
   plan: string;
   planExpiresAt: string | null;
   isActive: boolean;

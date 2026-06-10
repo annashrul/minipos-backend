@@ -248,15 +248,20 @@ export class PlansService {
   }
 }
 
+// Default saat plan belum punya baris untuk (menu/aksi) = `true`, SELARAS
+// dengan gate (`PlanProvider.canAction`/`canMenu`) yang juga allow-by-default.
+// Sebelumnya default `false` di sini bikin matrix plan-management menampilkan
+// aksi tanpa baris sebagai "OFF" padahal gate mengizinkannya — mismatch yang
+// bikin admin kira fitur terblokir padahal tidak (mis. kasus save_draft).
 function byPlanFromMap(map: Map<string, boolean> | undefined): {
   FREE: boolean;
   PRO: boolean;
   ENTERPRISE: boolean;
 } {
   return {
-    FREE: map?.get("FREE") ?? false,
-    PRO: map?.get("PRO") ?? false,
-    ENTERPRISE: map?.get("ENTERPRISE") ?? false,
+    FREE: map?.get("FREE") ?? true,
+    PRO: map?.get("PRO") ?? true,
+    ENTERPRISE: map?.get("ENTERPRISE") ?? true,
   };
 }
 
