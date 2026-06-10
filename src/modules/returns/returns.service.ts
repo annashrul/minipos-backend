@@ -412,16 +412,21 @@ export class ReturnsService {
     query: SearchExchangeProductsQueryDto,
   ): Promise<SearchExchangeProductsResponse> {
     const q = query.q.trim();
-    if (q.length < 2) return { products: [] };
+    // 1 karakter di-skip (noise). Query kosong diizinkan → daftar produk default.
+    if (q.length === 1) return { products: [] };
 
     const where: Prisma.ProductWhereInput = {
       companyId,
       isActive: true,
-      OR: [
-        { name: { contains: q, mode: "insensitive" } },
-        { code: { contains: q, mode: "insensitive" } },
-        { barcode: { contains: q, mode: "insensitive" } },
-      ],
+      ...(q.length >= 2
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { code: { contains: q, mode: "insensitive" } },
+              { barcode: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
     };
 
     const products = await this.repo.searchProducts(where, 20);

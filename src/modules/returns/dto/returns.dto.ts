@@ -107,7 +107,9 @@ export type SearchReturnTransactionResponse = {
 };
 
 export const SearchExchangeProductsQuerySchema = z.object({
-  q: z.string().min(1, "Query wajib diisi"),
+  // Boleh kosong → kembalikan daftar produk default (tampil langsung saat
+  // dropdown dibuka, tanpa harus mengetik dulu).
+  q: z.string().optional().default(""),
   branchId: z.string().optional(),
 });
 export type SearchExchangeProductsQueryDto = z.infer<
