@@ -263,7 +263,11 @@ export class AccountingReportsRepository {
   ): Promise<RawTrialBalanceRow[]> {
     const upTo = asOfDate ? endOfDay(asOfDate) : new Date("2099-12-31");
     const tbBranch = branchSQL(branchId, "je", 2);
-    const acctBranchIdx = 2 + tbBranch.params.length + 1;
+    // Indeks param untuk kondisi cabang level-akun = tepat setelah param tbBranch.
+    // (Sebelumnya ada "+ 1" berlebih → $-nya bentrok dgn companyId, sehingga saat
+    //  cabang dipilih hanya akun ber-branchId NULL yang muncul & saldo tak berubah
+    //  oleh asOfDate.)
+    const acctBranchIdx = 2 + tbBranch.params.length;
     const acctBranchCondition = branchId
       ? `AND (a."branchId" = $${acctBranchIdx} OR a."branchId" IS NULL)`
       : "";
@@ -280,8 +284,8 @@ export class AccountingReportsRepository {
         ac.name AS "categoryName",
         ac."normalSide",
         a."openingBalance"::float AS "openingBalance",
-        COALESCE(SUM(jel.debit), 0)::float AS "totalDebit",
-        COALESCE(SUM(jel.credit), 0)::float AS "totalCredit"
+        COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0)::float AS "totalDebit",
+        COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0)::float AS "totalCredit"
       FROM accounts a
       JOIN account_categories ac ON ac.id = a."categoryId"
       LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
@@ -323,8 +327,8 @@ export class AccountingReportsRepository {
         a.name,
         ac.type,
         CASE
-          WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0))
-          WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0))
+          WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0))
+          WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0))
         END::float AS amount
       FROM accounts a
       JOIN account_categories ac ON ac.id = a."categoryId"
@@ -368,8 +372,8 @@ export class AccountingReportsRepository {
         ac.name AS "categoryName",
         ac."normalSide",
         a."openingBalance"::float AS "openingBalance",
-        COALESCE(SUM(jel.debit), 0)::float AS "totalDebit",
-        COALESCE(SUM(jel.credit), 0)::float AS "totalCredit"
+        COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0)::float AS "totalDebit",
+        COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0)::float AS "totalCredit"
       FROM accounts a
       JOIN account_categories ac ON ac.id = a."categoryId"
       LEFT JOIN journal_entry_lines jel ON jel."accountId" = a.id
@@ -965,27 +969,43 @@ export class AccountingReportsRepository {
     return this.prisma.$queryRawUnsafe<RawAgingDetailRow[]>(
       `
       SELECT
-        d.id, d."partyName" AS party_name, d."partyType" AS party_type,
-        d."totalAmount"::float AS total_amount, d."paidAmount"::float AS paid_amount,
-        d."remainingAmount"::float AS remaining_amount,
-        d."dueDate"::text AS due_date, d."createdAt"::text AS created_at,
-        COALESCE(d."referenceType", '') AS reference_type,
-        COALESCE(d.description, '') AS description,
+        id, party_name, party_type, total_amount, paid_amount, remaining_amount,
+        due_date, created_at, reference_type, description,
         CASE
-          WHEN d."dueDate" IS NULL THEN 'NO_DUE_DATE'
-          WHEN d."dueDate" >= ${asOfPlaceholder}::date THEN 'CURRENT'
-          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '30 days' THEN '1_30'
-          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '60 days' THEN '31_60'
-          WHEN d."dueDate" >= ${asOfPlaceholder}::date - INTERVAL '90 days' THEN '61_90'
+          WHEN eff_due IS NULL THEN 'NO_DUE_DATE'
+          WHEN eff_due >= ${asOfPlaceholder}::date THEN 'CURRENT'
+          WHEN eff_due >= ${asOfPlaceholder}::date - INTERVAL '30 days' THEN '1_30'
+          WHEN eff_due >= ${asOfPlaceholder}::date - INTERVAL '60 days' THEN '31_60'
+          WHEN eff_due >= ${asOfPlaceholder}::date - INTERVAL '90 days' THEN '61_90'
           ELSE 'OVER_90'
         END AS aging_bucket,
-        GREATEST(0, EXTRACT(DAY FROM ${asOfPlaceholder}::date - d."dueDate"))::int AS days_past_due
-      FROM debts d
-      WHERE d.type = ${typePlaceholder}::"DebtType"
-        AND d.status IN ('UNPAID', 'PARTIAL')
-        AND d."companyId" = ${companyPlaceholder}
-        ${branch.condition}
-      ORDER BY d."dueDate" ASC NULLS LAST
+        GREATEST(0, EXTRACT(DAY FROM ${asOfPlaceholder}::date - eff_due))::int AS days_past_due
+      FROM (
+        SELECT
+          d.id, d."partyName" AS party_name, d."partyType" AS party_type,
+          d."totalAmount"::float AS total_amount, d."paidAmount"::float AS paid_amount,
+          d."remainingAmount"::float AS remaining_amount,
+          -- Jatuh tempo EFEKTIF untuk aging: untuk debt cicilan, pakai cicilan
+          -- yang BELUM lunas paling awal; jika tak punya cicilan → dueDate debt.
+          -- Jadi telat cicilan ke-1 langsung tercermin overdue (bukan menunggu
+          -- jatuh tempo cicilan terakhir).
+          COALESCE(ed.next_unpaid, d."dueDate") AS eff_due,
+          COALESCE(ed.next_unpaid, d."dueDate")::text AS due_date,
+          d."createdAt"::text AS created_at,
+          COALESCE(d."referenceType", '') AS reference_type,
+          COALESCE(d.description, '') AS description
+        FROM debts d
+        LEFT JOIN LATERAL (
+          SELECT MIN(i."dueDate") AS next_unpaid
+          FROM installments i
+          WHERE i."debtId" = d.id AND i.status <> 'PAID'
+        ) ed ON TRUE
+        WHERE d.type = ${typePlaceholder}::"DebtType"
+          AND d.status IN ('UNPAID', 'PARTIAL')
+          AND d."companyId" = ${companyPlaceholder}
+          ${branch.condition}
+      ) sub
+      ORDER BY eff_due ASC NULLS LAST
       `,
       ...params,
     );
@@ -1175,8 +1195,8 @@ export class AccountingReportsRepository {
       `
       SELECT a.id AS account_id, a.code AS account_code, a.name AS account_name, ac.type AS cat_type,
         CASE
-          WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0))::float
-          WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0))::float
+          WHEN ac.type = 'REVENUE' THEN (COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0))::float
+          WHEN ac.type = 'EXPENSE' THEN (COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0))::float
         END AS amount
       FROM accounts a
       JOIN account_categories ac ON ac.id = a."categoryId"
@@ -1184,7 +1204,7 @@ export class AccountingReportsRepository {
       LEFT JOIN journal_entries je ON je.id = jel."journalId" AND je.status = 'POSTED' AND je.date >= $1 AND je.date <= $2
       WHERE ac.type IN ('REVENUE', 'EXPENSE') AND a."isActive" = true AND ac."companyId" = $3
       GROUP BY a.id, a.code, a.name, ac.type
-      HAVING CASE WHEN ac.type = 'REVENUE' THEN COALESCE(SUM(jel.credit), 0) - COALESCE(SUM(jel.debit), 0) ELSE COALESCE(SUM(jel.debit), 0) - COALESCE(SUM(jel.credit), 0) END > 0
+      HAVING CASE WHEN ac.type = 'REVENUE' THEN COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0) ELSE COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.debit ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN je.id IS NOT NULL THEN jel.credit ELSE 0 END), 0) END > 0
       `,
       toDate(dateFrom),
       endOfDay(dateTo),
