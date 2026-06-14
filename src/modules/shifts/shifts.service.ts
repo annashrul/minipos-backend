@@ -11,8 +11,10 @@ import type {
   CloseShiftDto,
   ListShiftsQueryDto,
   OpenShiftDto,
+  OpenShiftResponse,
   ShiftDetailResponse,
   ShiftResponse,
+  ShiftScheduleNotice,
 } from "./dto/shifts.dto";
 import type { PaginatedResponse } from "@/common/types/response";
 import { paginate } from "@/common/utils/pagination";
@@ -22,6 +24,7 @@ import {
   type RawShiftDetail,
 } from "./shifts.repository";
 import { RealtimeService, EVENTS } from "@/modules/realtime/realtime.service";
+import { dateStringInTimeZone, zonedDateToUtc } from "@/common/utils/timezone";
 
 @Injectable()
 export class ShiftsService {
@@ -101,7 +104,7 @@ export class ShiftsService {
     companyId: string,
     userId: string,
     dto: OpenShiftDto,
-  ): Promise<ShiftResponse> {
+  ): Promise<OpenShiftResponse> {
     if (dto.branchId) await this.assertBranch(companyId, dto.branchId);
 
     const existing = await this.repo.findOne({ userId, isOpen: true });
@@ -122,7 +125,92 @@ export class ShiftsService {
       { shiftId: created.id, userId: created.userId },
       created.branchId ?? undefined,
     );
-    return toShiftResponse(created);
+
+    // Kesesuaian dengan jadwal karyawan (non-blocking — gagal cek tidak
+    // membatalkan buka kasir). Auto-confirm jadwal SCHEDULED → CONFIRMED.
+    let scheduleNotice: ShiftScheduleNotice | null = null;
+    try {
+      scheduleNotice = await this.buildScheduleNotice(userId, created.openedAt);
+    } catch {
+      scheduleNotice = null;
+    }
+
+    return { ...toShiftResponse(created), scheduleNotice };
+  }
+
+  private async buildScheduleNotice(
+    userId: string,
+    openedAt: Date,
+  ): Promise<ShiftScheduleNotice | null> {
+    const dateStr = dateStringInTimeZone(openedAt); // "YYYY-MM-DD" (WIB)
+    // Samakan dgn cara jadwal disimpan (parseLocalDate → noon-UTC) agar match
+    // persis di kolom @db.Date.
+    const dbDate = new Date(`${dateStr}T12:00:00.000Z`);
+    const sched = await this.repo.findScheduleForUserOnDate(userId, dbDate);
+
+    if (!sched) {
+      return {
+        level: "unscheduled",
+        scheduled: false,
+        message: "Anda tidak terjadwal bekerja hari ini.",
+        shiftLabel: null,
+        shiftStart: null,
+        shiftEnd: null,
+        lateMinutes: 0,
+      };
+    }
+
+    const base = {
+      shiftLabel: sched.shiftLabel,
+      shiftStart: sched.shiftStart,
+      shiftEnd: sched.shiftEnd,
+    };
+
+    if (sched.status === "LEAVE" || sched.status === "ABSENT") {
+      const label = sched.status === "LEAVE" ? "Cuti" : "Tidak Masuk";
+      return {
+        level: "off",
+        scheduled: false,
+        message: `Jadwal Anda hari ini berstatus ${label}.`,
+        ...base,
+        lateMinutes: 0,
+      };
+    }
+
+    // SCHEDULED / CONFIRMED → auto-confirm bila masih SCHEDULED.
+    if (sched.status === "SCHEDULED") {
+      await this.repo.confirmSchedule(sched.id);
+    }
+
+    // Hitung keterlambatan dari jam mulai (WIB).
+    let lateMinutes = 0;
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const [hh, mm] = sched.shiftStart.split(":").map(Number);
+    if ([y, m, d, hh, mm].every((n) => Number.isFinite(n))) {
+      const start = zonedDateToUtc(y!, m!, d!, hh!, mm!);
+      lateMinutes = Math.max(
+        0,
+        Math.round((openedAt.getTime() - start.getTime()) / 60_000),
+      );
+    }
+
+    if (lateMinutes > 0) {
+      return {
+        level: "late",
+        scheduled: true,
+        message: `Terlambat ${lateMinutes} menit dari jadwal (mulai ${sched.shiftStart}).`,
+        ...base,
+        lateMinutes,
+      };
+    }
+
+    return {
+      level: "on-time",
+      scheduled: true,
+      message: `Sesuai jadwal (${sched.shiftStart}–${sched.shiftEnd}).`,
+      ...base,
+      lateMinutes: 0,
+    };
   }
 
   async close(

@@ -56,7 +56,7 @@ function getTimeZoneOffsetMs(date: Date, timeZone = APP_TIME_ZONE): number {
   return sign * (hours * 60 + minutes) * 60_000;
 }
 
-function zonedDateToUtc(
+export function zonedDateToUtc(
   year: number,
   month: number,
   day: number,
@@ -71,6 +71,16 @@ function zonedDateToUtc(
   );
   const offsetMs = getTimeZoneOffsetMs(utcGuess, timeZone);
   return new Date(utcGuess.getTime() - offsetMs);
+}
+
+/** Tanggal kalender (YYYY-MM-DD) sesuai timezone — mis. "hari ini" versi WIB. */
+export function dateStringInTimeZone(
+  date: Date,
+  timeZone = APP_TIME_ZONE,
+): string {
+  const p = getTimeZoneDateParts(date, timeZone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
 export function startOfDayInTimeZone(

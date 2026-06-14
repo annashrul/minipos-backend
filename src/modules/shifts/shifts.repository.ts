@@ -141,6 +141,28 @@ export class ShiftsRepository {
     });
   }
 
+  /** Jadwal karyawan untuk user pada tanggal tertentu (unique userId+date). */
+  async findScheduleForUserOnDate(userId: string, date: Date) {
+    return this.prisma.employeeSchedule.findUnique({
+      where: { userId_date: { userId, date } },
+      select: {
+        id: true,
+        status: true,
+        shiftStart: true,
+        shiftEnd: true,
+        shiftLabel: true,
+        branchId: true,
+      },
+    });
+  }
+
+  async confirmSchedule(id: string): Promise<void> {
+    await this.prisma.employeeSchedule.update({
+      where: { id },
+      data: { status: "CONFIRMED" },
+    });
+  }
+
   async aggregateTransactions(where: Prisma.TransactionWhereInput) {
     return this.prisma.transaction.aggregate({
       where,

@@ -81,6 +81,27 @@ export type ShiftDetailResponse = ShiftResponse & {
   cashMovements: CashMovementResponse[];
 };
 
+/**
+ * Catatan kesesuaian buka kasir terhadap jadwal karyawan hari ini.
+ * - on-time   : terjadwal & buka tepat/lebih awal dari jam mulai.
+ * - late      : terjadwal tapi buka lewat dari jam mulai (lateMinutes > 0).
+ * - unscheduled: tidak ada jadwal hari ini.
+ * - off       : jadwal hari ini berstatus LEAVE/ABSENT (cuti/tidak masuk).
+ */
+export type ShiftScheduleNotice = {
+  level: "on-time" | "late" | "unscheduled" | "off";
+  scheduled: boolean;
+  message: string;
+  shiftLabel: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  lateMinutes: number;
+};
+
+export type OpenShiftResponse = ShiftResponse & {
+  scheduleNotice: ShiftScheduleNotice | null;
+};
+
 export type ShiftListResponse = {
   shifts: ShiftResponse[];
   total: number;

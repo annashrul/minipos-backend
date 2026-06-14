@@ -6,7 +6,7 @@ import { AuthRepository, type RawAuthUser } from "./auth.repository";
 
 export type LoginResult = {
   token: string;
-  user: AuthUser & { name: string; email: string };
+  user: AuthUser & { name: string; email: string; branchName: string | null };
 };
 
 @Injectable()
@@ -95,7 +95,12 @@ export class AuthService {
 
     return {
       token,
-      user: { ...authUser, name: user.name, email: user.email },
+      user: {
+        ...authUser,
+        name: user.name,
+        email: user.email,
+        branchName: user.branch?.name ?? null,
+      },
     };
   }
 

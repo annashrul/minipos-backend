@@ -10,6 +10,7 @@ export const AUTH_USER_SELECT = {
   role: true,
   companyId: true,
   branchId: true,
+  branch: { select: { id: true, name: true } },
   isActive: true,
   phoneVerified: true,
 } satisfies Prisma.UserSelect;
