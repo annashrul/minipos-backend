@@ -57,8 +57,10 @@ export class ProductBranchSkusController {
 
   // Lookup specific SKU dipakai POS saat resolve harga & stok.
   // Query: ?branchId=X&unitId=Y&variantId=Z (unitId/variantId optional).
+  // Digate ke akses POS — kasir tak punya akses menu Produk tapi tetap butuh
+  // resolusi harga/stok SKU di POS.
   @Get("lookup")
-  @RequireAccess("products", "view")
+  @RequireAccess("pos", "view")
   @ApiOperation({ summary: "Lookup branch SKU by unit/variant" })
   async lookup(
     @CurrentCompany() companyId: string,

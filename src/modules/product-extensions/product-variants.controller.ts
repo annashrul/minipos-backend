@@ -59,8 +59,10 @@ export class ProductVariantsController {
 
   // Lookup variant berdasar kombinasi optionIds (dipakai POS modifier picker).
   // Query: ?optionIds=id1,id2,id3
+  // Digate ke akses POS — kasir tak punya akses menu Produk tapi tetap butuh
+  // resolusi harga varian di POS.
   @Get("lookup")
-  @RequireAccess("products", "view")
+  @RequireAccess("pos", "view")
   @ApiOperation({ summary: "Lookup variant by option IDs" })
   async lookup(
     @CurrentCompany() companyId: string,
