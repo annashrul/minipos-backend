@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const BUSINESS_UNITS = ["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"] as const;
+export const BUSINESS_UNITS = ["RETAIL", "BENGKEL", "RESTAURANT", "CAFE", "APOTEK"] as const;
 export type BusinessUnit = (typeof BUSINESS_UNITS)[number];
 
 /** Kanal pengiriman OTP: WhatsApp (default) atau Email. */

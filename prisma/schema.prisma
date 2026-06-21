@@ -510,6 +510,15 @@ model Product {
   // Default false → produk lama tetap pakai stok agregat tanpa batch (helper
   // batch no-op). Lihat model ProductBatch.
   trackBatch          Boolean                     @default(false)
+  // ─── Khusus business unit APOTEK (farmasi) ───────────────────────────────
+  // Golongan obat: NONE | BEBAS | BEBAS_TERBATAS | KERAS | PSIKOTROPIKA |
+  // NARKOTIKA. String (bukan enum DB) supaya additive & fleksibel. Null/NONE =
+  // bukan obat / belum diklasifikasi.
+  drugClassification  String?
+  // Nomor registrasi BPOM (mis. "DKL1234567890A1").
+  bpomNumber          String?
+  // True = obat keras/psikotropika/narkotika yang wajib resep dokter.
+  requiresPrescription Boolean                    @default(false)
   deletedAt           DateTime?
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @updatedAt

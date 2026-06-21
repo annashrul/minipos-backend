@@ -85,6 +85,9 @@ export class ProductCreateUpdateService {
         itemType: dto.itemType ?? "PRODUCT",
         isActive: dto.isActive ?? true,
         trackBatch: dto.trackBatch ?? false,
+        drugClassification: dto.drugClassification ?? null,
+        bpomNumber: dto.bpomNumber ?? null,
+        requiresPrescription: dto.requiresPrescription ?? false,
         description: dto.description ?? null,
         imageUrl: dto.imageUrl ?? null,
         defaultRackId: dto.defaultRackId ?? null,
@@ -144,6 +147,11 @@ export class ProductCreateUpdateService {
     if (dto.itemType !== undefined) data.itemType = dto.itemType;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.trackBatch !== undefined) data.trackBatch = dto.trackBatch;
+    if (dto.drugClassification !== undefined)
+      data.drugClassification = dto.drugClassification;
+    if (dto.bpomNumber !== undefined) data.bpomNumber = dto.bpomNumber;
+    if (dto.requiresPrescription !== undefined)
+      data.requiresPrescription = dto.requiresPrescription;
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.defaultRackId !== undefined) {

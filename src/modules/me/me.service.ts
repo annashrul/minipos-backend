@@ -151,7 +151,7 @@ export class MeService {
 
   async updateCompanyBusinessUnit(
     companyId: string,
-    businessUnit: "RETAIL" | "BENGKEL" | "RESTAURANT" | "CAFE",
+    businessUnit: "RETAIL" | "BENGKEL" | "RESTAURANT" | "CAFE" | "APOTEK",
   ) {
     const updated = await this.repo.updateCompanyBusinessUnit(
       companyId,

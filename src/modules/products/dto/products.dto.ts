@@ -96,6 +96,11 @@ export const CreateProductSchema = z.object({
   isActive: z.boolean().optional(),
   // Aktifkan pelacakan batch/lot + expired per-batch (FEFO + product recall).
   trackBatch: z.boolean().optional(),
+  // ─── Khusus APOTEK ───
+  // Golongan obat: NONE | BEBAS | BEBAS_TERBATAS | KERAS | PSIKOTROPIKA | NARKOTIKA
+  drugClassification: z.string().nullable().optional(),
+  bpomNumber: z.string().nullable().optional(),
+  requiresPrescription: z.boolean().optional(),
   description: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
   // Default rack untuk fitur bin-location inventory. Saat checkout POS,
@@ -168,6 +173,9 @@ export type ProductResponse = {
   itemType: ProductItemType;
   isActive: boolean;
   trackBatch: boolean;
+  drugClassification: string | null;
+  bpomNumber: string | null;
+  requiresPrescription: boolean;
   description: string | null;
   imageUrl: string | null;
   defaultRackId: string | null;

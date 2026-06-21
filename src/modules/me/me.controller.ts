@@ -16,7 +16,7 @@ import {
 import { ZodValidationPipe } from "@/common/pipes/zod.pipe";
 
 const UpdateBusinessUnitSchema = z.object({
-  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"]),
+  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE", "APOTEK"]),
 });
 type UpdateBusinessUnitDto = z.infer<typeof UpdateBusinessUnitSchema>;
 import { CurrentCompany } from "@/modules/auth/current-company.decorator";

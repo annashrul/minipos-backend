@@ -55,7 +55,7 @@ export type ListPlatformCompaniesQueryDto = z.infer<
 // Update info tenant (platform owner). Semua field opsional (partial update).
 export const UpdatePlatformCompanySchema = z.object({
   name: z.string().min(1, "Nama perusahaan wajib diisi").optional(),
-  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE"]).optional(),
+  businessUnit: z.enum(["RETAIL", "BENGKEL", "RESTAURANT", "CAFE", "APOTEK"]).optional(),
   phone: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
