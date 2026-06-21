@@ -55,7 +55,7 @@ export class RegisterController {
     @Body(new ZodValidationPipe(ResendPhoneOtpSchema))
     body: ResendPhoneOtpDto,
   ) {
-    const data = await this.register.resendPhoneOtp(body.phone);
+    const data = await this.register.resendPhoneOtp(body.phone, body.channel);
     return { data };
   }
 
@@ -63,8 +63,13 @@ export class RegisterController {
   @Public()
   @Post("resend-otp-by-email")
   @ApiOperation({ summary: "Resend OTP by email lookup" })
-  async resendOtpByEmail(@Body() body: { email?: string }) {
-    const data = await this.register.resendOtpByEmail(body?.email ?? "");
+  async resendOtpByEmail(
+    @Body() body: { email?: string; channel?: "wa" | "email" },
+  ) {
+    const data = await this.register.resendOtpByEmail(
+      body?.email ?? "",
+      body?.channel ?? "wa",
+    );
     return { data };
   }
 
@@ -76,7 +81,7 @@ export class RegisterController {
     @Body(new ZodValidationPipe(ForgotPasswordSchema))
     body: ForgotPasswordDto,
   ) {
-    const data = await this.register.forgotPassword(body.email);
+    const data = await this.register.forgotPassword(body.email, body.channel);
     return { data };
   }
 

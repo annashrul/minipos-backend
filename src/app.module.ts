@@ -10,6 +10,7 @@ import { RedisModule } from "./modules/redis/redis.module";
 import { RealtimeModule } from "./modules/realtime/realtime.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { JwtAuthGuard } from "./modules/auth/jwt-auth.guard";
+import { EmailModule } from "./modules/email/email.module";
 import { HealthModule } from "./modules/health/health.module";
 import { AccountingModule } from "./modules/accounting/accounting.module";
 import { AiAssistantModule } from "./modules/ai-assistant/ai-assistant.module";
@@ -96,6 +97,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     AssertModule,
     RedisModule,
     RealtimeModule,
+    EmailModule,
     AuthModule,
     HealthModule,
     MeModule,

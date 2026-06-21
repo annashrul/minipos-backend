@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type {
   ForgotPasswordResponse,
+  OtpChannel,
   RegisterCompanyDto,
   RegisterCompanyResponse,
   ResendPhoneOtpResponse,
@@ -22,6 +23,7 @@ import { PLATFORM_WA_SENDER_ID } from "@/modules/auth/current-company.decorator"
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { EVENTS, RealtimeService } from "@/modules/realtime/realtime.service";
 import { WhatsappReceiptService } from "@/modules/whatsapp-receipt/whatsapp-receipt.service";
+import { EmailService } from "@/modules/email/email.service";
 
 /**
  * Company self-registration dengan verifikasi OTP via WhatsApp.
@@ -40,6 +42,7 @@ export class RegisterService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly waReceipt: WhatsappReceiptService,
+    private readonly email: EmailService,
   ) {}
 
   async registerCompany(
@@ -52,6 +55,7 @@ export class RegisterService {
     const autoActivate = opts?.autoActivate === true;
     const email = dto.email.trim().toLowerCase();
     const phone = normalizePhone(dto.phone);
+    const channel: OtpChannel = dto.channel ?? "wa";
 
     if (!phone) throw new BadRequestException("Nomor WhatsApp tidak valid");
 
@@ -62,8 +66,8 @@ export class RegisterService {
       // Jalur publik: user belum verified → kirim ulang OTP. Jalur platform
       // (autoActivate) selalu tolak duplikat — admin buat tenant baru.
       if (!existingByEmail.phoneVerified && !autoActivate) {
-        await this.sendNewOtp(phone);
-        return { status: "needs_verification", phone };
+        await this.sendNewOtp(phone, { channel, email });
+        return needsVerification(phone, channel, email);
       }
       throw new ConflictException("Email sudah terdaftar");
     }
@@ -73,8 +77,8 @@ export class RegisterService {
     });
     if (existingByPhone) {
       if (!existingByPhone.phoneVerified && !autoActivate) {
-        await this.sendNewOtp(phone);
-        return { status: "needs_verification", phone };
+        await this.sendNewOtp(phone, { channel, email });
+        return needsVerification(phone, channel, email);
       }
       throw new ConflictException("Nomor WhatsApp sudah terdaftar");
     }
@@ -207,9 +211,9 @@ export class RegisterService {
     }
 
     // Jalur publik: kirim OTP supaya user lanjut verifikasi.
-    await this.sendNewOtp(phone);
+    await this.sendNewOtp(phone, { channel, email });
 
-    return { status: "needs_verification", phone };
+    return needsVerification(phone, channel, email);
   }
 
   async verifyPhoneOtp(
@@ -273,7 +277,10 @@ export class RegisterService {
     return { loginToken };
   }
 
-  async forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+  async forgotPassword(
+    email: string,
+    channel: OtpChannel = "wa",
+  ): Promise<ForgotPasswordResponse> {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -288,10 +295,13 @@ export class RegisterService {
     if (!user.isActive) {
       throw new BadRequestException("Akun tidak aktif");
     }
-    await this.sendNewOtp(user.phone);
+    await this.sendNewOtp(user.phone, { channel, email: normalizedEmail });
     return {
       phone: user.phone,
       phoneMasked: maskPhone(user.phone),
+      channel,
+      destinationMasked:
+        channel === "email" ? maskEmail(normalizedEmail) : maskPhone(user.phone),
     };
   }
 
@@ -331,7 +341,10 @@ export class RegisterService {
     return { success: true };
   }
 
-  async resendOtpByEmail(email: string): Promise<{ phone: string }> {
+  async resendOtpByEmail(
+    email: string,
+    channel: OtpChannel = "wa",
+  ): Promise<{ phone: string }> {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -343,23 +356,27 @@ export class RegisterService {
     if (user.phoneVerified) {
       throw new BadRequestException("Akun sudah terverifikasi");
     }
-    await this.sendNewOtp(user.phone);
+    await this.sendNewOtp(user.phone, { channel, email: normalizedEmail });
     return { phone: user.phone };
   }
 
-  async resendPhoneOtp(phone: string): Promise<ResendPhoneOtpResponse> {
+  async resendPhoneOtp(
+    phone: string,
+    channel: OtpChannel = "wa",
+  ): Promise<ResendPhoneOtpResponse> {
     const normalized = normalizePhone(phone);
     if (!normalized) throw new BadRequestException("Nomor WhatsApp tidak valid");
 
     const user = await this.prisma.user.findFirst({
       where: { phone: normalized },
+      select: { email: true, phoneVerified: true },
     });
     if (!user) throw new NotFoundException("Nomor WhatsApp tidak ditemukan");
     if (user.phoneVerified) {
       throw new BadRequestException("Nomor WhatsApp sudah terverifikasi");
     }
 
-    await this.sendNewOtp(normalized);
+    await this.sendNewOtp(normalized, { channel, email: user.email });
     return { success: true };
   }
 
@@ -367,7 +384,17 @@ export class RegisterService {
   // Helpers
   // ===========================
 
-  private async sendNewOtp(phone: string): Promise<void> {
+  /**
+   * Generate + simpan OTP (selalu by-phone, supaya verifikasi/reset tidak
+   * berubah) lalu KIRIM lewat channel yang dipilih.
+   *   - channel "wa"    → kirim via platform WhatsApp sender (default).
+   *   - channel "email" → kirim via Gmail API (EmailService). `email` wajib.
+   */
+  private async sendNewOtp(
+    phone: string,
+    opts?: { channel?: OtpChannel; email?: string | null },
+  ): Promise<void> {
+    const channel: OtpChannel = opts?.channel ?? "wa";
     await this.prisma.phoneVerificationToken.deleteMany({ where: { phone } });
 
     const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
@@ -380,6 +407,50 @@ export class RegisterService {
       },
     });
 
+    if (channel === "email") {
+      await this.sendOtpViaEmail(otp, opts?.email ?? null);
+      return;
+    }
+    await this.sendOtpViaWhatsapp(otp, phone);
+  }
+
+  private async sendOtpViaEmail(
+    otp: string,
+    email: string | null,
+  ): Promise<void> {
+    if (!email) {
+      throw new BadRequestException("Email tujuan OTP tidak tersedia");
+    }
+    if (!this.email.isConfigured()) {
+      this.logger.warn("Email OTP diminta tapi EmailService belum dikonfigurasi");
+      if (process.env.NODE_ENV === "production") {
+        throw new ServiceUnavailableException(
+          "Pengiriman OTP via email belum dikonfigurasi. Coba pakai WhatsApp.",
+        );
+      }
+      this.devLogOtp(email, otp);
+      return;
+    }
+    try {
+      await this.email.send({
+        to: email,
+        subject: "Kode Verifikasi MenoPOS",
+        html: buildOtpEmailHtml(otp),
+      });
+      this.logger.log(`OTP sent via email to ${maskEmail(email)}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Email OTP send failed for ${maskEmail(email)}: ${msg}`);
+      if (process.env.NODE_ENV === "production") {
+        throw new ServiceUnavailableException(
+          "Gagal mengirim OTP via email. Silakan coba lagi atau pakai WhatsApp.",
+        );
+      }
+      this.devLogOtp(email, otp);
+    }
+  }
+
+  private async sendOtpViaWhatsapp(otp: string, phone: string): Promise<void> {
     const message =
       `*Kode Verifikasi MenoPOS*\n\n` +
       `OTP: *${otp}*\n` +
@@ -425,11 +496,14 @@ export class RegisterService {
       }
     }
 
-    // Dev-fallback: log to stdout
+    this.devLogOtp(phone, otp);
+  }
+
+  private devLogOtp(destination: string, otp: string): void {
     // eslint-disable-next-line no-console
-    console.log(`\n========== WA VERIFICATION (DEV FALLBACK) ==========`);
+    console.log(`\n========== OTP VERIFICATION (DEV FALLBACK) ==========`);
     // eslint-disable-next-line no-console
-    console.log(`To:  ${phone}`);
+    console.log(`To:  ${destination}`);
     // eslint-disable-next-line no-console
     console.log(`OTP: ${otp}`);
     // eslint-disable-next-line no-console
@@ -463,4 +537,38 @@ function maskPhone(phone: string): string {
   return phone.length > 6
     ? `${phone.slice(0, 4)}***${phone.slice(-3)}`
     : phone;
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain || !local) return email;
+  const head = local.slice(0, Math.min(2, local.length));
+  return `${head}${"*".repeat(Math.max(1, local.length - 2))}@${domain}`;
+}
+
+/** Bentuk respons "needs_verification" dengan tujuan tersamarkan per channel. */
+function needsVerification(
+  phone: string,
+  channel: OtpChannel,
+  email: string,
+): RegisterCompanyResponse {
+  return {
+    status: "needs_verification",
+    phone,
+    channel,
+    destinationMasked: channel === "email" ? maskEmail(email) : maskPhone(phone),
+  };
+}
+
+/** Email HTML untuk kode OTP — monokrom, ramah email client. */
+function buildOtpEmailHtml(otp: string): string {
+  return (
+    `<div style="background:#f4f4f5;padding:24px 0;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif">` +
+    `<div style="max-width:380px;margin:0 auto;background:#fff;border-radius:14px;padding:28px;box-shadow:0 4px 24px rgba(0,0,0,0.06)">` +
+    `<h1 style="margin:0 0 8px;font-size:18px;color:#1a1a1a">Kode Verifikasi MenoPOS</h1>` +
+    `<p style="margin:0 0 18px;font-size:13px;color:#666">Gunakan kode berikut untuk melanjutkan. Berlaku 15 menit.</p>` +
+    `<div style="font-size:34px;font-weight:700;letter-spacing:8px;color:#1a1a1a;text-align:center;background:#f4f4f5;border-radius:10px;padding:16px 0">${otp}</div>` +
+    `<p style="margin:18px 0 0;font-size:12px;color:#999">Jangan bagikan kode ini ke siapa pun. Jika Anda tidak meminta kode ini, abaikan email ini.</p>` +
+    `</div></div>`
+  );
 }
