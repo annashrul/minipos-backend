@@ -168,6 +168,44 @@ export class TransactionCheckoutService {
     }
   }
 
+  /** Verifikasi apoteker/penyetuju penjualan obat resep. Mengembalikan userId. */
+  private async verifyPrescriptionApprover(
+    companyId: string,
+    approver: { email: string; password: string },
+  ): Promise<string> {
+    const user = await this.prisma.user.findFirst({
+      where: { email: approver.email, companyId, isActive: true },
+      select: {
+        id: true,
+        role: true,
+        password: true,
+        authorizationPassword: true,
+      },
+    });
+    if (!user) {
+      throw new ForbiddenException("Apoteker/pemberi otorisasi tidak valid");
+    }
+    const allowed = [
+      "APOTEKER",
+      "PHARMACIST",
+      "MANAGER",
+      "ADMIN",
+      "SUPER_ADMIN",
+      "PLATFORM_OWNER",
+    ];
+    if (!allowed.includes(user.role)) {
+      throw new ForbiddenException(
+        "Validasi resep memerlukan role Apoteker / Manager ke atas",
+      );
+    }
+    const hash = user.authorizationPassword ?? user.password;
+    const valid = await bcrypt.compare(approver.password, hash);
+    if (!valid) {
+      throw new ForbiddenException("Password apoteker salah");
+    }
+    return user.id;
+  }
+
   async checkout(
     companyId: string,
     userId: string,
@@ -231,6 +269,29 @@ export class TransactionCheckoutService {
           .map((it) => it.productId),
       ),
     );
+
+    // ─── APOTEK: tegakkan validasi resep untuk obat yang requiresPrescription ──
+    let prescriptionApprovedById: string | null = null;
+    if (candidateProductIds.length) {
+      const rxProducts = await this.prisma.product.findMany({
+        where: { id: { in: candidateProductIds }, requiresPrescription: true },
+        select: { name: true },
+      });
+      if (rxProducts.length > 0) {
+        if (!dto.prescription) {
+          throw new ForbiddenException(
+            `Penjualan obat resep (${rxProducts
+              .map((p) => p.name)
+              .join(", ")}) memerlukan data resep & validasi apoteker.`,
+          );
+        }
+        prescriptionApprovedById = await this.verifyPrescriptionApprover(
+          companyId,
+          dto.prescription.approver,
+        );
+      }
+    }
+
     const recipes = candidateProductIds.length
       ? await this.repo.findRecipesByProductIds(candidateProductIds)
       : [];
@@ -397,6 +458,10 @@ export class TransactionCheckoutService {
               changeAmount: dto.changeAmount,
               promoApplied: dto.promoApplied ?? null,
               notes: dto.notes ?? null,
+              prescriptionDoctor: dto.prescription?.doctorName ?? null,
+              prescriptionNumber: dto.prescription?.prescriptionNumber ?? null,
+              prescriptionPatient: dto.prescription?.patientName ?? null,
+              prescriptionApprovedById,
               idempotencyKey: dto.idempotencyKey ?? null,
               syncedFromOffline: dto.syncedFromOffline ?? false,
               status: "COMPLETED",

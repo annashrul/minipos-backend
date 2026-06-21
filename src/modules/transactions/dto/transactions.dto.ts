@@ -219,6 +219,21 @@ export const CheckoutSchema = z
       })
       .nullable()
       .optional(),
+    // APOTEK: data resep + validasi apoteker. Wajib bila keranjang berisi obat
+    // yang requiresPrescription. Backend memverifikasi email+password approver
+    // (role apoteker/manager) sebelum mengizinkan penjualan.
+    prescription: z
+      .object({
+        doctorName: z.string().min(1, "Nama dokter wajib diisi"),
+        prescriptionNumber: z.string().min(1, "No. resep wajib diisi"),
+        patientName: z.string().optional(),
+        approver: z.object({
+          email: z.string().email(),
+          password: z.string().min(1),
+        }),
+      })
+      .nullable()
+      .optional(),
     redeemPoints: z.number().int().min(0).optional(),
     // Edit-mode: kalau di-set, transaksi sumber akan di-void otomatis setelah
     // checkout sukses (stok sumber di-restore, user-facing seperti "diedit").

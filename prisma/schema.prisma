@@ -814,6 +814,13 @@ model Transaction {
   voidReason           String?
   promoApplied         String?
   notes                String?
+  // ─── APOTEK: salinan resep dokter (diisi saat transaksi mengandung obat
+  // yang requiresPrescription, divalidasi apoteker di POS). ─────────────────
+  prescriptionDoctor    String?
+  prescriptionNumber    String?
+  prescriptionPatient   String?
+  // User (apoteker/manager) yang menyetujui penjualan obat resep.
+  prescriptionApprovedById String?
   // Kunci idempoten dari client (= id antrian offline). Dipakai supaya retry
   // sinkronisasi transaksi offline tidak membuat duplikat: kalau key sudah
   // ada untuk company ini, checkout mengembalikan transaksi yang sudah ada.
