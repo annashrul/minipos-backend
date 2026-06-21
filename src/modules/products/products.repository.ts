@@ -447,6 +447,8 @@ export class ProductsRepository {
       where: { id: { in: productIds }, companyId },
       select: {
         id: true,
+        requiresPrescription: true,
+        drugClassification: true,
         defaultRack: {
           select: {
             id: true,

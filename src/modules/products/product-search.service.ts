@@ -196,6 +196,8 @@ export class ProductSearchService {
         unit: (row.baseUnit as string) ?? "",
         imageUrl: (row.imageUrl as string) ?? null,
         barcode: (row.barcode as string) ?? null,
+        requiresPrescription: Boolean(row.requiresPrescription),
+        drugClassification: (row.drugClassification as string) ?? null,
         ...(productUnits.length > 0 ? { units: productUnits } : {}),
       };
     });
@@ -350,10 +352,19 @@ export class ProductSearchService {
         branchId: string;
       } | null
     >();
+    // Augmentasi info obat (apotek) — kolom ada di products, bukan di view.
+    const pharmaByProduct = new Map<
+      string,
+      { requiresPrescription: boolean; drugClassification: string | null }
+    >();
     if (productIds.length > 0) {
       const productsWithRack = await this.repo.findProductsWithRack(companyId, productIds);
       for (const p of productsWithRack) {
         rackInfoByProduct.set(p.id, p.defaultRack ?? null);
+        pharmaByProduct.set(p.id, {
+          requiresPrescription: p.requiresPrescription ?? false,
+          drugClassification: p.drugClassification ?? null,
+        });
       }
     }
     const recipeStockByProduct = await this.computeRecipeStockByProduct(
@@ -364,12 +375,15 @@ export class ProductSearchService {
     const rows = rawRows.map((r) => {
       const productId = String(r.productId);
       const rack = rackInfoByProduct.get(productId) ?? null;
+      const pharma = pharmaByProduct.get(productId);
       const recipeStock = recipeStockByProduct.get(productId);
       return {
         ...r,
         stock: recipeStock ?? r.stock,
         defaultRackId: rack?.id ?? null,
         defaultRack: rack,
+        requiresPrescription: pharma?.requiresPrescription ?? false,
+        drugClassification: pharma?.drugClassification ?? null,
       };
     });
 
