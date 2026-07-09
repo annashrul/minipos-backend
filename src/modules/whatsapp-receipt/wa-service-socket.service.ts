@@ -65,7 +65,11 @@ export class WaServiceSocketService implements OnModuleInit, OnModuleDestroy {
     // handler via onSessionUpdated/onInboundMessage sebelum koneksi
     // benar-benar open + receive event pertama.
     setImmediate(() => {
-      void this.openAllConnections();
+      this.openAllConnections().catch((err: unknown) => {
+        this.logger.error(
+          `openAllConnections gagal: ${(err as Error).message ?? err}`,
+        );
+      });
     });
   }
 
@@ -91,11 +95,13 @@ export class WaServiceSocketService implements OnModuleInit, OnModuleDestroy {
       },
     });
     for (const r of rows) {
-      this.connectInternal(r.companyId, r.waServiceTenantId!, r.waServiceApiKey!);
+      this.connectInternal(
+        r.companyId,
+        r.waServiceTenantId!,
+        r.waServiceApiKey!,
+      );
     }
-    this.logger.log(
-      `WaServiceSocket init: ${rows.length} koneksi tenant siap`,
-    );
+    this.logger.log(`WaServiceSocket init: ${rows.length} koneksi tenant siap`);
   }
 
   // ─── Public mutations ───────────────────────────────────────────
