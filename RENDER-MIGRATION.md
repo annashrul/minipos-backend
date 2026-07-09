@@ -61,6 +61,29 @@ postgresql://postgres.[project-ref]:[password]@aws-0-ap-southeast-1.pooler.supab
 postgresql://postgres.[project-ref]:[password]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
 
+> ⚠️ **PENTING — Penyebab error `ENOTFOUND tenant/user postgres.xxx not found`:**
+>
+> Error ini terjadi jika `DATABASE_URL` menggunakan format **IPv4 pooler Supabase yang lama**.  
+> Pastikan URL sudah menggunakan format baru (ada `.pooler.supabase.com`):
+>
+> ❌ **SALAH** (format lama — tidak jalan di Render):
+>
+> ```
+> postgresql://postgres:password@db.bdalkozutcaevriltbjh.supabase.co:5432/postgres
+> ```
+>
+> ✅ **BENAR** (format pooler baru):
+>
+> ```
+> # DATABASE_URL — pakai port 6543 + ?pgbouncer=true
+> postgresql://postgres.bdalkozutcaevriltbjh:password@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true
+>
+> # DIRECT_URL — pakai port 5432 tanpa pgbouncer
+> postgresql://postgres.bdalkozutcaevriltbjh:password@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+> ```
+>
+> Cara dapatkan URL yang benar: **Supabase Dashboard → Settings → Database → Connection string → Mode: Transaction (pooler)**
+
 ---
 
 ### 2. Kumpulkan Semua Secrets

@@ -79,9 +79,14 @@ services:
         value: "https://menopos.vercel.app/payment/failure"
 
       ## ── WhatsApp service ─────────────────────────────────────────────────
-      ## Ganti dengan URL wa-service baru jika juga dipindah ke Render
+      ## URL wa-service eksternal (masih di Cloud Run)
       - key: WA_SERVICE_URL
         value: "https://wa-service-1018591685581.asia-southeast2.run.app"
+
+      ## URL public backend ini sendiri — wa-service POST webhook ke sini.
+      ## Ganti dengan URL Render setelah service live.
+      - key: WA_SERVICE_WEBHOOK_BASE
+        value: "https://menopos-api.onrender.com"
 
       ## ── Secrets — isi nilainya di Render Dashboard, JANGAN hardcode ──────
       ## Format: sync: false → Render tidak akan inject dari Blueprint,
