@@ -35,6 +35,12 @@ services:
     ## Secrets (nilai sensitif) diisi manual di Render Dashboard > Environment
     ## atau via Render CLI.  Di sini hanya non-secret / defaults.
     envVars:
+      ## ── Port — Render inject ini otomatis, tapi kita eksplisitkan ────────
+      ## Render default port untuk Docker web service adalah 10000.
+      ## main.ts baca process.env.PORT, jadi WAJIB match dengan port yg dipakai.
+      - key: PORT
+        value: "10000"
+
       ## ── App config ──────────────────────────────────────────────────────
       - key: NODE_ENV
         value: production
@@ -84,9 +90,8 @@ services:
         value: "https://wa-service-1018591685581.asia-southeast2.run.app"
 
       ## URL public backend ini sendiri — wa-service POST webhook ke sini.
-      ## Ganti dengan URL Render setelah service live.
       - key: WA_SERVICE_WEBHOOK_BASE
-        value: "https://menopos-api.onrender.com"
+        value: "https://minipos-backend.onrender.com"
 
       ## ── Secrets — isi nilainya di Render Dashboard, JANGAN hardcode ──────
       ## Format: sync: false → Render tidak akan inject dari Blueprint,

@@ -43,7 +43,8 @@ RUN apk add --no-cache openssl ca-certificates \
  && adduser -S -u 1001 -G nodejs nestjs
 
 ENV NODE_ENV=production
-ENV PORT=8080
+## PORT tidak di-hardcode — Render inject PORT otomatis saat runtime.
+## main.ts sudah baca process.env.PORT ?? "4000" (fallback untuk dev lokal).
 
 WORKDIR /app
 
@@ -54,5 +55,6 @@ COPY --from=builder --chown=nestjs:nodejs /app/prisma/schema.prisma ./prisma/sch
 COPY --from=builder --chown=nestjs:nodejs /app/package.json ./
 
 USER nestjs
-EXPOSE 8080
+## EXPOSE hanya dokumentasi — Render pakai PORT env var, bukan EXPOSE value.
+EXPOSE 10000
 CMD ["node", "dist/main.js"]
