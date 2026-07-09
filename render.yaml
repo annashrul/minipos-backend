@@ -1,0 +1,132 @@
+## render.yaml — Blueprint deployment MiniPOS Backend ke Render
+## Docs: https://render.com/docs/blueprint-spec
+##
+## Cara deploy:
+## 1. Push repo ini ke GitHub
+## 2. Buka render.com → New → Blueprint
+## 3. Pilih repo ini, Render akan otomatis membaca file ini
+
+services:
+  - type: web
+    name: menopos-api
+    runtime: docker
+    ## Root repo = folder backend, Dockerfile ada di root repo
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    ## Render inject PORT secara otomatis (default 10000 di Render)
+    ## src/main.ts sudah baca process.env.PORT, jadi tidak perlu ubah kode.
+
+    ## Plan: "starter" = free tier; ganti ke "standard" untuk production
+    plan: starter
+
+    ## Health check — Render tunggu sampai endpoint ini return 200
+    healthCheckPath: /api/health
+
+    ## Auto-deploy setiap push ke branch ini
+    branch: main
+    autoDeploy: true
+
+    ## Pre-deploy command: jalankan Prisma migrate sebelum container baru live
+    ## Render menjalankan ini di container lama sebelum swap traffic.
+    preDeployCommand: npx prisma migrate deploy
+
+    ## Environment variables
+    ## Secrets (nilai sensitif) diisi manual di Render Dashboard > Environment
+    ## atau via Render CLI.  Di sini hanya non-secret / defaults.
+    envVars:
+      ## ── App config ──────────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+
+      - key: JWT_EXPIRES_IN
+        value: 1h
+
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+
+      ## Ganti dengan domain frontend production + Vercel preview URLs
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,https://*.vercel.app,https://menopos.vercel.app"
+
+      - key: WEB_ORIGIN
+        value: "https://menopos.vercel.app"
+
+      ## ── Xendit config ───────────────────────────────────────────────────
+      - key: XENDIT_API_BASE
+        value: "https://api.xendit.co"
+
+      - key: XENDIT_INVOICE_DURATION
+        value: "900"
+
+      - key: XENDIT_QR_DURATION
+        value: "900"
+
+      - key: XENDIT_VA_DURATION
+        value: "86400"
+
+      ## Set ke false di production setelah testing selesai
+      - key: XENDIT_DEV_AUTO_SUCCESS
+        value: "false"
+
+      - key: XENDIT_DEV_AUTO_SUCCESS_DELAY_MS
+        value: "2000"
+
+      - key: XENDIT_CALLBACK_SUCCESS_URL
+        value: "https://menopos.vercel.app/payment/success"
+
+      - key: XENDIT_CALLBACK_FAILURE_URL
+        value: "https://menopos.vercel.app/payment/failure"
+
+      ## ── WhatsApp service ─────────────────────────────────────────────────
+      ## Ganti dengan URL wa-service baru jika juga dipindah ke Render
+      - key: WA_SERVICE_URL
+        value: "https://wa-service-1018591685581.asia-southeast2.run.app"
+
+      ## ── Secrets — isi nilainya di Render Dashboard, JANGAN hardcode ──────
+      ## Format: sync: false → Render tidak akan inject dari Blueprint,
+      ## harus diisi manual agar tidak ter-commit ke Git.
+      - key: DATABASE_URL
+        sync: false # Connection pool URL (misalnya Supabase/Neon pooler)
+
+      - key: DIRECT_URL
+        sync: false # Direct URL ke database (untuk migrate)
+
+      - key: JWT_SECRET
+        sync: false
+
+      - key: CLOUDINARY_URL
+        sync: false
+
+      - key: RESEND_API_KEY
+        sync: false
+
+      - key: PUSHER_APP_ID
+        sync: false
+
+      - key: PUSHER_KEY
+        sync: false
+
+      - key: PUSHER_SECRET
+        sync: false
+
+      - key: PUSHER_CLUSTER
+        sync: false
+
+      - key: XENDIT_SECRET_KEY
+        sync: false
+
+      - key: XENDIT_WEBHOOK_TOKEN
+        sync: false
+
+      - key: GROQ_API_KEY
+        sync: false
+
+      - key: REDIS_URL
+        sync: false
+
+      - key: GEMINI_API_KEY
+        sync: false
+
+      - key: SENTRY_DSN
+        sync: false
