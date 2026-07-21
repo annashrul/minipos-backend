@@ -26,40 +26,8 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // CORS: comma-separated whitelist via CORS_ORIGINS. Items boleh:
-  //   - exact origin   → "https://pos.example.com"
-  //   - wildcard host  → "https://*.vercel.app"  (* = subdomain)
-  //   - regex literal  → "/^https:\\/\\/.*\\.example\\.com$/"
-  const corsRaw =
-    process.env.CORS_ORIGINS ??
-    process.env.WEB_ORIGIN ??
-    "http://localhost:3000";
-  const allowItems = corsRaw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const allowMatchers: Array<(o: string) => boolean> = allowItems.map((entry) => {
-    if (entry.startsWith("/") && entry.endsWith("/") && entry.length > 2) {
-      const re = new RegExp(entry.slice(1, -1));
-      return (o: string) => re.test(o);
-    }
-    if (entry.includes("*")) {
-      // Convert wildcard to regex (escape regex chars except *)
-      const escaped = entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-      const re = new RegExp(`^${escaped}$`);
-      return (o: string) => re.test(o);
-    }
-    return (o: string) => o === entry;
-  });
   app.enableCors({
-    origin: (origin, callback) => {
-      // Allow same-origin / non-browser requests (no Origin header)
-      if (!origin) return callback(null, true);
-      const ok = allowMatchers.some((fn) => fn(origin));
-      // Pass `false` instead of throwing — clean 403/no-CORS response,
-      // not 500 internal error.
-      callback(null, ok);
-    },
+    origin: true,
     credentials: true,
   });
 
