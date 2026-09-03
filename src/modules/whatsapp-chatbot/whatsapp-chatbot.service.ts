@@ -12,6 +12,13 @@ import {
   type ToolContext,
 } from "./whatsapp-chatbot.tools";
 import { WhatsappChatbotRepository } from "./whatsapp-chatbot.repository";
+import {
+  aiModel,
+  aiModelChain,
+  isModelUnavailableError,
+  isProviderAuthError,
+  safeReasoningEffort,
+} from "@/common/ai/ai-models";
 
 const DEFAULT_PROMPT_CUSTOMER = `Kamu adalah asisten WhatsApp ramah untuk bengkel/toko ini.
 Tugas: bantu customer dengan pertanyaan layanan, harga, produk (oli/sparepart/aksesoris), jam buka, lokasi, status booking, dan rekomendasi sederhana.
@@ -288,27 +295,24 @@ export class WhatsappChatbotService implements OnModuleInit {
     const config = params.config;
     // Default model: openai/gpt-oss-20b — ringan & latensi konsisten (penting
     // untuk balasan WA realtime ke pelanggan), tetap sekeluarga gpt-oss jadi
-    // tool-calling tetap reliable. Eskalasi ke 120b lalu llama saat rate-limit.
-    // Bisa override per-company via WhatsappBotConfig.model.
-    const model = config?.model || "openai/gpt-oss-20b";
+    // tool-calling tetap reliable. Bisa override per-company via
+    // WhatsappBotConfig.model, atau global via env WHATSAPP_BOT_MODEL.
+    const model = config?.model || aiModel(this.config, "WHATSAPP_BOT_MODEL");
     const groq = new Groq({ apiKey });
 
     // Rantai fallback model Groq: tiap model punya kuota TPD (token-per-day)
     // sendiri, jadi kalau model utama kena rate-limit harian kita coba model
     // lain yang sama-sama support tool-calling sebelum lompat ke Gemini.
-    const groqModels = [
-      model,
-      "openai/gpt-oss-120b",
-      "llama-3.3-70b-versatile",
-    ].filter((m, i, arr) => arr.indexOf(m) === i);
+    // Daftar dari env GROQ_FALLBACK_MODELS — dulu di sini ada
+    // "llama-3.3-70b-versatile" yang sudah dihapus Groq (HTTP 404).
+    const groqModels = aiModelChain(this.config, "GROQ_FALLBACK_MODELS", model);
 
     // Fallback terakhir ke Google AI Studio (Gemini) saat SEMUA model Groq kena
     // rate-limit/quota harian. Pakai endpoint OpenAI-compatible Gemini via fetch
     // langsung (bukan SDK Groq) supaya path URL tidak ter-mangle jadi 404, dan
     // body error (mis. quota=0) ikut terbaca. Aktif kalau GEMINI_API_KEY ada.
     const geminiKey = this.config.get<string>("GEMINI_API_KEY");
-    const geminiModel =
-      this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+    const geminiModel = aiModel(this.config, "GEMINI_MODEL");
     const callGemini = async (
       msgs: ChatMessage[],
     ): Promise<Groq.Chat.ChatCompletion> => {
@@ -405,8 +409,10 @@ export class WhatsappChatbotService implements OnModuleInit {
             tool_choice: "auto",
             // gpt-oss reasoning model — "low" memangkas waktu "berpikir" supaya
             // balasan WA ke pelanggan jauh lebih cepat tanpa menurunkan kualitas
-            // tool-calling untuk percakapan order/menu yang lugas.
-            reasoning_effort: "low",
+            // tool-calling untuk percakapan order/menu yang lugas. Nilainya
+            // diturunkan dari nama model karena qwen hanya terima "none"
+            // sedangkan gpt-oss menolak "none" (HTTP 400).
+            reasoning_effort: safeReasoningEffort(m),
             max_tokens: 1024,
           });
         } catch (err) {
@@ -418,6 +424,23 @@ export class WhatsappChatbotService implements OnModuleInit {
               `[bot] Groq model ${m} rate-limited — coba model alternatif`,
             );
             continue;
+          }
+          // Model tidak ada / sudah dimatikan provider (mis. pilihan lama yang
+          // masih tersimpan di WhatsappBotConfig.model). Jangan matikan balasan
+          // bot — lanjut ke model berikutnya di rantai.
+          if (isModelUnavailableError(err)) {
+            this.logger.warn(
+              `[bot] Groq model ${m} tidak tersedia lagi — coba model alternatif`,
+            );
+            continue;
+          }
+          // API key Groq invalid/dicabut — model lain di provider sama juga akan
+          // gagal. Keluar dari loop supaya langsung fallback ke Gemini.
+          if (isProviderAuthError(err)) {
+            this.logger.warn(
+              `[bot] Kredensial Groq ditolak (${(err as Error).message}) — lanjut ke Gemini`,
+            );
+            break;
           }
           // Groq SDK error structure tidak konsisten — code & failed_generation
           // bisa ada di:
@@ -457,10 +480,11 @@ export class WhatsappChatbotService implements OnModuleInit {
           throw err;
         }
       }
-      // Semua model Groq kena rate-limit harian — fallback terakhir ke Gemini.
+      // Semua model Groq gagal (rate-limit / model mati / kredensial ditolak) —
+      // fallback terakhir ke Gemini.
       if (geminiKey) {
         this.logger.warn(
-          "[bot] Semua model Groq rate-limited — fallback ke Gemini (Google AI Studio)",
+          "[bot] Groq tidak bisa dipakai — fallback ke Gemini (Google AI Studio)",
         );
         try {
           return await callGemini(msgs);
@@ -744,7 +768,7 @@ harga, stok, ada nggak, jam buka, antar.`
         knowledge: dto.knowledge ?? null,
         systemPromptCustomer: dto.systemPromptCustomer ?? null,
         systemPromptOwner: dto.systemPromptOwner ?? null,
-        model: dto.model ?? "openai/gpt-oss-120b",
+        model: dto.model ?? aiModel(this.config, "WHATSAPP_BOT_MODEL"),
         replyThrottleSec: dto.replyThrottleSec ?? 3,
       },
       {

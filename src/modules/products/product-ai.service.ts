@@ -7,6 +7,11 @@
 import { ConfigService } from "@nestjs/config";
 import Groq from "groq-sdk";
 import { PrismaService } from "@/modules/prisma/prisma.service";
+import {
+  aiModel,
+  aiModelChain,
+  isModelUnavailableError,
+} from "@/common/ai/ai-models";
 
 /**
  * Mini AI helper: generate deskripsi produk yang SPESIFIK ke item-nya,
@@ -50,8 +55,7 @@ export class ProductAiService {
     }
 
     const apiKey = this.config.get<string>("GROQ_API_KEY");
-    const model =
-      this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-120b";
+    const model = aiModel(this.config, "GROQ_DESCRIPTION_MODEL");
 
     if (!apiKey) {
       throw new InternalServerErrorException(
@@ -120,8 +124,13 @@ Tulis deskripsinya (ikuti aturan ketat di atas, lihat contoh).`;
 
     try {
       const groq = new Groq({ apiKey });
-      const candidateModels = Array.from(
-        new Set([model, "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]),
+      // Rantai fallback dari env GROQ_FALLBACK_MODELS — dulu di sini ada
+      // "llama-3.3-70b-versatile" & "llama-3.1-8b-instant" yang sudah dihapus
+      // Groq (HTTP 404), jadi fallback-nya tidak pernah benar-benar jalan.
+      const candidateModels = aiModelChain(
+        this.config,
+        "GROQ_FALLBACK_MODELS",
+        model,
       );
       let lastError: unknown = null;
       let bestPartialDescription = "";
@@ -176,17 +185,19 @@ Tulis deskripsinya (ikuti aturan ketat di atas, lihat contoh).`;
         }
       }
 
-      // Semua model Groq gagal karena rate-limit/quota harian → fallback ke
-      // Gemini (Google AI Studio) via endpoint OpenAI-compatible. Tanpa tools,
-      // jadi cukup plain text generation.
+      // Semua model Groq gagal karena rate-limit/quota harian atau model sudah
+      // dimatikan provider → fallback ke Gemini (Google AI Studio) via endpoint
+      // OpenAI-compatible. Tanpa tools, jadi cukup plain text generation.
       const geminiKey = this.config.get<string>("GEMINI_API_KEY");
-      if (geminiKey && isRateLimitError(lastError)) {
+      if (
+        geminiKey &&
+        (isRateLimitError(lastError) || isModelUnavailableError(lastError))
+      ) {
         this.logger.warn(
-          "[ProductAI] Semua model Groq rate-limited — fallback ke Gemini",
+          "[ProductAI] Semua model Groq gagal (rate-limit / model mati) — fallback ke Gemini",
         );
         try {
-          const geminiModel =
-            this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+          const geminiModel = aiModel(this.config, "GEMINI_MODEL");
           const res = await fetch(
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             {

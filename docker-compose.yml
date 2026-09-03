@@ -1,0 +1,39 @@
+# docker-compose HANYA untuk ai-service.
+#
+# Backend Nest tetap dijalankan di host (`pnpm dev`) supaya hot-reload &
+# koneksi Supabase tidak berubah. Jadi dari sisi backend, AI_SERVICE_URL
+# lokal = http://localhost:8000.
+services:
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+      args:
+        # Ganti nilai ini kalau mau model lain. INGAT: dimensi harus cocok
+        # dengan kolom products.embedding (vector(768)) dan VECTOR_DIMENSION.
+        # SigLIP base = 768. CLIP ViT-B/32 = 512 → butuh recreate kolom.
+        AI_MODEL_NAME: ${AI_MODEL_NAME:-google/siglip-base-patch16-224}
+    image: minipos-ai-service:local
+    # Bind ke loopback saja: port model TIDAK boleh terekspos ke LAN/internet.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AI_MODEL_NAME: ${AI_MODEL_NAME:-google/siglip-base-patch16-224}
+      # Kosong = auth dilewati (aman karena hanya listen di loopback).
+      # Di Render/produksi WAJIB di-set dan sama dengan AI_SERVICE_TOKEN backend.
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
+      AI_MAX_BATCH: ${AI_MAX_BATCH:-32}
+      IMAGE_MAX_SIZE_MB: ${IMAGE_MAX_SIZE_MB:-5}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      # Cold start memuat model dari cache lokal — beri jeda sebelum dinilai.
+      start_period: 90s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # SigLIP base CPU fp32 ≈ 1.2–1.6GB saat inference batch kecil.
+          memory: 3g

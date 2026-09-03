@@ -66,7 +66,7 @@ export class RegisterService {
       // Jalur publik: user belum verified → kirim ulang OTP. Jalur platform
       // (autoActivate) selalu tolak duplikat — admin buat tenant baru.
       if (!existingByEmail.phoneVerified && !autoActivate) {
-        await this.sendNewOtp(phone, { channel, email });
+        await this.sendNewOtp({ channel, email, phone });
         return needsVerification(phone, channel, email);
       }
       throw new ConflictException("Email sudah terdaftar");
@@ -77,7 +77,7 @@ export class RegisterService {
     });
     if (existingByPhone) {
       if (!existingByPhone.phoneVerified && !autoActivate) {
-        await this.sendNewOtp(phone, { channel, email });
+        await this.sendNewOtp({ channel, email, phone });
         return needsVerification(phone, channel, email);
       }
       throw new ConflictException("Nomor WhatsApp sudah terdaftar");
@@ -143,6 +143,10 @@ export class RegisterService {
           { name: "Tanpa Brand", companyId: company.id },
           { name: "House Brand", companyId: company.id },
         ],
+      });
+
+      await tx.supplier.create({
+        data: { name: "Supplier Umum", companyId: company.id },
       });
 
       const acAsset = await tx.accountCategory.create({ data: { name: "Aset", type: "ASSET", normalSide: "DEBIT", sortOrder: 1, companyId: company.id } });
@@ -211,7 +215,7 @@ export class RegisterService {
     }
 
     // Jalur publik: kirim OTP supaya user lanjut verifikasi.
-    await this.sendNewOtp(phone, { channel, email });
+    await this.sendNewOtp({ channel, email, phone });
 
     return needsVerification(phone, channel, email);
   }
@@ -277,31 +281,265 @@ export class RegisterService {
     return { loginToken };
   }
 
+  async checkAvailability(
+    email?: string,
+    phone?: string,
+  ): Promise<{ email: boolean; phone: boolean }> {
+    const result = { email: true, phone: true };
+    if (email?.trim()) {
+      const e = await this.prisma.user.findUnique({ where: { email: email.trim().toLowerCase() }, select: { id: true } });
+      result.email = !e;
+    }
+    if (phone?.trim()) {
+      const p = normalizePhone(phone);
+      if (p) {
+        const u = await this.prisma.user.findFirst({ where: { phone: p }, select: { id: true } });
+        result.phone = !u;
+      }
+    }
+    return result;
+  }
+
+  // ── New flow: request OTP → verify → create ───────────────────────
+
+  async requestRegisterOtp(
+    dto: RegisterCompanyDto,
+  ): Promise<{ phone: string; phoneMasked: string; channel: OtpChannel; destinationMasked: string }> {
+    const email = dto.email.trim().toLowerCase();
+    const phone = normalizePhone(dto.phone);
+    const channel: OtpChannel = dto.channel ?? "wa";
+
+    if (!phone) throw new BadRequestException("Nomor WhatsApp tidak valid");
+
+    const existingByEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (existingByEmail) {
+      if (!existingByEmail.phoneVerified) {
+        // Re-send OTP untuk user belum verifikasi
+        await this.sendNewOtp({ channel, email, phone });
+        return { phone, phoneMasked: maskPhone(phone), channel, destinationMasked: channel === "email" ? maskEmail(email) : maskPhone(phone) };
+      }
+      throw new ConflictException("Email sudah terdaftar");
+    }
+
+    const existingByPhone = await this.prisma.user.findFirst({ where: { phone } });
+    if (existingByPhone) {
+      if (!existingByPhone.phoneVerified) {
+        await this.sendNewOtp({ channel, email, phone });
+        return { phone, phoneMasked: maskPhone(phone), channel, destinationMasked: channel === "email" ? maskEmail(email) : maskPhone(phone) };
+      }
+      throw new ConflictException("Nomor WhatsApp sudah terdaftar");
+    }
+
+    // Store pending data encoded in token
+    const payload = {
+      companyName: dto.companyName,
+      companyPhone: dto.companyPhone,
+      companyAddress: dto.companyAddress,
+      businessUnit: dto.businessUnit,
+      name: dto.name,
+      email,
+      password: dto.password,
+    };
+    const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+
+    const pendingTokenKey = `pending:${payloadBase64}`;
+    const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+    const token = `${otp}-${crypto.randomBytes(3).toString("hex")}--${pendingTokenKey}`;
+
+    this.logger.log(`[OTP] ${otp} → ${phone} (${channel})`);
+
+    await this.prisma.phoneVerificationToken.deleteMany({ where: { phone } });
+    await this.prisma.phoneVerificationToken.create({
+      data: {
+        phone,
+        token,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    if (channel === "email") {
+      await this.sendOtpViaEmail(otp, email);
+    } else {
+      await this.sendOtpViaWhatsapp(otp, phone);
+    }
+
+    return {
+      phone,
+      phoneMasked: maskPhone(phone),
+      channel,
+      destinationMasked: channel === "email" ? maskEmail(email) : maskPhone(phone),
+    };
+  }
+
+  async verifyAndCreate(
+    dto: { phone: string; otp: string },
+  ): Promise<{ loginToken: string }> {
+    const phone = normalizePhone(dto.phone);
+    const otp = dto.otp.trim().replace(/\s+/g, "");
+
+    if (!phone) throw new BadRequestException("Nomor WhatsApp tidak valid");
+
+    const record = await this.prisma.phoneVerificationToken.findFirst({
+      where: { phone, token: { startsWith: `${otp}-` } },
+    });
+    if (!record) throw new BadRequestException("Kode OTP tidak valid");
+    if (record.expiresAt < new Date()) {
+      await this.prisma.phoneVerificationToken.delete({ where: { id: record.id } });
+      throw new BadRequestException("Kode OTP sudah kedaluwarsa");
+    }
+
+    // Extract pending payload from token: {otp}-{hex}--pending:{base64json}
+    const payloadMatch = record.token.match(/--pending:(.+)$/);
+    let payload: {
+      companyName: string;
+      companyPhone?: string;
+      companyAddress?: string;
+      businessUnit?: string;
+      name: string;
+      email: string;
+      password: string;
+    };
+    try {
+      payload = JSON.parse(
+        Buffer.from(payloadMatch?.[1] ?? "", "base64url").toString("utf8"),
+      );
+    } catch {
+      throw new BadRequestException("Data pendaftaran tidak valid. Silakan daftar ulang.");
+    }
+    if (!payload?.email || !payload?.name || !payload?.password || !payload?.companyName) {
+      throw new BadRequestException("Data pendaftaran tidak lengkap. Silakan daftar ulang.");
+    }
+
+    // Delete token & create everything
+    await this.prisma.phoneVerificationToken.delete({ where: { id: record.id } });
+
+    let slug = generateSlug(payload.companyName);
+    const existingSlug = await this.prisma.company.findUnique({ where: { slug } });
+    if (existingSlug) slug = `${slug}-${Date.now().toString(36)}`;
+
+    const hashedPassword = await bcrypt.hash(payload.password, 10);
+    const email = payload.email;
+
+    await this.prisma.$transaction(async (tx) => {
+      const company = await tx.company.create({
+        data: {
+          name: payload.companyName,
+          slug,
+          phone: payload.companyPhone ?? null,
+          address: payload.companyAddress ?? null,
+          email,
+          businessUnit: (payload.businessUnit as string) ?? "RETAIL",
+        },
+      });
+
+      const branch = await tx.branch.create({
+        data: { name: "Cabang Utama", code: "HQ", companyId: company.id },
+      });
+
+      await tx.user.create({
+        data: {
+          name: payload.name,
+          email,
+          phone,
+          password: hashedPassword,
+          role: "SUPER_ADMIN",
+          companyId: company.id,
+          branchId: branch.id,
+          emailVerified: true,
+          phoneVerified: true,
+        },
+      });
+
+      await tx.category.createMany({
+        data: [
+          { name: "Makanan", description: "Menu makanan", companyId: company.id },
+          { name: "Minuman", description: "Menu minuman", companyId: company.id },
+          { name: "Snack", description: "Makanan ringan dan cemilan", companyId: company.id },
+          { name: "Dessert", description: "Menu penutup dan kue", companyId: company.id },
+          { name: "Lainnya", description: "Produk lainnya", companyId: company.id },
+        ],
+      });
+
+      await tx.brand.createMany({
+        data: [
+          { name: "Tanpa Brand", companyId: company.id },
+          { name: "House Brand", companyId: company.id },
+        ],
+      });
+
+      await tx.supplier.create({
+        data: { name: "Supplier Umum", companyId: company.id },
+      });
+
+      const acAsset = await tx.accountCategory.create({ data: { name: "Aset", type: "ASSET", normalSide: "DEBIT", sortOrder: 1, companyId: company.id } });
+      const acLiability = await tx.accountCategory.create({ data: { name: "Kewajiban", type: "LIABILITY", normalSide: "CREDIT", sortOrder: 2, companyId: company.id } });
+      const acEquity = await tx.accountCategory.create({ data: { name: "Modal", type: "EQUITY", normalSide: "CREDIT", sortOrder: 3, companyId: company.id } });
+      const acRevenue = await tx.accountCategory.create({ data: { name: "Pendapatan", type: "REVENUE", normalSide: "CREDIT", sortOrder: 4, companyId: company.id } });
+      const acExpense = await tx.accountCategory.create({ data: { name: "Beban", type: "EXPENSE", normalSide: "DEBIT", sortOrder: 5, companyId: company.id } });
+
+      await tx.account.createMany({
+        data: [
+          { code: "1-1001", name: "Kas", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1002", name: "Bank", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1003", name: "Piutang Dagang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "1-1004", name: "Persediaan Barang", categoryId: acAsset.id, isActive: true, isSystem: true, openingBalance: 0 },
+          { code: "2-1001", name: "Hutang Dagang", categoryId: acLiability.id, isActive: true, isSystem: true, openingBalance: 0 },
+        ],
+      });
+    });
+
+    // Auto-login token
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    const loginToken = `login_${crypto.randomBytes(24).toString("hex")}`;
+    await this.prisma.emailVerificationToken.create({
+      data: {
+        email: user?.email ?? email,
+        token: loginToken,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+
+    return { loginToken };
+  }
+
   async forgotPassword(
-    email: string,
+    email?: string,
+    phone?: string,
     channel: OtpChannel = "wa",
   ): Promise<ForgotPasswordResponse> {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-    if (!user || !user.phone) {
-      // Untuk privacy, jangan expose ke client apakah email/phone ada.
-      // Tapi UI butuh phone untuk routing — kalau tidak ada, tetap throw.
+    const normalizedEmail = (email ?? "").trim().toLowerCase();
+    const normalizedPhone = normalizePhone(phone);
+
+    let user: { id: string; email: string; phone: string | null; isActive: boolean } | null = null;
+    if (normalizedEmail) {
+      user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
+    } else if (normalizedPhone) {
+      user = await this.prisma.user.findFirst({ where: { phone: normalizedPhone } });
+    }
+
+    if (!user) {
+      throw new NotFoundException("Akun tidak ditemukan");
+    }
+    if (channel === "wa" && !user.phone) {
       throw new NotFoundException(
-        "Akun tidak ditemukan atau belum punya nomor WhatsApp",
+        "Akun belum punya nomor WhatsApp. Gunakan kirim via Email.",
       );
     }
     if (!user.isActive) {
       throw new BadRequestException("Akun tidak aktif");
     }
-    await this.sendNewOtp(user.phone, { channel, email: normalizedEmail });
-    return {
+    await this.sendNewOtp({
+      channel,
+      email: user.email,
       phone: user.phone,
-      phoneMasked: maskPhone(user.phone),
+    });
+    return {
+      email: user.email,
+      phone: user.phone ?? "",
+      phoneMasked: user.phone ? maskPhone(user.phone) : "",
       channel,
       destinationMasked:
-        channel === "email" ? maskEmail(normalizedEmail) : maskPhone(user.phone),
+        channel === "email" ? maskEmail(user.email) : maskPhone(user.phone ?? ""),
     };
   }
 
@@ -312,12 +550,18 @@ export class RegisterService {
     const user = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
     });
-    if (!user || !user.phone) {
+    if (!user) {
       throw new NotFoundException("Akun tidak ditemukan");
     }
 
+    // Email channel: OTP disimpan dengan key = email. WA channel: key = phone.
+    // Coba lookup by email dulu, fallback ke phone.
+    const tokenWhere = [
+      { phone: normalizedEmail, token: { startsWith: `${otp}-` } },
+      ...(user.phone ? [{ phone: user.phone, token: { startsWith: `${otp}-` } }] : []),
+    ];
     const record = await this.prisma.phoneVerificationToken.findFirst({
-      where: { phone: user.phone, token: { startsWith: `${otp}-` } },
+      where: { OR: tokenWhere },
     });
     if (!record) throw new BadRequestException("Kode OTP tidak valid");
     if (record.expiresAt < new Date()) {
@@ -334,7 +578,7 @@ export class RegisterService {
         data: { password: hashedPassword, phoneVerified: true },
       }),
       this.prisma.phoneVerificationToken.deleteMany({
-        where: { phone: user.phone },
+        where: { phone: { in: [normalizedEmail].concat(user.phone ? [user.phone] : []) } },
       }),
     ]);
 
@@ -356,7 +600,7 @@ export class RegisterService {
     if (user.phoneVerified) {
       throw new BadRequestException("Akun sudah terverifikasi");
     }
-    await this.sendNewOtp(user.phone, { channel, email: normalizedEmail });
+    await this.sendNewOtp({ channel, email: normalizedEmail, phone: user.phone });
     return { phone: user.phone };
   }
 
@@ -376,7 +620,7 @@ export class RegisterService {
       throw new BadRequestException("Nomor WhatsApp sudah terverifikasi");
     }
 
-    await this.sendNewOtp(normalized, { channel, email: user.email });
+    await this.sendNewOtp({ channel, email: user.email, phone: normalized });
     return { success: true };
   }
 
@@ -385,33 +629,37 @@ export class RegisterService {
   // ===========================
 
   /**
-   * Generate + simpan OTP (selalu by-phone, supaya verifikasi/reset tidak
-   * berubah) lalu KIRIM lewat channel yang dipilih.
-   *   - channel "wa"    → kirim via platform WhatsApp sender (default).
-   *   - channel "email" → kirim via Gmail API (EmailService). `email` wajib.
+  /**
+   * Generate + simpan OTP lalu KIRIM lewat channel yang dipilih.
+   * - channel "wa"    → key = phone, kirim via WhatsApp sender.
+   * - channel "email" → key = email, kirim via EmailService.
    */
-  private async sendNewOtp(
-    phone: string,
-    opts?: { channel?: OtpChannel; email?: string | null },
-  ): Promise<void> {
-    const channel: OtpChannel = opts?.channel ?? "wa";
-    await this.prisma.phoneVerificationToken.deleteMany({ where: { phone } });
+  private async sendNewOtp(opts: {
+    channel: OtpChannel;
+    email: string;
+    phone?: string | null;
+  }): Promise<void> {
+    const channel = opts.channel;
+    const tokenKey = channel === "email" ? opts.email : (opts.phone ?? opts.email);
+
+    // Preserve registration payload if exists in old token
+    const old = await this.prisma.phoneVerificationToken.findFirst({ where: { phone: tokenKey } });
+    const pendingSuffix = old?.token.match(/--pending:(.+)$/)?.[1] ?? null;
+
+    await this.prisma.phoneVerificationToken.deleteMany({ where: { phone: tokenKey } });
 
     const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
-    const token = `${otp}-${crypto.randomBytes(3).toString("hex")}`;
+    let token = `${otp}-${crypto.randomBytes(3).toString("hex")}`;
+    if (pendingSuffix) token += `--pending:${pendingSuffix}`;
+
+    this.logger.log(`[OTP] ${otp} → ${opts.channel === "email" ? opts.email : (opts.phone ?? opts.email)} (${opts.channel})`);
+
     await this.prisma.phoneVerificationToken.create({
-      data: {
-        phone,
-        token,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-      },
+      data: { phone: tokenKey, token, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
     });
 
-    if (channel === "email") {
-      await this.sendOtpViaEmail(otp, opts?.email ?? null);
-      return;
-    }
-    await this.sendOtpViaWhatsapp(otp, phone);
+    if (channel === "email") { await this.sendOtpViaEmail(otp, opts.email); return; }
+    await this.sendOtpViaWhatsapp(otp, tokenKey);
   }
 
   private async sendOtpViaEmail(

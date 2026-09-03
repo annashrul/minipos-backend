@@ -152,6 +152,28 @@ export class ProductsService {
       });
     }
 
+    // Deep fallback: saat branchId diberikan tapi produk tidak punya data
+    // cabang spesifik (dibuat saat filter "Semua Lokasi"), synthesiz virtual
+    // branch SKU dari nilai default produk. Ini memastikan form edit produk
+    // tetap terisi meskipun tidak ada record di product_branch_skus,
+    // branch_product_prices, maupun branch_stocks.
+    if (branchId && effectiveBranchSkus.length === 0) {
+      effectiveBranchSkus = [
+        {
+          id: `virtual:${branchId}`,
+          branchId,
+          unitId: null,
+          variantId: null,
+          sellingPrice: product.sellingPrice ?? 0,
+          purchasePrice: product.purchasePrice ?? 0,
+          stock: product.stock ?? 0,
+          minStock: product.minStock ?? 5,
+          barcode: null,
+          isActive: true,
+        },
+      ];
+    }
+
     const enrichedBranchSkus = effectiveBranchSkus.map((s) => ({
       ...s,
       branchName: branchNameMap.get(s.branchId) ?? null,

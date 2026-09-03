@@ -12,6 +12,7 @@ import type {
   UpdateProductDto,
 } from "./dto/products.dto";
 import { PrismaService } from "@/modules/prisma/prisma.service";
+import { ProductEmbeddingService } from "@/modules/image-search/product-embedding.service";
 import { ProductsRepository } from "./products.repository";
 import { toProductResponse } from "./products.helpers";
 
@@ -22,6 +23,7 @@ export class ProductCreateUpdateService {
   constructor(
     private readonly repo: ProductsRepository,
     private readonly prisma: PrismaService,
+    private readonly embeddings: ProductEmbeddingService,
   ) {}
 
   // Auto-generate kode saat simpan TANPA kode. Skema HARUS sama dengan
@@ -102,8 +104,23 @@ export class ProductCreateUpdateService {
       if (dto.tierPrices !== undefined) {
         await this.replaceTierPrices(created.id, dto.tierPrices);
       }
-      if (dto.branchSkus !== undefined) {
+      // branchSkus kosong pada create artinya user belum mengisi matrix cabang —
+      // biarkan produk hanya punya data default (tidak ada record branch spesifik).
+      // View vw_product_branch + findDetail deep-fallback akan tetap menampilkan
+      // produk di semua cabang dengan nilai default dari product.
+      if (dto.branchSkus !== undefined && dto.branchSkus.length > 0) {
         await this.replaceBranchSkusInline(created.id, dto.branchSkus);
+      }
+      // Search-by-Image: begitu produk punya foto, langsung buat embedding-nya
+      // supaya produk baru bisa ditemukan lewat foto tanpa menunggu backfill.
+      // Fire-and-forget di dalam try/catch — kegagalan ai-service TIDAK boleh
+      // menggagalkan penyimpanan produk. Sisa yang gagal diambil cron sweeper.
+      if (created.imageUrl) {
+        try {
+          this.embeddings.syncInBackground(created.id, created.imageUrl);
+        } catch {
+          // sengaja diabaikan: embedding bersifat best-effort
+        }
       }
       return toProductResponse(created);
     } catch (err) {
@@ -169,6 +186,16 @@ export class ProductCreateUpdateService {
       }
       if (dto.branchSkus !== undefined) {
         await this.replaceBranchSkusInline(id, dto.branchSkus);
+      }
+      // Foto berubah → embedding lama tidak valid lagi. Tidak perlu tahu nilai
+      // lama: embedProduct() sendiri no-op kalau "embeddedImageUrl" masih sama,
+      // dan meng-NULL-kan embedding kalau imageUrl dikosongkan.
+      if (dto.imageUrl !== undefined) {
+        try {
+          this.embeddings.syncInBackground(id, updated.imageUrl ?? null);
+        } catch {
+          // sengaja diabaikan: embedding bersifat best-effort
+        }
       }
       return toProductResponse(updated);
     } catch (err) {

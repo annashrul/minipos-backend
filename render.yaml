@@ -140,3 +140,126 @@ services:
 
       - key: SENTRY_DSN
         sync: false
+
+      ## ── Search-by-Image (pgvector + ai-service) ─────────────────────────
+      ## URL internal ai-service (private service di bawah). Render menyediakan
+      ## hostname internal `<nama-service>:<port>` untuk komunikasi antar
+      ## service dalam satu akun/region.
+      - key: AI_SERVICE_URL
+        value: "http://minipos-ai-service:8000"
+
+      ## WAJIB diisi manual & HARUS sama dengan AI_SERVICE_TOKEN di ai-service.
+      ## Tanpa ini endpoint /embed bisa dipanggil siapa pun yang bisa mencapai
+      ## service tersebut.
+      - key: AI_SERVICE_TOKEN
+        sync: false
+
+      ## Model image encoder. HARUS sama dengan yang di-bake ke image
+      ## ai-service, karena vektor dari model berbeda tidak sebanding.
+      - key: AI_MODEL_NAME
+        value: "google/siglip-base-patch16-224"
+
+      ## Dimensi vektor. HARUS sama dengan kolom products.embedding
+      ## (vector(768), lihat prisma/migrations/manual/phase58_image_embedding.sql)
+      ## dan dengan /health.dim ai-service. SigLIP base = 768.
+      - key: VECTOR_DIMENSION
+        value: "768"
+
+      - key: IMAGE_SEARCH_LIMIT
+        value: "12"
+
+      ## Gate hasil pencarian. UTAMANYA RELATIF: hit diterima kalau jaraknya
+      ## jauh lebih kecil dari sebaran jarak query itu sendiri —
+      ##   ratio = distance / median(jarak query ke SELURUH katalog company)
+      ## Ambang absolut tunggal TIDAK BISA dipakai: foto baru dari kamera untuk
+      ## produk yang benar mendarat di 0.21–0.30 sementara p01 jarak antar
+      ## produk katalog = 0.2489 (sebarannya tumpang tindih).
+      ## Kalibrasi 68 produk + 8 foto produk company lain:
+      ##   ada di katalog -> ratio 0.185 & 0.466 | tidak ada -> 0.732..0.876
+      - key: IMAGE_SEARCH_RATIO_MAX
+        value: "0.60"
+
+      ## Plafon absolut: jarak di atas ini tidak pernah diterima.
+      - key: IMAGE_SEARCH_ABS_MAX
+        value: "0.45"
+
+      ## Lantai absolut: jarak di bawah ini selalu diterima (p90 self-distance
+      ## foto terdistorsi = 0.14).
+      - key: IMAGE_SEARCH_ABS_FLOOR
+        value: "0.18"
+
+      ## Kandidat "Gambar serupa" saat TIDAK ADA hasil yang lolos gate. Gate
+      ## dikalibrasi untuk kecocokan PRODUK, jadi foto kategori (mis. botol air
+      ## mineral generik tanpa label vs katalog yang hanya punya "Aqua Gelas")
+      ## pasti gagal gate. Tanpa tier ini user melihat layar buntu padahal
+      ## tetangga terdekatnya relevan. Hasilnya HANYA mengisi section "Gambar
+      ## serupa", tidak pernah diklaim persis. 0 = matikan (perilaku lama).
+      - key: IMAGE_SEARCH_NEAR_LIMIT
+        value: "6"
+
+      ## Jalur TEKS: deskripsi yang dibaca LLM vision dari foto dicocokkan ke
+      ## FOTO produk lewat text tower SigLIP (ruang vektor yang sama).
+      ## Kasus nyata "foto botol air mineral tanpa label" vs katalog yang hanya
+      ## punya "aqua gelas":
+      ##   gambar->gambar : peringkat 40/69 (d=0.4366) - tidak ketemu
+      ##   nama produk    : skor 0.031 (ambang 0.30)   - tidak ketemu
+      ##   teks->gambar   : peringkat 1/69 (d=0.9284)  - KETEMU
+      ## SKALA JARAK BEDA dari gambar<->gambar. Kalibrasi 13 positif + 9 negatif:
+      ##   ada padanannya -> 0.8596..0.9284 | tidak ada -> 0.9605..1.0081
+      ## 0.945 = titik tengahnya.
+      - key: IMAGE_SEARCH_TEXT_ABS_MAX
+        value: "0.945"
+
+      - key: IMAGE_SEARCH_TEXT_LIMIT
+        value: "6"
+
+      - key: IMAGE_MAX_SIZE_MB
+        value: "5"
+
+      ## Timeout HTTP ke ai-service. Cold start container model bisa lambat.
+      - key: AI_SERVICE_TIMEOUT_MS
+        value: "20000"
+
+  ## ── ai-service: embedding gambar (FastAPI + SigLIP, CPU) ────────────────
+  ## type: pserv = PRIVATE service. TIDAK punya URL publik, hanya bisa diakses
+  ## dari service lain di akun Render yang sama. Ini yang menjaga /embed tidak
+  ## terbuka ke internet; AI_SERVICE_TOKEN adalah lapisan kedua.
+  - type: pserv
+    name: minipos-ai-service
+    runtime: docker
+    ## Path relatif terhadap root repo backend.
+    dockerfilePath: ./ai-service/Dockerfile
+    dockerContext: ./ai-service
+
+    ## PERHATIAN RAM: torch CPU + SigLIP base fp32 butuh ~1.2-1.6GB saat
+    ## inference. Plan "starter" TIDAK cukup — container akan OOM saat memuat
+    ## model. Verifikasi kuota RAM plan di dashboard Render sebelum deploy dan
+    ## naikkan bila perlu.
+    plan: standard
+
+    branch: main
+    autoDeploy: true
+
+    ## healthCheckPath tidak berlaku untuk private service (khusus type: web).
+    ## Kesiapan dipantau lewat GET /health dari backend (endpoint
+    ## /api/image-search/status mengembalikan serviceReachable).
+
+    envVars:
+      - key: AI_MODEL_NAME
+        value: "google/siglip-base-patch16-224"
+
+      ## Harus identik dengan AI_SERVICE_TOKEN di menopos-api.
+      - key: AI_SERVICE_TOKEN
+        sync: false
+
+      - key: AI_MAX_BATCH
+        value: "32"
+
+      - key: IMAGE_MAX_SIZE_MB
+        value: "5"
+
+      ## Cache HF sudah di-bake ke image; set eksplisit supaya runtime tidak
+      ## mencoba menulis ke direktori lain.
+      - key: HF_HOME
+        value: "/opt/hf"
+

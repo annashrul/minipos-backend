@@ -1,0 +1,11 @@
+# Backend TIDAK mengirim ai-service ke build context-nya: weights model +
+# venv Python bisa ratusan MB dan sama sekali tidak dipakai image Node.
+ai-service/
+node_modules
+dist
+.git
+*.log
+tsc-out.txt
+.env
+.env.*
+!.env.example

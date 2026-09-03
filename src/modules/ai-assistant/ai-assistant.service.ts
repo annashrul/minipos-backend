@@ -8,6 +8,28 @@ import type {
 import Groq from "groq-sdk";
 import { AiAssistantToolsService } from "./ai-assistant-tools.service";
 import { AiAssistantRepository } from "./ai-assistant.repository";
+import {
+  getJustDoWorkerSettings,
+  justDoWorkerChat,
+  justDoWorkerContent,
+} from "@/common/ai/justdoworker.client";
+import {
+  aiModel,
+  aiModelChain,
+  isModelUnavailableError,
+  isProviderAuthError,
+  safeReasoningEffort,
+} from "@/common/ai/ai-models";
+import {
+  EXACT_MATCH_RELATIVE,
+  EXACT_MATCH_SCORE,
+  SIMILAR_MATCH_SCORE,
+  isGrounded,
+  isKeywordInflation,
+  pickGroundedAlternative,
+  rankCandidates,
+  type WeightedQuery,
+} from "@/common/ai/search-match";
 
 // Pola PENOLAKAN SEJATI — AI menolak / mengaku tidak punya akses / tidak
 // mampu menjawab. HANYA pola ini yang dihitung UNANSWERED di audit log.
@@ -22,6 +44,11 @@ import { AiAssistantRepository } from "./ai-assistant.repository";
 // hanya frasa penolakan eksplisit yang disisakan.
 const REFUSAL_RE =
   /belum bisa menjawab|tidak (bisa|dapat) menjawab|tidak (punya|memiliki) akses|di luar (kemampuan|akses)|bukan kemampuan saya|tidak dapat (mengakses|membantu dengan)/i;
+
+// CATATAN: ID model TIDAK lagi dihardcode di file ini. Semuanya di-resolve dari
+// .env lewat `aiModel()` / `aiModelChain()` (lihat @/common/ai/ai-models) karena
+// provider free-tier rutin men-decommission model — dulu itu membuat fitur AI
+// mati senyap dan perbaikannya harus ubah kode. Sekarang cukup edit .env.
 
 // OpenAI-compatible tool definitions for Groq
 const TOOLS: Groq.Chat.ChatCompletionTool[] = [
@@ -791,8 +818,18 @@ export class AiAssistantService {
 
   /**
    * Normalisasi hasil voice-to-text menjadi kata kunci pencarian yang benar.
-   * One-shot Groq (tanpa tools) — contoh "kontaktor" -> "contactor",
-   * "konveyor" -> "conveyor". Fallback ke transkrip asli kalau AI gagal.
+   * One-shot (tanpa tools) — contoh "kontaktor" -> "contactor",
+   * "konveyor" -> "conveyor". Fallback ke transkrip asli kalau semua AI gagal.
+   *
+   * PENTING (perbaikan): AI TIDAK lagi dipanggil kalau ucapan user sudah cocok
+   * dengan katalog. Dulu setiap ucapan selalu dilempar ke LLM dan LLM cenderung
+   * "melengkapi" kata umum menjadi satu nama produk spesifik — mis. "goreng"
+   * (3+ produk ber-"goreng") jadi "Mie Goreng Jawa", sehingga hasil pencarian
+   * menyusut jadi satu produk saja. Sekarang pencocokan katalog dilakukan
+   * deterministik lebih dulu (`isGrounded`), dan hasil AI ditolak kalau hanya
+   * MENAMBAH kata tanpa mengoreksi apa pun (`isKeywordInflation`).
+   *
+   * Rantai provider: Groq -> justDoWorker (kalau JUSTDOWORKER_API_KEY diset).
    */
   async normalizeSearchQuery(
     transcript: string,
@@ -802,35 +839,45 @@ export class AiAssistantService {
     const raw = (transcript || "").trim();
     if (!raw) return { query: "" };
 
-    const apiKey = this.config.get<string>("GROQ_API_KEY");
-    if (!apiKey) return { query: raw };
-    // Pakai model instruct langsung (bukan reasoning gpt-oss) supaya output
-    // ringkas & cepat — normalisasi cuma butuh 1 kata kunci.
-    const model = "llama-3.3-70b-versatile";
+    // Katalog LENGKAP dipakai untuk pencocokan lokal (murah); yang dikirim ke
+    // LLM hanya potongan pertama supaya prompt tidak membengkak.
+    const list = candidates.map((c) => c.trim()).filter(Boolean);
 
-    const list = candidates
-      .map((c) => c.trim())
-      .filter(Boolean)
-      .slice(0, 150);
-    // Alternatif N-best dari STT (selain transcript utama). Diberikan ke AI agar
-    // bisa memilih hipotesis yang paling cocok dengan katalog/bunyi.
+    // ── Jalur cepat 1: ucapan SUDAH menemukan produk di katalog ──
+    // Tidak perlu LLM (dan tidak boleh, karena LLM akan mempersempit kueri).
+    if (isGrounded(raw, list)) return { query: raw };
+
+    // Alternatif N-best dari STT (selain transcript utama). Dipakai dua kali:
+    // (a) dicocokkan langsung ke katalog, (b) kalau tetap gagal, dikirim ke AI
+    // agar bisa memilih hipotesis yang paling cocok dengan katalog/bunyi.
     const alts = Array.from(
       new Set(
         [raw, ...alternatives.map((a) => (a || "").trim())].filter(Boolean),
       ),
     ).slice(0, 8);
+
+    // ── Jalur cepat 2: hipotesis STT lain yang cocok katalog ──
+    const groundedAlt = pickGroundedAlternative(alts, list);
+    if (groundedAlt) return { query: groundedAlt };
+
+    const jdw = getJustDoWorkerSettings(this.config);
+    const apiKey = this.config.get<string>("GROQ_API_KEY");
+    if (!jdw && !apiKey) return { query: raw };
+
     const sys = `Kamu MEMPERBAIKI hasil voice-to-text (sering salah dengar) menjadi KATA KUNCI pencarian produk yang tepat untuk katalog sebuah toko/gudang. Toko bisa apa saja (rokok, sparepart, sembako, dll) — JANGAN berasumsi satu jenis.
 Sistem voice memberi BEBERAPA alternatif hasil dengar (N-best). Pilih SATU yang paling cocok dengan katalog.
 
 ATURAN (urut prioritas):
 1. COCOKKAN ke produk di KATALOG berdasarkan BUNYI & ejaan (boleh lintas bahasa). Kalau SATU produk jelas dimaksud, kembalikan nama/kata kuncinya SEPERTI di katalog dan PERTAHANKAN kata pembeda (merek + varian). Contoh: "gudang garam filter" -> "Gudang Garam Filter"; "sampoerna mild" -> "Sampoerna Mild"; "djarum super" -> "Djarum Super".
 2. DILARANG menyusutkan nama produk spesifik menjadi kata kategori umum. "Gudang Garam Filter" TIDAK BOLEH menjadi hanya "filter". "Aqua botol" tidak boleh jadi "botol".
-3. DILARANG melebarkan kata umum menjadi produk spesifik. Kalau user hanya bilang "filter", biarkan "filter" (JANGAN ditebak jadi "Gudang Garam Filter"). Pertahankan tingkat kekhususan ucapan — jangan menambah, jangan mengurangi kata pembeda.
+3. DILARANG melebarkan kata umum menjadi produk spesifik. Kalau user hanya bilang "filter", biarkan "filter" (JANGAN ditebak jadi "Gudang Garam Filter"). Pertahankan tingkat kekhususan ucapan — jangan menambah, jangan mengurangi kata pembeda. JUMLAH KATA jawaban tidak boleh lebih banyak dari ucapan, kecuali murni memisah kata yang tersambung.
 4. Perbaiki transliterasi/salah-dengar istilah asing HANYA bila jelas cocok ke katalog atau jelas dimaksud: "kontaktor"->"contactor", "konveyor"->"conveyor", "bering"->"bearing", "soleinoid"->"solenoid", "ketrid"/"get rich"->"cartridge".
 5. Kalau tidak ada yang cocok di katalog, kembalikan ucapan APA ADANYA (rapikan ejaan ringan saja).
 6. JANGAN menambah kata yang tidak diucapkan.${
       list.length
-        ? `\n\nKATALOG produk yang ADA (acuan UTAMA untuk mencocokkan — pilih yang paling mirip bunyinya):\n${list.join("; ")}`
+        ? `\n\nKATALOG produk yang ADA (acuan UTAMA untuk mencocokkan — pilih yang paling mirip bunyinya):\n${list
+            .slice(0, 150)
+            .join("; ")}`
         : ""
     }
 Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa tanda baca tambahan.`;
@@ -842,116 +889,481 @@ Jawab HANYA kata kunci hasil koreksi. Tanpa tanda kutip, tanpa penjelasan, tanpa
             .join("\n")}`
         : raw;
 
-    try {
-      const groq = new Groq({ apiKey });
-      const res = await groq.chat.completions.create({
-        model,
-        temperature: 0,
-        max_tokens: 64,
-        messages: [
-          { role: "system", content: sys },
-          { role: "user", content: userContent },
-        ],
-      });
-      const out = res.choices?.[0]?.message?.content?.trim();
-      const cleaned = out
-        ? out.replace(/^["'`]+|["'`.]+$/g, "").trim()
-        : "";
-      return { query: cleaned.length > 0 ? cleaned : raw };
-    } catch {
-      return { query: raw };
+    const cleanKeyword = (s: string) =>
+      s.replace(/^["'`]+|["'`.]+$/g, "").trim();
+
+    /**
+     * Terima hasil AI hanya kalau benar-benar KOREKSI. Kalau seluruh kata asli
+     * masih ada tapi AI menambah kata pembeda baru, itu pelebaran kueri yang
+     * mempersempit hasil pencarian — tolak dan pakai ucapan asli.
+     */
+    const accept = (out: string, provider: string): string | null => {
+      const cleaned = cleanKeyword(out);
+      if (!cleaned) return null;
+      if (isKeywordInflation(raw, cleaned)) {
+        this.logger.warn(
+          `[AI normalize-search] ${provider} melebarkan kueri "${raw}" -> "${cleaned}" — ditolak, pakai ucapan asli`,
+        );
+        return null;
+      }
+      return cleaned;
+    };
+
+    // ── Groq (didahulukan: latensi <1s, penting karena user menunggu di kotak
+    // pencarian; justDoWorker/Claude butuh 5-12s untuk task yang sama) ──
+    const normalizeModel = aiModel(this.config, "GROQ_NORMALIZE_MODEL");
+    if (apiKey) {
+      try {
+        const groq = new Groq({ apiKey });
+        const res = await groq.chat.completions.create({
+          model: normalizeModel,
+          temperature: 0,
+          max_tokens: 64,
+          reasoning_effort: safeReasoningEffort(normalizeModel),
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: userContent },
+          ],
+        });
+        const cleaned = accept(
+          res.choices?.[0]?.message?.content?.trim() ?? "",
+          `Groq (${normalizeModel})`,
+        );
+        if (cleaned) return { query: cleaned };
+        this.logger.warn(
+          `[AI normalize-search] Groq (${normalizeModel}) tidak memberi koreksi yang dipakai — coba provider lain`,
+        );
+      } catch (err) {
+        // JANGAN telan senyap: sebelumnya catch kosong membuat model mati
+        // (404) tidak pernah terlihat di log — normalisasi seolah "jalan"
+        // padahal selalu balik transkrip mentah.
+        const msg = err instanceof Error ? err.message : String(err);
+        const status = (err as { status?: number }).status;
+        this.logger.warn(
+          `[AI normalize-search] Groq (${normalizeModel}) gagal${
+            status ? ` HTTP ${status}` : ""
+          }: ${msg}`,
+        );
+      }
     }
+
+    // ── justDoWorker (relay OpenAI-compatible) ──
+    if (jdw) {
+      try {
+        const res = await justDoWorkerChat(jdw, {
+          model: jdw.model,
+          temperature: 0,
+          max_tokens: 64,
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: userContent },
+          ],
+        });
+        const cleaned = accept(
+          justDoWorkerContent(res),
+          `justDoWorker (${jdw.model})`,
+        );
+        if (cleaned) return { query: cleaned };
+        this.logger.warn(
+          `[AI normalize-search] justDoWorker (${jdw.model}) tidak memberi koreksi yang dipakai`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[AI normalize-search] justDoWorker (${jdw.model}) gagal: ${msg}`,
+        );
+      }
+    }
+
+    return { query: raw };
   }
 
   /**
-   * Cari produk berdasarkan FOTO komponen via Gemini vision (multimodal).
-   * Mengembalikan SATU kata kunci pencarian (mis. "bearing", "contactor").
+   * Cari produk berdasarkan FOTO via AI vision.
+   *
+   * Rantai fallback (berhenti di provider pertama yang mengembalikan hasil):
+   *   1. justDoWorker (relay OpenAI-compatible) — kalau JUSTDOWORKER_API_KEY ada
+   *   2. Groq (GROQ_VISION_MODEL, text+image)
+   *   3. OpenRouter (OPENROUTER_VISION_MODEL)
+   *   4. Cloudflare Workers AI (LLaVA)
+   *   5. Gemini native (Google AI Studio)
+   *
+   * Banyak provider karena tidak semua akun punya model multimodal aktif, dan
+   * model vision gratis sering di-decommission tanpa pemberitahuan.
+   *
+   * PEMBAGIAN TUGAS (perbaikan akurasi): model vision HANYA mendeskripsikan apa
+   * yang terlihat (merek, varian, kategori, teks kemasan). PENCOCOKAN ke katalog
+   * dilakukan di sini secara deterministik (`rankCandidates`). Sebelumnya model
+   * disuruh sekalian "menyebut nama PERSIS dari katalog" — model kecil sering
+   * salah menyalin atau mengarang nama, lalu frontend mencocokkan dengan
+   * `includes()` sehingga hasilnya kosong/keliru. Sekarang yang dikembalikan ke
+   * frontend adalah nama produk katalog yang sudah di-ranking.
    */
   async searchByImage(
     imageDataUrl: string,
     candidates: string[] = [],
-  ): Promise<{ query: string; similar: string[]; error?: string }> {
+  ): Promise<{
+    query: string;
+    matches: string[];
+    similar: string[];
+    error?: string;
+  }> {
     const img = (imageDataUrl || "").trim();
     if (!img.startsWith("data:image/")) {
-      return { query: "", similar: [], error: "Format gambar tidak valid" };
-    }
-    const apiKey = this.config.get<string>("GROQ_API_KEY");
-    if (!apiKey) {
       return {
         query: "",
+        matches: [],
         similar: [],
-        error: "GROQ_API_KEY belum dikonfigurasi",
+        error: "Format gambar tidak valid",
       };
     }
-    // Model multimodal (vision) Groq.
-    const model = "meta-llama/llama-4-scout-17b-16e-instruct";
 
-    const list = candidates
-      .map((c) => c.trim())
-      .filter(Boolean)
-      .slice(0, 150);
+    // Katalog LENGKAP dipakai untuk ranking (murah, lokal). Yang dikirim ke
+    // model hanya potongan pertama supaya prompt tidak membengkak.
+    const list = candidates.map((c) => c.trim()).filter(Boolean);
+    const promptCatalog = list.slice(0, 120);
     const prompt = `Kamu ahli identifikasi PRODUK di toko/gudang. Toko bisa apa saja (rokok, sparepart, sembako, minuman, dll) — JANGAN berasumsi satu jenis. Amati gambar dengan TELITI.
 Fokus pada OBJEK/PRODUK UTAMA di tengah/paling menonjol; abaikan latar belakang, tangan, dan meja.
-BACA teks merek/varian yang tertera di kemasan atau label (mis. "Gudang Garam Filter", "Aqua 600ml", "Bearing SKF 6204"). Perhatikan juga ciri fisik (bentuk, bahan, warna, ukuran).
-Identifikasi produk UTAMA, lalu sebutkan beberapa produk LAIN yang serupa yang mungkin ada di katalog.
+BACA semua teks yang tertera di kemasan/label (merek, varian, ukuran, kode part).
+TUGASMU HANYA MENDESKRIPSIKAN apa yang TERLIHAT. JANGAN mengarang nama produk yang tidak terbaca.
 Balas HANYA JSON valid (tanpa teks lain), format:
-{"primary":"<nama/kata kunci produk utama>","similar":["<produk serupa>","..."]}
-- "primary": nama/kata kunci produk. Kalau ada MEREK + VARIAN yang terbaca, SERTAKAN (mis. "Gudang Garam Filter", bukan cuma "rokok"/"filter"). Kosongkan "" HANYA jika benar-benar tidak bisa dikenali.
-- Jika produk COCOK dengan salah satu item di KATALOG, WAJIB pakai nama/kata kunci PERSIS dari katalog itu.
-- "similar": 0-4 produk lain yang mirip jenis/merek (boleh []). Utamakan yang ada di katalog.
-- Jangan menebak detail yang tidak terlihat (mis. nomor seri). Setepat yang terbaca saja.${
-      list.length
-        ? `\n\nKATALOG produk yang ADA (acuan UTAMA untuk mencocokkan):\n${list.join("; ")}`
+{"primary":"<nama produk seperti terbaca>","brand":"<merek>","variant":"<varian/rasa/tipe>","size":"<ukuran + satuan>","category":"<kategori umum>","text":["<teks lain di kemasan>"],"keywords":["<kata kunci pencarian>"]}
+- "primary": gabungan merek + varian yang TERBACA (mis. "Gudang Garam Filter", "Aqua 600 ml"). Isi "" kalau tidak ada teks yang terbaca dan bentuknya tidak dikenali.
+- "brand"/"variant"/"size": isi "" kalau tidak terlihat. JANGAN menebak.
+- "category": kategori umum 1-2 kata (mis. "rokok", "air mineral", "bearing", "mie instan").
+- "text": 0-6 potongan teks lain yang terbaca di kemasan (boleh []).
+- "keywords": 2-6 kata kunci PENDEK (1-2 kata) untuk mencari produk ini di katalog toko, urut dari paling spesifik.${
+      promptCatalog.length
+        ? `\n\nCONTOH nama produk di katalog toko ini (hanya gambaran gaya penamaan, TIDAK WAJIB dipakai):\n${promptCatalog.join("; ")}`
         : ""
     }`;
 
-    try {
-      const groq = new Groq({ apiKey });
-      const res = await groq.chat.completions.create({
-        model,
-        temperature: 0,
-        max_tokens: 220,
-        messages: [
+    const clean = (s: string) =>
+      String(s || "")
+        .replace(/^["'`]+|["'`.]+$/g, "")
+        .trim();
+
+    type VisionGuess = {
+      primary: string;
+      brand: string;
+      variant: string;
+      size: string;
+      category: string;
+      keywords: string[];
+    };
+
+    const strArray = (v: unknown, max: number): string[] =>
+      Array.isArray(v)
+        ? v
+            .map((x) => clean(typeof x === "string" ? x : ""))
+            .filter(Boolean)
+            .slice(0, max)
+        : [];
+
+    const parseOutput = (raw: string): VisionGuess => {
+      const out = raw.trim();
+      const empty: VisionGuess = {
+        primary: "",
+        brand: "",
+        variant: "",
+        size: "",
+        category: "",
+        keywords: [],
+      };
+      try {
+        const m = out.match(/\{[\s\S]*\}/);
+        const json = JSON.parse(m ? m[0] : out) as Record<string, unknown>;
+        const str = (k: string) =>
+          clean(typeof json[k] === "string" ? (json[k] as string) : "");
+        return {
+          primary: str("primary"),
+          brand: str("brand"),
+          variant: str("variant"),
+          size: str("size"),
+          category: str("category"),
+          // `similar` tetap diterima demi model yang masih mengikuti format lama.
+          keywords: [
+            ...strArray(json.keywords, 6),
+            ...strArray(json.text, 4),
+            ...strArray(json.similar, 4),
+          ],
+        };
+      } catch {
+        // Model tidak balas JSON — pakai seluruh teksnya sebagai kata kunci.
+        return { ...empty, primary: clean(out).slice(0, 120) };
+      }
+    };
+
+    // Hasil dianggap SAH hanya kalau ada sesuatu yang bisa dicocokkan — kalau
+    // kosong kita lanjut ke provider berikutnya.
+    const hasResult = (g: VisionGuess) =>
+      g.primary.length > 0 ||
+      g.brand.length > 0 ||
+      g.category.length > 0 ||
+      g.keywords.length > 0;
+
+    /**
+     * Petakan deskripsi vision ke nama produk KATALOG. Bobot mengikuti seberapa
+     * kuat sinyalnya: nama/merek yang terbaca paling dipercaya, kategori paling
+     * lemah (biar tidak semua produk sekategori dianggap cocok).
+     */
+    const ground = (g: VisionGuess) => {
+      const label =
+        g.primary ||
+        [g.brand, g.variant, g.size].filter(Boolean).join(" ") ||
+        g.keywords[0] ||
+        g.category;
+      if (list.length === 0) {
+        return { query: label, matches: [] as string[], similar: [] as string[] };
+      }
+
+      const queries: WeightedQuery[] = [];
+      const push = (text: string, weight: number) => {
+        if (text.trim()) queries.push({ text, weight });
+      };
+      push(g.primary, 1);
+      // Kombinasi hanya kalau KEDUA bagian ada — kalau varian/ukuran kosong,
+      // kueri menyusut jadi merek saja dan tidak boleh mewarisi bobot tinggi.
+      if (g.brand && g.variant) push(`${g.brand} ${g.variant}`, 0.95);
+      if (g.brand && g.size) push(`${g.brand} ${g.size}`, 0.9);
+      // Merek/kata kunci/kategori TUNGGAL sengaja diberi bobot di bawah ambang
+      // `EXACT_MATCH_SCORE`: sendirian mereka hanya bisa mengisi section
+      // "serupa". Tanpa ini, kata merek generik ("indomie") menyamakan skor
+      // SEMUA produk merek itu dan menenggelamkan sinyal varian yang benar.
+      push(g.brand, 0.65);
+      g.keywords.forEach((k, i) => push(k, i === 0 ? 0.6 : 0.5));
+      push(g.category, 0.4);
+
+      const ranked = rankCandidates(queries, list);
+      const top = ranked[0]?.score ?? 0;
+      // "Persis" = lolos ambang absolut DAN sekelas dengan skor tertinggi.
+      const exactFloor = Math.max(
+        EXACT_MATCH_SCORE,
+        top * EXACT_MATCH_RELATIVE,
+      );
+      const matches = ranked
+        .filter((r) => r.score >= exactFloor)
+        .slice(0, 12)
+        .map((r) => r.name);
+      const similar = ranked
+        .filter(
+          (r) => r.score >= SIMILAR_MATCH_SCORE && !matches.includes(r.name),
+        )
+        .slice(0, 12)
+        .map((r) => r.name);
+      this.logger.log(
+        `[AI search-by-image] "${label}" → ${matches.length} cocok, ${similar.length} serupa (top: ${
+          ranked[0] ? `${ranked[0].name} ${ranked[0].score.toFixed(2)}` : "-"
+        })`,
+      );
+      return { query: matches[0] ?? label, matches, similar };
+    };
+
+    // ── justDoWorker (relay OpenAI-compatible) ──
+    const jdw = getJustDoWorkerSettings(this.config);
+    if (jdw) {
+      try {
+        const res = await justDoWorkerChat(
+          jdw,
           {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
+            model: jdw.visionModel,
+            temperature: 0,
+            max_tokens: 220,
+            messages: [
               {
-                type: "image_url",
-                image_url: { url: img, detail: "high" },
+                role: "user",
+                content: [
+                  { type: "text", text: prompt },
+                  { type: "image_url", image_url: { url: img } },
+                ],
               },
             ],
           },
-        ],
-      });
-      const out = res.choices?.[0]?.message?.content?.trim() ?? "";
-      // Ekstrak JSON {primary, similar}. Fallback: anggap seluruh output =
-      // primary bila bukan JSON.
-      const clean = (s: string) =>
-        String(s || "").replace(/^["'`]+|["'`.]+$/g, "").trim();
-      try {
-        const m = out.match(/\{[\s\S]*\}/);
-        const json = JSON.parse(m ? m[0] : out) as {
-          primary?: unknown;
-          similar?: unknown;
-        };
-        const primary = clean(typeof json.primary === "string" ? json.primary : "");
-        const similar = Array.isArray(json.similar)
-          ? json.similar
-              .map((x) => clean(typeof x === "string" ? x : ""))
-              .filter(Boolean)
-              .slice(0, 4)
-          : [];
-        return { query: primary, similar };
-      } catch {
-        return { query: clean(out), similar: [] };
+          90_000,
+        );
+        const parsed = parseOutput(justDoWorkerContent(res));
+        if (hasResult(parsed)) return ground(parsed);
+        this.logger.warn(
+          `[AI search-by-image] justDoWorker (${jdw.visionModel}) tidak mengenali produk — coba provider lain`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[AI search-by-image] justDoWorker (${jdw.visionModel}) gagal: ${msg}`,
+        );
       }
-    } catch (err) {
-      this.logger.warn(
-        `[AI search-by-image] error: ${err instanceof Error ? err.message : err}`,
-      );
-      return { query: "", similar: [], error: "Gagal memproses gambar" };
     }
+
+    // ── Groq (model vision, default qwen3.8-27b — text+image) ──
+    const groqKey = this.config.get<string>("GROQ_API_KEY");
+    const groqVisionModel = aiModel(this.config, "GROQ_VISION_MODEL");
+    if (groqKey) {
+      try {
+        const groq = new Groq({ apiKey: groqKey });
+        const res = await groq.chat.completions.create({
+          model: groqVisionModel,
+          temperature: 0,
+          max_tokens: 220,
+          reasoning_effort: safeReasoningEffort(groqVisionModel),
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: img } },
+              ],
+            },
+          ],
+        });
+        const out = res.choices?.[0]?.message?.content?.trim() ?? "";
+        const parsed = parseOutput(out);
+        if (hasResult(parsed)) return ground(parsed);
+        this.logger.warn(
+          `[AI search-by-image] Groq (${groqVisionModel}) tidak mengenali produk — coba provider lain`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[AI search-by-image] Groq (${groqVisionModel}) gagal: ${msg}`,
+        );
+      }
+    }
+
+    // ── OpenRouter (API gateway, OpenAI-compatible) ──
+    const orKey = this.config.get<string>("OPENROUTER_API_KEY");
+    const orModel = aiModel(this.config, "OPENROUTER_VISION_MODEL");
+    if (orKey) {
+      try {
+        const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${orKey}`,
+          },
+          body: JSON.stringify({
+            model: orModel,
+            temperature: 0,
+            max_tokens: 220,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: prompt },
+                  { type: "image_url", image_url: { url: img } },
+                ],
+              },
+            ],
+          }),
+        });
+        const orData = (await orRes.json()) as {
+          choices?: { message?: { content?: string } }[];
+          error?: { message?: string };
+        };
+        if (!orRes.ok) throw new Error(orData.error?.message ?? `HTTP ${orRes.status}`);
+        const out = orData.choices?.[0]?.message?.content?.trim() ?? "";
+        const parsed = parseOutput(out);
+        if (hasResult(parsed)) return ground(parsed);
+        this.logger.warn(
+          `[AI search-by-image] OpenRouter (${orModel}) tidak mengenali produk — coba provider lain`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[AI search-by-image] OpenRouter (${orModel}) gagal: ${msg}`,
+        );
+      }
+    }
+
+    // ── Cloudflare Workers AI (free tier: 10k req/month) ──
+    const cfAccountId = this.config.get<string>("CLOUDFLARE_ACCOUNT_ID");
+    const cfToken = this.config.get<string>("CLOUDFLARE_API_TOKEN");
+    const cfModel = aiModel(this.config, "CLOUDFLARE_VISION_MODEL");
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/ai/run/${cfModel}`;
+
+    if (cfAccountId && cfToken) {
+      try {
+        // LLaVA: format { image: number[], prompt: string }
+        const base64 = img.replace(/^data:image\/\w+;base64,/, "");
+        const imgBytes = Buffer.from(base64, "base64");
+        const imgArray = Array.from(imgBytes);
+        const cfRes = await fetch(cfUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfToken}` },
+          body: JSON.stringify({ image: imgArray, prompt, max_tokens: 220 }),
+        });
+        const cfData = (await cfRes.json()) as {
+          success?: boolean;
+          result?: { description?: string; response?: string };
+          errors?: { message: string }[];
+        };
+        if (!cfRes.ok || !cfData.success) {
+          throw new Error(cfData.errors?.[0]?.message ?? `HTTP ${cfRes.status}`);
+        }
+        const out = cfData.result?.description ?? cfData.result?.response ?? "";
+        const parsed = parseOutput(out);
+        if (hasResult(parsed)) return ground(parsed);
+        this.logger.warn(
+          "[AI search-by-image] Cloudflare tidak mengenali produk — coba provider lain",
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`[AI search-by-image] Cloudflare gagal: ${msg}`);
+      }
+    }
+
+    // ── Gemini fallback (native endpoint, key via query param) ──
+    const geminiKey = this.config.get<string>("GEMINI_API_KEY");
+    if (geminiKey) {
+      try {
+        const mime = img.startsWith("data:image/png") ? "image/png"
+          : img.startsWith("data:image/webp") ? "image/webp"
+          : "image/jpeg";
+        const base64 = img.replace(/^data:image\/\w+;base64,/, "");
+        const geminiModel = aiModel(this.config, "GEMINI_MODEL");
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: mime, data: base64 } },
+                  ],
+                },
+              ],
+              generationConfig: { temperature: 0, maxOutputTokens: 220 },
+            }),
+          },
+        );
+        if (!geminiRes.ok) {
+          const body = await geminiRes.text().catch(() => "");
+          throw new Error(`Gemini HTTP ${geminiRes.status}: ${body.slice(0, 200)}`);
+        }
+        const data = (await geminiRes.json()) as {
+          candidates?: { content?: { parts?: { text?: string }[] } }[];
+        };
+        const out = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+        const parsed = parseOutput(out);
+        if (hasResult(parsed)) return ground(parsed);
+        this.logger.warn(
+          `[AI search-by-image] Gemini (${geminiModel}) tidak mengenali produk`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`[AI search-by-image] Gemini gagal: ${msg}`);
+      }
+    }
+
+    return {
+      query: "",
+      matches: [],
+      similar: [],
+      error:
+        "Semua provider AI vision gagal (justDoWorker/Groq/OpenRouter/Cloudflare/Gemini). Cek log server untuk detail.",
+    };
   }
 
   async chat(
@@ -1020,8 +1432,7 @@ Info user: ${auth.userName} (${auth.role})`;
     // 120b (yang punya ekor 30-57s karena reasoning berat), tapi tetap sekeluarga
     // gpt-oss sehingga tool-calling tetap andal. Bisa di-override balik ke
     // gpt-oss-120b via env GROQ_MODEL kalau butuh kualitas sintesis lebih tinggi.
-    const model =
-      this.config.get<string>("GROQ_MODEL") || "openai/gpt-oss-20b";
+    const model = aiModel(this.config, "GROQ_MODEL");
 
     // Pertanyaan terakhir user + timer + daftar tool, untuk audit log.
     const question =
@@ -1033,65 +1444,85 @@ Info user: ${auth.userName} (${auth.role})`;
     const blocks: AiChatDataBlock[] = [];
     const startedAt = Date.now();
 
-    if (!apiKey) {
+    const jdwEarly = getJustDoWorkerSettings(this.config);
+    if (!apiKey && !jdwEarly) {
       const result: AiChatResponse = {
         error:
-          "GROQ_API_KEY belum dikonfigurasi. Dapatkan gratis di console.groq.com",
+          "GROQ_API_KEY belum dikonfigurasi. Dapatkan gratis di console.groq.com (atau set JUSTDOWORKER_API_KEY).",
       };
       await this.persistLog(auth, question, toolsUsed, startedAt, result);
       return result;
     }
 
-    const groq = new Groq({ apiKey });
+    const groq = apiKey ? new Groq({ apiKey }) : null;
 
-    // Rantai fallback model Groq (tiap model punya kuota TPD sendiri) lalu
-    // fallback terakhir ke Google AI Studio (Gemini) saat SEMUA model Groq
-    // kena rate-limit/quota harian — sama seperti wa-bot. Gemini dipanggil via
-    // fetch ke endpoint OpenAI-compatible (path tidak ter-mangle, error terbaca).
-    const groqModels = [
-      model,
-      "openai/gpt-oss-120b",
-      "llama-3.3-70b-versatile",
-    ].filter((m, i, arr) => arr.indexOf(m) === i);
+    // Rantai fallback model Groq (tiap model punya kuota TPD sendiri), lalu
+    // Gemini (Google AI Studio), lalu justDoWorker sebagai jaring terakhir.
+    // Gemini & justDoWorker dipanggil via fetch ke endpoint OpenAI-compatible
+    // (path tidak ter-mangle SDK, body error ikut terbaca).
+    // Daftar model dibaca dari env GROQ_FALLBACK_MODELS supaya model yang mati
+    // bisa dicabut tanpa ubah kode.
+    const groqModels = aiModelChain(this.config, "GROQ_FALLBACK_MODELS", model);
     const geminiKey = this.config.get<string>("GEMINI_API_KEY");
-    const geminiModel =
-      this.config.get<string>("GEMINI_MODEL") || "gemini-2.0-flash";
+    const geminiModel = aiModel(this.config, "GEMINI_MODEL");
+    const jdw = jdwEarly;
 
     const callModel = async (
       msgs: Groq.Chat.ChatCompletionMessageParam[],
     ): Promise<Groq.Chat.ChatCompletion> => {
-      let lastErr: unknown;
-      for (const m of groqModels) {
-        try {
-          return await groq.chat.completions.create({
-            model: m,
-            messages: msgs,
-            tools: TOOLS,
-            tool_choice: "auto",
-            // gpt-oss adalah reasoning model — default-nya "berpikir" panjang
-            // sebelum menjawab (penyebab utama latensi 16s+). "low" memangkas
-            // reasoning drastis tanpa banyak menurunkan kualitas tool-calling.
-            reasoning_effort: "low",
-            // 2048 cukup untuk tabel ringkas; menahan output bertele-tele.
-            max_tokens: 2048,
-          });
-        } catch (err) {
-          lastErr = err;
-          // Hanya rate-limit yang memicu pindah model; error lain (mis.
-          // tool_use_failed) dilempar ke catch luar yang sudah menanganinya.
-          if (isRateLimitError(err)) {
-            this.logger.warn(
-              `[AI Assistant] Groq model ${m} rate-limited — coba model alternatif`,
-            );
-            continue;
+      let lastErr: unknown = new Error("Tidak ada provider AI yang tersedia");
+      if (groq) {
+        for (const m of groqModels) {
+          try {
+            return await groq.chat.completions.create({
+              model: m,
+              messages: msgs,
+              tools: TOOLS,
+              tool_choice: "auto",
+              // gpt-oss adalah reasoning model — default-nya "berpikir" panjang
+              // sebelum menjawab (penyebab utama latensi 16s+). "low" memangkas
+              // reasoning drastis tanpa banyak menurunkan kualitas tool-calling.
+              // Nilai diturunkan dari nama model: qwen hanya menerima "none",
+              // gpt-oss menolak "none" (HTTP 400).
+              reasoning_effort: safeReasoningEffort(m),
+              // 2048 cukup untuk tabel ringkas; menahan output bertele-tele.
+              max_tokens: 2048,
+            });
+          } catch (err) {
+            lastErr = err;
+            // Rate-limit ATAU model sudah dimatikan provider → pindah model.
+            // Error lain (mis. tool_use_failed) dilempar ke catch luar yang
+            // sudah menanganinya.
+            if (isRateLimitError(err)) {
+              this.logger.warn(
+                `[AI Assistant] Groq model ${m} rate-limited — coba model alternatif`,
+              );
+              continue;
+            }
+            if (isModelUnavailableError(err)) {
+              this.logger.warn(
+                `[AI Assistant] Groq model ${m} tidak tersedia lagi — coba model alternatif`,
+              );
+              continue;
+            }
+            // API key Groq invalid/dicabut: mencoba model lain di provider yang
+            // SAMA pasti gagal juga. Hentikan loop dan biarkan jatuh ke Gemini /
+            // justDoWorker di bawah.
+            if (isProviderAuthError(err)) {
+              this.logger.warn(
+                `[AI Assistant] Kredensial Groq ditolak (${(err as Error).message}) — lanjut ke provider lain`,
+              );
+              break;
+            }
+            throw err;
           }
-          throw err;
         }
       }
-      // Semua model Groq kena rate-limit harian — fallback ke Gemini.
+      // Semua model Groq gagal (rate-limit / model mati / kredensial ditolak) —
+      // fallback ke Gemini.
       if (geminiKey) {
         this.logger.warn(
-          "[AI Assistant] Semua model Groq rate-limited — fallback ke Gemini (Google AI Studio)",
+          "[AI Assistant] Groq tidak bisa dipakai — fallback ke Gemini (Google AI Studio)",
         );
         const res = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -1115,6 +1546,31 @@ Info user: ${auth.userName} (${auth.role})`;
         this.logger.warn(
           `[AI Assistant] Gemini fallback gagal: HTTP ${res.status} ${body.slice(0, 200)}`,
         );
+      }
+      // Jaring terakhir: justDoWorker (relay OpenAI-compatible). Sudah
+      // diverifikasi mendukung tool-calling + tool-result round-trip.
+      if (jdw) {
+        this.logger.warn(
+          `[AI Assistant] Fallback ke justDoWorker (${jdw.model})`,
+        );
+        try {
+          return await justDoWorkerChat<Groq.Chat.ChatCompletion>(
+            jdw,
+            {
+              model: jdw.model,
+              messages: msgs,
+              tools: TOOLS,
+              tool_choice: "auto",
+              max_tokens: 2048,
+            },
+            90_000,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `[AI Assistant] justDoWorker fallback gagal: ${msg}`,
+          );
+        }
       }
       throw lastErr;
     };
@@ -1241,28 +1697,38 @@ Info user: ${auth.userName} (${auth.role})`;
         this.logger.warn(
           "Tool calling failed — retrying without tools for fallback response",
         );
+        const fbSystem =
+          "Kamu asisten AI. User nanya tentang data toko, tapi kamu sedang tidak bisa akses tool/database. Minta maaf, sarankan user buka halaman terkait (mis. /products buat cari produk, /racks buat lihat rak) atau coba lagi sebentar. Singkat, dalam Bahasa Indonesia.";
+        const fbMessages = [
+          { role: "system" as const, content: fbSystem },
+          ...messages.map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+        ];
         try {
-          const groqFb = new Groq({ apiKey });
-          const fallbackResponse = await groqFb.chat.completions.create({
-            model,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Kamu asisten AI. User nanya tentang data toko, tapi kamu sedang tidak bisa akses tool/database. Minta maaf, sarankan user buka halaman terkait (mis. /products buat cari produk, /racks buat lihat rak) atau coba lagi sebentar. Singkat, dalam Bahasa Indonesia.",
-              },
-              ...messages.map((m) => ({
-                role: m.role as "user" | "assistant",
-                content: m.content,
-              })),
-            ],
-            max_tokens: 256,
-            temperature: 0.3,
-            reasoning_effort: "low",
-          });
+          let fbText = "";
+          if (groq) {
+            const fallbackResponse = await groq.chat.completions.create({
+              model,
+              messages: fbMessages,
+              max_tokens: 256,
+              temperature: 0.3,
+              reasoning_effort: safeReasoningEffort(model),
+            });
+            fbText = fallbackResponse.choices[0]?.message.content ?? "";
+          } else if (jdw) {
+            const fallbackResponse = await justDoWorkerChat(jdw, {
+              model: jdw.model,
+              messages: fbMessages,
+              max_tokens: 256,
+              temperature: 0.3,
+            });
+            fbText = justDoWorkerContent(fallbackResponse);
+          }
           result = {
             response:
-              fallbackResponse.choices[0]?.message.content ||
+              fbText ||
               "Maaf, AI sedang bermasalah. Coba buka halaman /products atau /racks untuk cari produk manual.",
           };
         } catch {

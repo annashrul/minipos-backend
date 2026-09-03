@@ -51,17 +51,40 @@ export type ResendPhoneOtpResponse = {
 };
 
 export const ForgotPasswordSchema = z.object({
-  email: z.string().email("Format email tidak valid"),
+  email: z.string().email("Format email tidak valid").optional(),
+  phone: z.string().optional(),
   channel: OtpChannelSchema.optional(),
-});
+}).refine((d) => d.email || d.phone, "Email atau nomor WhatsApp harus diisi");
 export type ForgotPasswordDto = z.infer<typeof ForgotPasswordSchema>;
 
 export type ForgotPasswordResponse = {
+  email: string;
   phoneMasked: string;
   phone: string;
   channel: OtpChannel;
-  /** Tujuan yang disamarkan sesuai channel (no HP atau email). */
   destinationMasked: string;
+};
+
+// ── New flow: request OTP → verify → create ───────────────────────
+
+export const RequestRegisterOtpSchema = RegisterCompanySchema;
+export type RequestRegisterOtpDto = z.infer<typeof RequestRegisterOtpSchema>;
+
+export type RequestRegisterOtpResponse = {
+  phone: string;
+  phoneMasked: string;
+  channel: OtpChannel;
+  destinationMasked: string;
+};
+
+export const VerifyAndCreateSchema = z.object({
+  phone: z.string().min(1),
+  otp: z.string().min(1),
+});
+export type VerifyAndCreateDto = z.infer<typeof VerifyAndCreateSchema>;
+
+export type VerifyAndCreateResponse = {
+  loginToken: string;
 };
 
 export const ResetPasswordSchema = z.object({

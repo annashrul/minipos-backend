@@ -1,4 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { Resend } from "resend";
+import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
 const GMAIL_SEND_URL =
   "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
@@ -7,67 +10,124 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 export interface SendEmailOptions {
   to: string | string[];
   subject: string;
-  /** Isi HTML. Salah satu dari `html` atau `text` wajib ada. */
   html?: string;
-  /** Isi plain-text (dipakai bila `html` kosong). */
   text?: string;
   cc?: string | string[];
   bcc?: string | string[];
   replyTo?: string;
 }
 
-/**
- * Kirim email via Gmail API memakai OAuth2 akun Gmail biasa (refresh token).
- * Berbasis HTTP (bukan SMTP) jadi aman di Cloud Run. Refresh token ditukar
- * menjadi access token saat dibutuhkan (di-cache sampai mendekati kedaluwarsa);
- * tanpa dependency eksternal.
- *
- * ENV yang dibutuhkan:
- *   GMAIL_SENDER               alamat Gmail pengirim (akun yang mengotorisasi).
- *   GMAIL_SENDER_NAME          (opsional) nama tampilan, mis. "MenoPOS".
- *   GMAIL_OAUTH_CLIENT_ID      Client ID OAuth dari GCP.
- *   GMAIL_OAUTH_CLIENT_SECRET  Client secret OAuth dari GCP.
- *   GMAIL_OAUTH_REFRESH_TOKEN  Refresh token hasil consent sekali (offline).
- *
- * Cara dapat refresh token: lihat catatan di akhir percakapan (OAuth Playground).
- * Catatan: di OAuth consent status "Testing", refresh token kedaluwarsa ±7 hari
- * → untuk permanen, publish app (scope gmail.send butuh verifikasi Google).
- */
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
+  private resend: Resend | null = null;
+  private smtp: Transporter | null = null;
   private cachedToken: string | null = null;
   private tokenExpiresAt = 0;
 
-  /** True bila kredensial email lengkap (siap kirim). */
+  constructor() {
+    if (process.env.RESEND_API_KEY) {
+      this.resend = new Resend(process.env.RESEND_API_KEY);
+    }
+    if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      this.smtp = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.GMAIL_USER,
+          pass: process.env.GMAIL_APP_PASSWORD,
+        },
+      });
+    }
+  }
+
   isConfigured(): boolean {
     return Boolean(
-      process.env.GMAIL_SENDER &&
+      this.smtp ||
+      this.resend ||
+      (process.env.GMAIL_SENDER &&
         process.env.GMAIL_OAUTH_CLIENT_ID &&
         process.env.GMAIL_OAUTH_CLIENT_SECRET &&
-        process.env.GMAIL_OAUTH_REFRESH_TOKEN,
+        process.env.GMAIL_OAUTH_REFRESH_TOKEN),
     );
   }
 
-  private getConfig() {
+  async send(opts: SendEmailOptions): Promise<{ id: string }> {
+    if (this.smtp) return this.sendViaSmtp(opts);
+    if (this.resend) return this.sendViaResend(opts);
+    return this.sendViaGmail(opts);
+  }
+
+  // ── Gmail SMTP (App Password) ──────────────────────────────────────────
+
+  private async sendViaSmtp(opts: SendEmailOptions): Promise<{ id: string }> {
+    const from = process.env.GMAIL_SENDER_NAME
+      ? `"${process.env.GMAIL_SENDER_NAME}" <${process.env.GMAIL_USER}>`
+      : (process.env.GMAIL_USER as string);
+
+    const info = await this.smtp!.sendMail({
+      from,
+      to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      text: opts.text,
+      ...(opts.cc ? { cc: Array.isArray(opts.cc) ? opts.cc.join(", ") : opts.cc } : {}),
+      ...(opts.bcc ? { bcc: Array.isArray(opts.bcc) ? opts.bcc.join(", ") : opts.bcc } : {}),
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+    });
+
+    return { id: info.messageId };
+  }
+
+  // ── Resend ──────────────────────────────────────────────────────────────
+
+  private async sendViaResend(opts: SendEmailOptions): Promise<{ id: string }> {
+    const from =
+      process.env.RESEND_FROM ??
+      process.env.GMAIL_SENDER ??
+      "MenoPOS <onboarding@resend.dev>";
+    const senderName = process.env.GMAIL_SENDER_NAME ?? process.env.RESEND_SENDER_NAME;
+    const fromWithName = senderName ? `${senderName} <${from}>` : from;
+
+    const payload: Record<string, unknown> = {
+      from: fromWithName,
+      to: Array.isArray(opts.to) ? opts.to : [opts.to],
+      subject: opts.subject,
+    };
+    if (opts.html) payload.html = opts.html;
+    if (opts.text) payload.text = opts.text;
+    if (opts.cc) payload.cc = Array.isArray(opts.cc) ? opts.cc : [opts.cc];
+    if (opts.bcc) payload.bcc = Array.isArray(opts.bcc) ? opts.bcc : [opts.bcc];
+    if (opts.replyTo) payload.reply_to = opts.replyTo;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await this.resend!.emails.send(payload as any);
+
+    if (error) {
+      throw new Error(`Resend error: ${error.message}`);
+    }
+    return { id: data?.id ?? "" };
+  }
+
+  // ── Gmail OAuth2 (fallback) ─────────────────────────────────────────────
+
+  private getGmailConfig() {
     const sender = process.env.GMAIL_SENDER;
     const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
     const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET;
     const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN;
     if (!sender || !clientId || !clientSecret || !refreshToken) {
       throw new Error(
-        "Email belum dikonfigurasi: set GMAIL_SENDER, GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN",
+        "Email belum dikonfigurasi: set RESEND_API_KEY atau GMAIL_OAUTH_*",
       );
     }
     return { sender, clientId, clientSecret, refreshToken };
   }
 
-  /** Access token Gmail (di-cache sampai mendekati kedaluwarsa). */
   private async getAccessToken(): Promise<string> {
     if (this.cachedToken && this.tokenExpiresAt > Date.now() + 60_000) {
       return this.cachedToken;
     }
-    const { clientId, clientSecret, refreshToken } = this.getConfig();
+    const { clientId, clientSecret, refreshToken } = this.getGmailConfig();
 
     const res = await fetch(TOKEN_URL, {
       method: "POST",
@@ -95,12 +155,7 @@ export class EmailService {
     return this.cachedToken;
   }
 
-  /**
-   * Kirim satu email. Mengembalikan id pesan Gmail.
-   * Melempar error bila belum dikonfigurasi atau Gmail API menolak — pemanggil
-   * sebaiknya membungkus dengan try/catch bila pengiriman bersifat best-effort.
-   */
-  async send(opts: SendEmailOptions): Promise<{ id: string }> {
+  private async sendViaGmail(opts: SendEmailOptions): Promise<{ id: string }> {
     const token = await this.getAccessToken();
     const raw = this.buildRawMessage(opts);
 
@@ -120,7 +175,6 @@ export class EmailService {
     return { id: data.id ?? "" };
   }
 
-  // ── MIME builder ─────────────────────────────────────────────────────────
   private buildRawMessage(opts: SendEmailOptions): string {
     const sender = process.env.GMAIL_SENDER as string;
     const senderName = process.env.GMAIL_SENDER_NAME;
@@ -147,7 +201,6 @@ export class EmailService {
       "\r\n\r\n" +
       chunk76(Buffer.from(body, "utf8").toString("base64"));
 
-    // Gmail API minta base64url (tanpa padding).
     return Buffer.from(mime, "utf8").toString("base64url");
   }
 }
@@ -156,14 +209,11 @@ function toAddressList(v: string | string[]): string {
   return Array.isArray(v) ? v.join(", ") : v;
 }
 
-/** Encode header (Subject/From name) ke RFC 2047 bila mengandung non-ASCII. */
 function encodeHeaderWord(value: string): string {
-  // eslint-disable-next-line no-control-regex
   if (/^[\x00-\x7F]*$/.test(value)) return value;
   return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
 }
 
-/** Pecah base64 jadi baris max 76 char (sesuai standar MIME). */
 function chunk76(b64: string): string {
   return (b64.match(/.{1,76}/g) ?? []).join("\r\n");
 }

@@ -17,7 +17,9 @@ async function main() {
 
   if (configs.length === 0) {
     console.log("Belum ada WhatsApp bot config tersimpan di DB.");
-    console.log("Default model yang akan dipakai: llama-3.3-70b-versatile");
+    console.log(
+      "Default model yang akan dipakai: env WHATSAPP_BOT_MODEL (fallback openai/gpt-oss-20b)",
+    );
     return;
   }
 
@@ -51,30 +53,44 @@ async function main() {
     console.log(`  updated       : ${c.updatedAt.toISOString().slice(0, 16)}`);
   }
 
-  // Cross-reference: cek apakah model yang dipakai bisa tool-calling reliable.
+  // Cross-reference: cek apakah model yang dipakai masih ADA di Groq dan bisa
+  // tool-calling reliable.
+  //
+  // Daftar di bawah diverifikasi lewat GET https://api.groq.com/openai/v1/models.
+  // Kalau Groq menambah/menghapus model lagi, update di sini + di
+  // backend/src/common/ai/ai-models.ts (DEFAULTS) + .env.
   const TOOL_RELIABLE = new Set([
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "moonshotai/kimi-k2-instruct",
   ]);
-  const TOOL_QUIRKY = new Set([
+  // Ada di Groq, tapi reasoning model — untuk tool-calling wajib
+  // reasoning_effort="none" (sudah ditangani safeReasoningEffort()).
+  const TOOL_QUIRKY = new Set(["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]);
+  // Sudah DIHAPUS Groq — request-nya balas HTTP 404/400.
+  const DECOMMISSIONED = new Set([
     "llama-3.3-70b-versatile",
     "llama-3.1-70b-versatile",
-    "llama3-70b-8192",
     "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "qwen/qwen3-32b",
+    "moonshotai/kimi-k2-instruct",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
   ]);
-  const DECOMMISSIONED = new Set(["llama3-70b-8192", "llama3-8b-8192"]);
 
   const warnings: string[] = [];
   for (const c of configs) {
     if (DECOMMISSIONED.has(c.model)) {
       warnings.push(
-        `⚠️  ${c.company?.name}: model "${c.model}" sudah DECOMMISSIONED oleh Groq.`,
+        `⚠️  ${c.company?.name}: model "${c.model}" sudah DIHAPUS Groq (HTTP 404). Ganti ke openai/gpt-oss-120b.`,
       );
-    } else if (TOOL_QUIRKY.has(c.model) && !TOOL_RELIABLE.has(c.model)) {
+    } else if (TOOL_QUIRKY.has(c.model)) {
       warnings.push(
-        `ℹ️  ${c.company?.name}: model "${c.model}" kadang fail tool-calling (Llama function-tag quirk). Recommended: openai/gpt-oss-120b.`,
+        `ℹ️  ${c.company?.name}: model "${c.model}" adalah reasoning model — pastikan reasoning_effort="none". Recommended: openai/gpt-oss-120b.`,
+      );
+    } else if (!TOOL_RELIABLE.has(c.model)) {
+      warnings.push(
+        `ℹ️  ${c.company?.name}: model "${c.model}" tidak ada di daftar terverifikasi. Cek GET https://api.groq.com/openai/v1/models.`,
       );
     }
   }

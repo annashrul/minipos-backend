@@ -81,6 +81,8 @@ import { VehiclesModule } from "./modules/vehicles/vehicles.module";
 import { WhatsappReceiptModule } from "./modules/whatsapp-receipt/whatsapp-receipt.module";
 import { WhatsappChatbotModule } from "./modules/whatsapp-chatbot/whatsapp-chatbot.module";
 import { WaServiceModule } from "./common/wa-service/wa-service.module";
+import { EmbeddingModule } from "./common/embedding/embedding.module";
+import { ImageSearchModule } from "./modules/image-search/image-search.module";
 import { MarketplaceShopeeModule } from "./modules/marketplace-shopee/marketplace-shopee.module";
 import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-grab.module";
 
@@ -96,6 +98,9 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     PrismaModule,
     AssertModule,
     RedisModule,
+    // @Global — EmbeddingClient dipakai ImageSearchModule & ProductsModule.
+    // Harus terdaftar sebelum module yang meng-inject-nya.
+    EmbeddingModule,
     RealtimeModule,
     EmailModule,
     AuthModule,
@@ -126,6 +131,7 @@ import { MarketplaceGrabModule } from "./modules/marketplace-grab/marketplace-gr
     GoodsReceiptsModule,
     InstallmentsModule,
     InventoryForecastModule,
+    ImageSearchModule,
     NotificationsModule,
     OrderQueuesModule,
     PlansModule,

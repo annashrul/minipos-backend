@@ -505,6 +505,17 @@ model Product {
   isActive            Boolean                     @default(true)
   description         String?
   imageUrl            String?
+  // ── Search-by-Image (phase58) ─────────────────────────────────────────
+  // Vektor gambar pgvector. `Unsupported` → TIDAK bisa di-select/where lewat
+  // Prisma Client; semua akses via $queryRaw (lihat ImageSearchService).
+  // Nullable, jadi create/update Prisma biasa tetap jalan tanpa perubahan.
+  // Dimensi 768 HARUS sama dengan VECTOR_DIMENSION + /health.dim ai-service.
+  embedding           Unsupported("vector(768)")?
+  embeddedAt          DateTime?
+  embeddingModel      String?
+  // imageUrl saat embedding dibuat. Beda dari imageUrl = embedding stale.
+  embeddedImageUrl    String?
+
   expiryDate          DateTime?
   // Aktifkan pelacakan batch/lot + expired per-batch (FEFO + product recall).
   // Default false → produk lama tetap pakai stok agregat tanpa batch (helper

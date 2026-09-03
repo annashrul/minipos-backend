@@ -30,7 +30,9 @@ export const NormalizeSearchSchema = z.object({
   transcript: z.string().min(1),
   // Alternatif hasil STT (N-best). AI memilih yang paling tepat thd katalog.
   alternatives: z.array(z.string()).max(10).optional(),
-  candidates: z.array(z.string()).max(300).optional(),
+  // Katalog produk cabang. Dipakai untuk cek "sudah cocok katalog?" secara
+  // deterministik sebelum AI dipanggil, jadi batasnya dinaikkan 300 → 1000.
+  candidates: z.array(z.string()).max(1000).optional(),
 });
 export type NormalizeSearchDto = z.infer<typeof NormalizeSearchSchema>;
 
@@ -42,12 +44,19 @@ export type NormalizeSearchResponse = {
 export const SearchByImageSchema = z.object({
   // data URL: "data:image/jpeg;base64,...." (resolusi dinaikkan utk akurasi)
   image: z.string().min(1).max(3_000_000),
-  candidates: z.array(z.string()).max(300).optional(),
+  // Katalog produk cabang. Dipakai untuk RANKING deterministik di server, jadi
+  // batasnya dinaikkan dari 300 → 1000: makin lengkap katalog yang dikirim,
+  // makin kecil kemungkinan produk yang benar tidak ikut diperingkat.
+  candidates: z.array(z.string()).max(1000).optional(),
 });
 export type SearchByImageDto = z.infer<typeof SearchByImageSchema>;
 
 export type SearchByImageResponse = {
+  /** Kata kunci/nama produk terbaik — dipakai untuk judul hasil di UI. */
   query: string;
+  /** Nama produk KATALOG yang cocok kuat (sudah di-ranking server). */
+  matches: string[];
+  /** Nama produk KATALOG yang mirip (skor lebih rendah). */
   similar: string[];
   error?: string;
 };
