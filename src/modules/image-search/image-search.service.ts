@@ -1,8 +1,6 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { createHash } from "crypto";
 import { EmbeddingClient } from "@/common/embedding/embedding.client";
 import { PrismaService } from "@/modules/prisma/prisma.service";
-import { RedisService } from "@/modules/redis/redis.service";
 import type {
   ImageSearchHit,
   ImageSearchQueryDto,
@@ -23,9 +21,6 @@ import {
   ratioOf,
   resolveGate,
 } from "./image-search.gate";
-
-/** TTL cache vektor query — foto yang sama di-scan berulang tidak hit model. */
-const QUERY_CACHE_TTL_SEC = 60 * 60 * 6;
 
 type RawHit = {
   id: string;
@@ -50,7 +45,6 @@ export class ImageSearchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly embedding: EmbeddingClient,
-    private readonly redis: RedisService,
   ) {}
 
   private get envLimit(): number {
@@ -83,7 +77,7 @@ export class ImageSearchService {
     return (Number.isFinite(mb) && mb > 0 ? mb : 5) * 1024 * 1024;
   }
 
-  /** Embed gambar query, dengan cache Redis berbasis sha256 isi gambar. */
+  /** Embed gambar query langsung ke ai-service tanpa cache eksternal. */
   private async embedQuery(image: string): Promise<number[]> {
     // Perkiraan ukuran byte dari panjang base64 (4 char ≈ 3 byte).
     const base64 = image.includes(",") ? image.slice(image.indexOf(",") + 1) : image;
@@ -93,33 +87,19 @@ export class ImageSearchService {
       );
     }
 
-    const hash = createHash("sha256").update(image).digest("hex").slice(0, 32);
-    const key = `imgsearch:q:${this.embedding.modelName}:${hash}`;
-    const cached = await this.redis.getJson<number[]>(key);
-    if (cached && cached.length === this.embedding.expectedDimension) {
-      return cached;
+    const health = await this.embedding.health();
+    if (health.model !== this.embedding.modelName) {
+      throw new Error(
+        `ai-service memakai model ${health.model}, backend mengharapkan ${this.embedding.modelName}`,
+      );
     }
 
-    const vec = await this.embedding.embedOne(image);
-    await this.redis.setJson(key, vec, QUERY_CACHE_TTL_SEC);
-    return vec;
+    return this.embedding.embedOne(image);
   }
 
-  /** Embed teks query, dengan cache Redis berbasis sha256 teks. */
+  /** Embed teks query langsung ke ai-service tanpa cache eksternal. */
   private async embedTextQuery(text: string): Promise<number[]> {
-    const hash = createHash("sha256")
-      .update(text.trim().toLowerCase())
-      .digest("hex")
-      .slice(0, 32);
-    const key = `imgsearch:t:${this.embedding.modelName}:${hash}`;
-    const cached = await this.redis.getJson<number[]>(key);
-    if (cached && cached.length === this.embedding.expectedDimension) {
-      return cached;
-    }
-
-    const vec = await this.embedding.embedTextOne(text.trim());
-    await this.redis.setJson(key, vec, QUERY_CACHE_TTL_SEC);
-    return vec;
+    return this.embedding.embedTextOne(text.trim());
   }
 
   /** Jumlah produk yang sudah punya embedding di company ini. */

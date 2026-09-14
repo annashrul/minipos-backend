@@ -17,7 +17,7 @@ import type {
  * dan env yang salah-set hanya akan membuat vektor tidak sebanding secara
  * senyap. Naikkan bersamaan dengan ai-service saat pipeline berubah.
  */
-export const EMBEDDING_PREPROCESS_TAG = "tp2";
+export const EMBEDDING_PREPROCESS_TAG = "tp3";
 
 // Thin HTTP client untuk ai-service (FastAPI + SigLIP/CLIP).
 // Pola mengikuti WaServiceClient: global fetch (Node 20), tanpa axios,
@@ -135,6 +135,23 @@ export class EmbeddingClient {
     const h = await this.request<EmbeddingHealth>("GET", "/health");
     this.cachedHealth = h;
     return h;
+  }
+
+  /**
+   * Cek apakah AI service memang hidup dan menjawab /health.
+   * Dipakai untuk health check aplikasi agar downtime model terlihat jelas.
+   */
+  async isReachable(): Promise<boolean> {
+    if (!this.configured) {
+      return false;
+    }
+
+    try {
+      const health = await this.health();
+      return health?.status === "ok" && Number.isFinite(health.dim) && health.dim > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**

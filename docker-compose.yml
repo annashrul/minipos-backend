@@ -6,7 +6,7 @@
 services:
   ai-service:
     build:
-      context: ./ai-service
+      context: ../ai-service
       dockerfile: Dockerfile
       args:
         # Ganti nilai ini kalau mau model lain. INGAT: dimensi harus cocok

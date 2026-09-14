@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";
 import { PrismaService } from "@/modules/prisma/prisma.service";
 import { RedisService } from "@/modules/redis/redis.service";
 import { Public } from "@/modules/auth/public.decorator";
+import { EmbeddingClient } from "@/common/embedding/embedding.client";
 
 @ApiTags("Health")
 @ApiBearerAuth()
@@ -11,6 +12,7 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly embedding: EmbeddingClient,
   ) {}
 
   @Public()
@@ -35,11 +37,28 @@ export class HealthController {
       }
     }
 
+    let aiServiceOk = false;
+    let aiServiceState: "connected" | "disconnected" | "disabled" = "disabled";
+    let aiServiceModel: string | null = null;
+
+    if (this.embedding.configured) {
+      try {
+        const health = await this.embedding.health();
+        aiServiceOk = health.status === "ok" && health.dim > 0;
+        aiServiceState = aiServiceOk ? "connected" : "disconnected";
+        aiServiceModel = health.model ?? null;
+      } catch {
+        aiServiceState = "disconnected";
+      }
+    }
+
     return {
       data: {
-        status: "ok",
+        status: aiServiceOk && dbOk ? "ok" : "degraded",
         db: dbOk ? "connected" : "disconnected",
         redis: redisOk,
+        aiService: aiServiceState,
+        aiServiceModel,
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
       },

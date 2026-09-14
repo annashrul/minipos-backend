@@ -227,9 +227,10 @@ services:
   - type: pserv
     name: minipos-ai-service
     runtime: docker
-    ## Path relatif terhadap root repo backend.
-    dockerfilePath: ./ai-service/Dockerfile
-    dockerContext: ./ai-service
+    ## Path relatif terhadap root repo backend. Karena ai-service sekarang di root,
+    ## kita pakai parent dir agar tetap bisa dibangun dari folder backend.
+    dockerfilePath: ../ai-service/Dockerfile
+    dockerContext: ../ai-service
 
     ## PERHATIAN RAM: torch CPU + SigLIP base fp32 butuh ~1.2-1.6GB saat
     ## inference. Plan "starter" TIDAK cukup — container akan OOM saat memuat

@@ -6,7 +6,7 @@ export type EmbeddingHealth = {
   /**
    * Identitas embedding yang dilaporkan ai-service:
    * `"<nama model>+<tag preprocessing>"`, mis.
-   * "google/siglip-base-patch16-224+tp2". Harus == EmbeddingClient.modelName.
+  * "google/siglip-base-patch16-224+tp3". Harus == EmbeddingClient.modelName.
    */
   model: string;
   /** Dimensi vektor yang dihasilkan model. Harus == VECTOR_DIMENSION. */

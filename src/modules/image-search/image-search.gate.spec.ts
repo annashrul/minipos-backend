@@ -5,7 +5,7 @@
 // dependency baru ke project.
 //
 // Angka di sini BUKAN karangan: semuanya hasil pengukuran nyata pada katalog
-// company Mondelez (68 produk ber-embedding) memakai preprocessing tp2, plus 8
+// company Mondelez (68 produk ber-embedding) memakai preprocessing tp3, plus 8
 // foto produk company lain sebagai negatif. Kalau kalibrasi diubah, test ini
 // harus ikut diperbarui SECARA SADAR.
 import assert from "node:assert/strict";
@@ -109,7 +109,7 @@ describe("kalibrasi: produk ADA di katalog (foto berbeda) harus lolos", () => {
   }
 
   it("ambang absolut 0.20 (perilaku lama) membuang hit yang benar", () => {
-    // Inilah bug yang diperbaiki. Jarak SEBELUM preprocessing tp2 — keduanya
+    // Inilah bug yang diperbaiki. Jarak SEBELUM preprocessing tp3 — keduanya
     // sudah di-rank #1 dengan benar, lalu dibuang oleh
     // IMAGE_SEARCH_MAX_DISTANCE=0.20.
     const BEFORE_PREPROCESSING = [0.3033, 0.2111];
@@ -212,7 +212,7 @@ describe('tier "serupa" (near-miss) — gagal gate tapi tetap ditawarkan', () =>
 
 // ─── Jalur TEKS (SigLIP text tower) ────────────────────────────────
 // Semua angka di bawah hasil pengukuran pada katalog yang sama (69 produk
-// ber-embedding, model google/siglip-base-patch16-224+tp2).
+// ber-embedding, model google/siglip-base-patch16-224+tp3).
 describe("kalibrasi jalur TEKS: deskripsi yang ADA padanannya harus lolos", () => {
   // [deskripsi, jarak terdekat, nama produk teratas]
   const POSITIVES: Array<[string, number, string]> = [

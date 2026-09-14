@@ -17,7 +17,7 @@
 //   ratio = distance / median(jarak query ini ke SELURUH katalog company)
 //
 // Terukur pada katalog 68 produk + 8 gambar produk company lain (tidak ada
-// padanannya) memakai preprocessing tp2:
+// padanannya) memakai preprocessing tp3:
 //   - benar-ada-di-katalog : ratio 0.185 dan 0.466
 //   - tidak-ada-di-katalog : ratio 0.732, 0.781, 0.824, 0.860, 0.866, 0.869, 0.876
 // Terpisah bersih; titik tengahnya ~0.60 → DEFAULT_RATIO_MAX.
